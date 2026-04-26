@@ -22,27 +22,6 @@ export const config = {
     ignoreMemorySafetyChecks: false,
   },
 
-  context: {
-    // CPU / context-side tuning belongs here, not in loadModel().
-    // Docs: contextSize, batchSize, and threads are createContext() options.
-
-    // Context window size for each created context.
-    // Valid forms:
-    // - "auto"       → let node-llama-cpp choose a safe size automatically
-    // - 4096         → fixed integer size (deterministic memory use)
-    // - { min, max } → bounded auto size
-    //
-    // Use "auto" when:
-    // - you want safer startup on changing hardware
-    // - you want failedCreationRemedy to be able to shrink the context automatically
-    //
-    // Use a fixed integer when:
-    // - you want predictable memory use and repeatable behavior
-    // - you already know your hardware can support that size
-    //
-    // IMPORTANT EFFECTS:
-    // - Larger values increase RAM/VRAM pressure and can reduce throughput.
-    // - If you set a fixed integer here, failedCreationRemedy will NOT auto-shrink it.
     // - Very small context sizes can also indirectly constrain practical batching.
     contextSize: "auto",
 
@@ -128,6 +107,20 @@ export const config = {
     // Safety valve: flush even without boundaries once the buffered chunk grows
     // beyond this size.
     maxBufferedChars: 64,
+
+    // Init retry v1:
+    // - same-config cold-worker retry only
+    // - attempts means total attempts, including the first attempt
+    // - if enabled is false, attempts is forced to 1
+    // - readyTimeoutMs still applies when enabled is false
+    // - degraded config retry / hardware probing are future phases
+    initRetry: {
+      enabled: true,
+      attempts: 2,
+      readyTimeoutMs: 120000,
+      retryDelayMs: 1000,
+      strategy: "same-config-cold-worker",
+    },
   },
 
   sessions: {

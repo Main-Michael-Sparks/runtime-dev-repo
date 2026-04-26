@@ -25,6 +25,8 @@ import { createScheduler } from "./scheduler.mjs";
 
 let initStarted = false;
 let initResolved = false;
+let initInProgress = false;
+let initCyclePromise = null;
 let resolveReady;
 let rejectReady;
 
@@ -51,6 +53,135 @@ const scheduler = createScheduler({
     traceRunning(req);
   },
 });
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+
+  let timer;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+function resolveInitOptions(options = {}) {
+  const defaults = config.runtime.initRetry ?? {};
+
+  const resolved = {
+    enabled: defaults.enabled ?? false,
+    attempts: defaults.attempts ?? 1,
+    readyTimeoutMs: defaults.readyTimeoutMs ?? 0,
+    retryDelayMs: defaults.retryDelayMs ?? 0,
+    strategy: defaults.strategy ?? "same-config-cold-worker",
+    configOverride: null,
+    ...options,
+  };
+
+  if (!resolved.enabled) {
+    resolved.attempts = 1;
+  }
+
+  resolved.attempts = Math.max(1, Number(resolved.attempts) || 1);
+  resolved.readyTimeoutMs = Math.max(0, Number(resolved.readyTimeoutMs) || 0);
+  resolved.retryDelayMs = Math.max(0, Number(resolved.retryDelayMs) || 0);
+
+  if (resolved.strategy !== "same-config-cold-worker") {
+    throw new Error(`Unsupported init retry strategy: ${resolved.strategy}`);
+  }
+
+  if (resolved.configOverride !== null && resolved.configOverride !== undefined) {
+    throw new Error("configOverride is reserved for a future init retry phase");
+  }
+
+  return resolved;
+}
+
+function resetInitBarrier() {
+  initStarted = false;
+  initResolved = false;
+  scheduler.setReady(false);
+  readyPromise = createReadyPromise();
+}
+
+async function attemptInitOnce(initOptions) {
+  resetInitBarrier();
+
+  initStarted = true;
+  sendToWorker({ type: "init" });
+
+  return withTimeout(
+    readyPromise,
+    initOptions.readyTimeoutMs,
+    "Model initialization"
+  );
+}
+
+async function runInitCycle(initOptions) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= initOptions.attempts; attempt++) {
+    try {
+      return await attemptInitOnce(initOptions);
+    } catch (err) {
+      lastError = err;
+
+      try {
+        await terminateWorker();
+      } catch (terminateErr) {
+        lastError = terminateErr;
+      }
+
+      if (attempt >= initOptions.attempts) {
+        break;
+      }
+
+      recreateWorker();
+
+      if (initOptions.retryDelayMs > 0) {
+        await sleep(initOptions.retryDelayMs);
+      }
+    }
+  }
+
+  resetInitBarrier();
+
+  throw new Error(
+    `Model init failed after ${initOptions.attempts} attempt(s) using ${initOptions.strategy}: ${lastError?.message ?? String(lastError)}`
+  );
+}
+
+async function ensureModelReady() {
+  if (initResolved) return;
+
+  if (initInProgress) {
+    return initCyclePromise ?? readyPromise;
+  }
+
+  if (initStarted) {
+    return readyPromise;
+  }
+
+  const initOptions = resolveInitOptions();
+  initInProgress = true;
+  initCyclePromise = runInitCycle(initOptions);
+
+  try {
+    return await initCyclePromise;
+  } finally {
+    initInProgress = false;
+    initCyclePromise = null;
+  }
+}
 
 function toErrorObject(raw) {
   if (raw instanceof Error) return raw;
@@ -135,7 +266,6 @@ onWorkerMessage((msg) => {
   if (msg.type === "error") {
     const err = toErrorObject(msg.error);
 
-    // model reset failure path
     if (
       (msg.id === undefined || msg.id === null) &&
       runtimeResetting &&
@@ -147,7 +277,6 @@ onWorkerMessage((msg) => {
       return;
     }
 
-    // shutdown failure path
     if (
       (msg.id === undefined || msg.id === null) &&
       runtimeShuttingDown &&
@@ -159,7 +288,6 @@ onWorkerMessage((msg) => {
       return;
     }
 
-    // init failure path
     if (
       (msg.id === undefined || msg.id === null) &&
       !initResolved &&
@@ -169,7 +297,6 @@ onWorkerMessage((msg) => {
       return;
     }
 
-    // session reset failure path
     if (
       (msg.id === undefined || msg.id === null) &&
       msg.sessionId &&
@@ -193,17 +320,33 @@ onWorkerMessage((msg) => {
   }
 });
 
-export async function initModel() {
+export async function initModel(options = {}) {
   if (runtimeShuttingDown) {
     throw new Error("Runtime is shutting down");
   }
 
-  if (!initStarted) {
-    initStarted = true;
-    sendToWorker({ type: "init" });
+  if (runtimeResetting) {
+    throw new Error("Runtime is resetting");
   }
 
-  return readyPromise;
+  if (initResolved) {
+    return readyPromise;
+  }
+
+  if (initStarted || initInProgress) {
+    throw new Error("Model initialization already in progress");
+  }
+
+  const initOptions = resolveInitOptions(options);
+  initInProgress = true;
+  initCyclePromise = runInitCycle(initOptions);
+
+  try {
+    return await initCyclePromise;
+  } finally {
+    initInProgress = false;
+    initCyclePromise = null;
+  }
 }
 
 export async function prompt(text, options = {}) {
@@ -221,7 +364,7 @@ export async function prompt(text, options = {}) {
     throw new Error(`Session is resetting: ${sessionId}`);
   }
 
-  await initModel();
+  await ensureModelReady();
 
   if (scheduler.queuedCount() >= config.runtime.maxQueueSize) {
     throw new Error("Backpressure: queue full");
@@ -353,11 +496,16 @@ export async function resetModel() {
     await terminateWorker();
     recreateWorker();
 
-    initStarted = false;
-    initResolved = false;
-    readyPromise = createReadyPromise();
+    const initOptions = resolveInitOptions();
+    initInProgress = true;
+    initCyclePromise = runInitCycle(initOptions);
 
-    await initModel();
+    try {
+      await initCyclePromise;
+    } finally {
+      initInProgress = false;
+      initCyclePromise = null;
+    }
   } finally {
     runtimeResetting = false;
     modelResetWaiter = null;
