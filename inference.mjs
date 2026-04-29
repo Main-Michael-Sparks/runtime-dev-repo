@@ -1,27 +1,52 @@
 import { config } from "./config.mjs";
+import { isPlainObject } from "./configOverride.mjs";
+import { probeHardware } from "./hardwareProbe.mjs";
+import {
+    buildInitProfiles,
+    buildInitAttemptPlan
+} from "./retryProfiles.mjs";
 import { normalizeToken } from "./normalizer.mjs";
 import {
-  traceQueued,
-  traceRunning,
-  traceDone,
-  traceError,
-  traceCanceled,
-  traceDelete,
+    traceQueued,
+    traceRunning,
+    traceDone,
+    traceError,
+    traceCanceled,
+    traceDelete
 } from "./observer.mjs";
 import { createRequest } from "./request.mjs";
 import {
-  pushStream,
-  closeStream,
-  errorStream,
-  cancelStream,
+    pushStream,
+    closeStream,
+    errorStream,
+    cancelStream
 } from "./streamController.mjs";
 import {
-  onWorkerMessage,
-  sendToWorker,
-  terminateWorker,
-  recreateWorker,
+    onWorkerMessage,
+    sendToWorker,
+    terminateWorker,
+    recreateWorker
 } from "./workerBridge.mjs";
 import { createScheduler } from "./scheduler.mjs";
+
+const VALID_INIT_OPTION_KEYS = new Set([
+    "enabled",
+    "attempts",
+    "readyTimeoutMs",
+    "retryDelayMs",
+    "strategy",
+    "configOverride",
+    "hardwareAware"
+]);
+
+const VALID_HARDWARE_AWARE_KEYS = new Set([
+    "enabled",
+    "probe",
+    "maxProfiles",
+    "allowCpuModelLoadFallback",
+    "allowBatchReduction",
+    "allowContextAutoFallback"
+]);
 
 let initStarted = false;
 let initResolved = false;
@@ -29,6 +54,13 @@ let initInProgress = false;
 let initCyclePromise = null;
 let resolveReady;
 let rejectReady;
+
+let activeInitAttemptId = null;
+let activeInitPlan = null;
+let lastSuccessfulInitPlan = null;
+let lastSuccessfulEffectiveConfig = null;
+let lastFailedExplicitInit = null;
+let nextInitAttemptId = 0;
 
 const sessionsResetting = new Set();
 const sessionResetWaiters = new Map();
@@ -38,530 +70,761 @@ let modelResetWaiter = null;
 let shutdownWaiter = null;
 
 function createReadyPromise() {
-  return new Promise((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
-  });
+    return new Promise((resolve, reject) => {
+        resolveReady = resolve;
+        rejectReady = reject;
+    });
 }
 
 let readyPromise = createReadyPromise();
 
 const scheduler = createScheduler({
-  maxInFlight: config.runtime.maxInFlight,
-  sendToWorker,
-  onDispatch(req) {
-    traceRunning(req);
-  },
+    maxInFlight: config.runtime.maxInFlight,
+    sendToWorker,
+    onDispatch(req) {
+        traceRunning(req);
+    }
 });
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function withTimeout(promise, timeoutMs, label) {
-  if (!timeoutMs || timeoutMs <= 0) return promise;
+    if (!timeoutMs || timeoutMs <= 0) return promise;
 
-  let timer;
+    let timer;
 
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-  });
+    const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
 
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    clearTimeout(timer);
-  });
+    return Promise.race([promise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
+}
+
+function assertPlainObjectOrUndefined(value, name) {
+    if (value !== undefined && !isPlainObject(value)) {
+        throw new Error(`${name} must be a plain object`);
+    }
+}
+
+function assertBoolean(value, name) {
+    if (typeof value !== "boolean") {
+        throw new Error(`${name} must be a boolean`);
+    }
+}
+
+function assertPositiveInteger(value, name) {
+    if (!Number.isInteger(value) || value < 1) {
+        throw new Error(`${name} must be a positive integer`);
+    }
+}
+
+function assertNonNegativeInteger(value, name) {
+    if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`${name} must be an integer >= 0`);
+    }
+}
+
+function assertAllowedKeys(value, allowedKeys, name) {
+    if (value === undefined) return;
+
+    for (const key of Object.keys(value)) {
+        if (!allowedKeys.has(key)) {
+            throw new Error(`Unsupported ${name} option: ${key}`);
+        }
+    }
+}
+
+function normalizeBoolean(value, fallback, name) {
+    if (value === undefined) return fallback;
+    assertBoolean(value, name);
+    return value;
+}
+
+function normalizeHardwareAwareOptions(defaults = {}, overrides = {}) {
+    assertPlainObjectOrUndefined(defaults, "runtime.initRetry.hardwareAware");
+    assertPlainObjectOrUndefined(overrides, "hardwareAware");
+    assertAllowedKeys(overrides, VALID_HARDWARE_AWARE_KEYS, "hardwareAware");
+
+    const merged = {
+        enabled: defaults.enabled ?? false,
+        probe: defaults.probe ?? true,
+        maxProfiles: defaults.maxProfiles ?? 3,
+        allowCpuModelLoadFallback: defaults.allowCpuModelLoadFallback ?? true,
+        allowBatchReduction: defaults.allowBatchReduction ?? true,
+        allowContextAutoFallback: defaults.allowContextAutoFallback ?? true,
+        ...overrides
+    };
+
+    merged.enabled = normalizeBoolean(merged.enabled, false, "hardwareAware.enabled");
+    merged.probe = normalizeBoolean(merged.probe, true, "hardwareAware.probe");
+    merged.allowCpuModelLoadFallback = normalizeBoolean(
+        merged.allowCpuModelLoadFallback,
+        true,
+        "hardwareAware.allowCpuModelLoadFallback"
+    );
+    merged.allowBatchReduction = normalizeBoolean(
+        merged.allowBatchReduction,
+        true,
+        "hardwareAware.allowBatchReduction"
+    );
+    merged.allowContextAutoFallback = normalizeBoolean(
+        merged.allowContextAutoFallback,
+        true,
+        "hardwareAware.allowContextAutoFallback"
+    );
+
+    assertPositiveInteger(merged.maxProfiles, "hardwareAware.maxProfiles");
+
+    return merged;
+}
+
+function hasMeaningfulInitOptions(options = {}) {
+    assertPlainObjectOrUndefined(options, "init options");
+    return Object.keys(options).length > 0;
+}
+
+function hasCustomProfileOptions(options = {}) {
+    assertPlainObjectOrUndefined(options, "init options");
+
+    if (options.configOverride !== undefined && options.configOverride !== null) return true;
+    if (options.strategy !== undefined && options.strategy !== "same-config-cold-worker") return true;
+    if (options.hardwareAware !== undefined) return true;
+
+    return false;
+}
+
+function nextAttemptId() {
+    nextInitAttemptId += 1;
+    return nextInitAttemptId;
 }
 
 function resolveInitOptions(options = {}) {
-  const defaults = config.runtime.initRetry ?? {};
+    assertPlainObjectOrUndefined(options, "init options");
+    assertAllowedKeys(options, VALID_INIT_OPTION_KEYS, "init");
 
-  const resolved = {
-    enabled: defaults.enabled ?? false,
-    attempts: defaults.attempts ?? 1,
-    readyTimeoutMs: defaults.readyTimeoutMs ?? 0,
-    retryDelayMs: defaults.retryDelayMs ?? 0,
-    strategy: defaults.strategy ?? "same-config-cold-worker",
-    configOverride: null,
-    ...options,
-  };
+    const defaults = config.runtime.initRetry ?? {};
+    const strategy = options.strategy ?? defaults.strategy ?? "same-config-cold-worker";
 
-  if (!resolved.enabled) {
-    resolved.attempts = 1;
-  }
+    const enabled = options.enabled ?? defaults.enabled ?? false;
+    assertBoolean(enabled, "enabled");
 
-  resolved.attempts = Math.max(1, Number(resolved.attempts) || 1);
-  resolved.readyTimeoutMs = Math.max(0, Number(resolved.readyTimeoutMs) || 0);
-  resolved.retryDelayMs = Math.max(0, Number(resolved.retryDelayMs) || 0);
+    const readyTimeoutMs = options.readyTimeoutMs ?? defaults.readyTimeoutMs ?? 0;
+    const retryDelayMs = options.retryDelayMs ?? defaults.retryDelayMs ?? 0;
 
-  if (resolved.strategy !== "same-config-cold-worker") {
-    throw new Error(`Unsupported init retry strategy: ${resolved.strategy}`);
-  }
+    assertNonNegativeInteger(readyTimeoutMs, "readyTimeoutMs");
+    assertNonNegativeInteger(retryDelayMs, "retryDelayMs");
 
-  if (resolved.configOverride !== null && resolved.configOverride !== undefined) {
-    throw new Error("configOverride is reserved for a future init retry phase");
-  }
+    let attempts;
 
-  return resolved;
+    if (!enabled) {
+        attempts = 1;
+    } else if (options.attempts !== undefined) {
+        attempts = options.attempts;
+    } else if (strategy === "same-config-cold-worker") {
+        attempts = defaults.attempts ?? 1;
+    } else {
+        attempts = undefined;
+    }
+
+    if (attempts !== undefined) {
+        assertPositiveInteger(attempts, "attempts");
+    }
+
+    return {
+        enabled,
+        attempts,
+        readyTimeoutMs,
+        retryDelayMs,
+        strategy,
+        configOverride: options.configOverride,
+        hardwareAware: normalizeHardwareAwareOptions(
+            defaults.hardwareAware ?? {},
+            options.hardwareAware ?? {}
+        ),
+        hasCustomProfileOptions: hasCustomProfileOptions(options)
+    };
 }
 
 function resetInitBarrier() {
-  initStarted = false;
-  initResolved = false;
-  scheduler.setReady(false);
-  readyPromise = createReadyPromise();
+    initStarted = false;
+    initResolved = false;
+    activeInitAttemptId = null;
+    scheduler.setReady(false);
+    readyPromise = createReadyPromise();
 }
 
-async function attemptInitOnce(initOptions) {
-  resetInitBarrier();
+async function createInitPlan(initOptions) {
+    const probe = initOptions.strategy === "hardware-aware-cold-worker" && initOptions.hardwareAware.probe
+        ? await probeHardware(initOptions.hardwareAware)
+        : null;
 
-  initStarted = true;
-  sendToWorker({ type: "init" });
+    const profiles = buildInitProfiles({
+        baseConfig: config,
+        configOverride: initOptions.configOverride,
+        probe,
+        options: initOptions
+    });
 
-  return withTimeout(
-    readyPromise,
-    initOptions.readyTimeoutMs,
-    "Model initialization"
-  );
+    const attemptPlan = buildInitAttemptPlan({
+        strategy: initOptions.strategy,
+        profiles,
+        attempts: initOptions.attempts,
+        readyTimeoutMs: initOptions.readyTimeoutMs,
+        retryDelayMs: initOptions.retryDelayMs,
+        nextAttemptId
+    });
+
+    return {
+        ...initOptions,
+        probe,
+        profiles,
+        attempts: attemptPlan.length,
+        attemptPlan
+    };
 }
 
-async function runInitCycle(initOptions) {
-  let lastError = null;
-
-  for (let attempt = 1; attempt <= initOptions.attempts; attempt++) {
-    try {
-      return await attemptInitOnce(initOptions);
-    } catch (err) {
-      lastError = err;
-
-      try {
-        await terminateWorker();
-      } catch (terminateErr) {
-        lastError = terminateErr;
-      }
-
-      if (attempt >= initOptions.attempts) {
-        break;
-      }
-
-      recreateWorker();
-
-      if (initOptions.retryDelayMs > 0) {
-        await sleep(initOptions.retryDelayMs);
-      }
+function createFixedInitPlanFromLastSuccess() {
+    if (!lastSuccessfulInitPlan || !lastSuccessfulEffectiveConfig) {
+        return null;
     }
-  }
 
-  resetInitBarrier();
+    const profileName = lastSuccessfulInitPlan.profileName ?? "last-successful";
+    const profile = {
+        name: profileName,
+        reason: "Last successful effective config",
+        effectiveConfig: lastSuccessfulEffectiveConfig
+    };
 
-  throw new Error(
-    `Model init failed after ${initOptions.attempts} attempt(s) using ${initOptions.strategy}: ${lastError?.message ?? String(lastError)}`
-  );
+    const attemptPlan = buildInitAttemptPlan({
+        strategy: "same-config-cold-worker",
+        profiles: [profile],
+        attempts: 1,
+        readyTimeoutMs: lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
+        retryDelayMs: 0,
+        nextAttemptId
+    });
+
+    return {
+        enabled: true,
+        strategy: "same-config-cold-worker",
+        attempts: 1,
+        readyTimeoutMs: lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
+        retryDelayMs: 0,
+        configOverride: undefined,
+        hardwareAware: lastSuccessfulInitPlan.hardwareAware ?? {},
+        hasCustomProfileOptions: true,
+        probe: null,
+        profiles: [profile],
+        attemptPlan
+    };
+}
+
+async function attemptInitOnce(attempt) {
+    resetInitBarrier();
+    initStarted = true;
+    activeInitAttemptId = attempt.initAttemptId;
+
+    sendToWorker({
+        type: "init",
+        initAttemptId: attempt.initAttemptId,
+        profileName: attempt.profileName,
+        configSnapshot: attempt.effectiveConfig
+    });
+
+    return withTimeout(
+        readyPromise,
+        attempt.readyTimeoutMs,
+        "Model initialization"
+    );
+}
+
+function buildFinalInitError(initPlan, attemptedProfiles, lastError) {
+    const err = new Error(
+        `Model init failed after ${attemptedProfiles.length} attempt(s). ` +
+        `Strategy: ${initPlan.strategy}. ` +
+        `Attempted profiles: ${attemptedProfiles.join(", ")}. ` +
+        `Last error: ${lastError?.message ?? String(lastError)}`
+    );
+
+    err.strategy = initPlan.strategy;
+    err.attemptedProfiles = attemptedProfiles;
+    err.lastError = lastError;
+
+    return err;
+}
+
+async function runInitCycle(initPlan) {
+    let lastError = null;
+    const attemptedProfiles = [];
+
+    activeInitPlan = initPlan;
+
+    for (let index = 0; index < initPlan.attemptPlan.length; index++) {
+        const attempt = initPlan.attemptPlan[index];
+        attemptedProfiles.push(attempt.profileName);
+
+        try {
+            await attemptInitOnce(attempt);
+
+            lastSuccessfulInitPlan = {
+                strategy: initPlan.strategy,
+                profileName: attempt.profileName,
+                effectiveConfig: attempt.effectiveConfig,
+                readyTimeoutMs: attempt.readyTimeoutMs,
+                retryDelayMs: attempt.retryDelayMs,
+                hardwareAware: initPlan.hardwareAware,
+                attemptedProfiles: [...attemptedProfiles]
+            };
+            lastSuccessfulEffectiveConfig = attempt.effectiveConfig;
+            lastFailedExplicitInit = null;
+            activeInitAttemptId = null;
+            activeInitPlan = null;
+            return;
+        } catch (err) {
+            lastError = err;
+            activeInitAttemptId = null;
+
+            try {
+                await terminateWorker();
+            } catch (terminateErr) {
+                lastError = terminateErr;
+            }
+
+            if (index >= initPlan.attemptPlan.length - 1) {
+                break;
+            }
+
+            recreateWorker();
+
+            if (attempt.retryDelayMs > 0) {
+                await sleep(attempt.retryDelayMs);
+            }
+        }
+    }
+
+    resetInitBarrier();
+    activeInitPlan = null;
+
+    throw buildFinalInitError(initPlan, attemptedProfiles, lastError);
+}
+
+async function startInitCycle(initPlan) {
+    initInProgress = true;
+    initCyclePromise = runInitCycle(initPlan);
+
+    try {
+        return await initCyclePromise;
+    } finally {
+        initInProgress = false;
+        initCyclePromise = null;
+    }
 }
 
 async function ensureModelReady() {
-  if (initResolved) return;
+    if (initResolved) return;
 
-  if (initInProgress) {
-    return initCyclePromise ?? readyPromise;
-  }
+    if (initInProgress) {
+        return initCyclePromise ?? readyPromise;
+    }
 
-  if (initStarted) {
-    return readyPromise;
-  }
+    if (initStarted) {
+        return readyPromise;
+    }
 
-  const initOptions = resolveInitOptions();
-  initInProgress = true;
-  initCyclePromise = runInitCycle(initOptions);
+    if (lastFailedExplicitInit && !lastSuccessfulInitPlan) {
+        throw new Error(
+            `Model is not initialized after failed explicit init. ` +
+            `Call initModel() with corrected options before prompting. ` +
+            `Last failure: ${lastFailedExplicitInit.error?.message ?? String(lastFailedExplicitInit.error)}`
+        );
+    }
 
-  try {
-    return await initCyclePromise;
-  } finally {
-    initInProgress = false;
-    initCyclePromise = null;
-  }
+    const initPlan = lastSuccessfulInitPlan
+        ? createFixedInitPlanFromLastSuccess()
+        : await createInitPlan(resolveInitOptions());
+
+    return startInitCycle(initPlan);
 }
 
 function toErrorObject(raw) {
-  if (raw instanceof Error) return raw;
+    if (raw instanceof Error) return raw;
 
-  if (raw && typeof raw === "object") {
-    const err = new Error(raw.message || "Worker error");
-    if (raw.stack) err.stack = raw.stack;
-    if (raw.phase) err.phase = raw.phase;
-    if (raw.sessionId) err.sessionId = raw.sessionId;
-    return err;
-  }
+    if (raw && typeof raw === "object") {
+        const err = new Error(raw.message || "Worker error");
+        if (raw.stack) err.stack = raw.stack;
+        if (raw.phase) err.phase = raw.phase;
+        if (raw.sessionId) err.sessionId = raw.sessionId;
+        return err;
+    }
 
-  return new Error(String(raw));
+    return new Error(String(raw));
 }
 
 onWorkerMessage((msg) => {
-  if (msg.type === "ready") {
-    initResolved = true;
-    scheduler.setReady(true);
-    resolveReady();
-    return;
-  }
+    if (msg.type === "ready") {
+        if (msg.initAttemptId !== activeInitAttemptId) return;
 
-  if (msg.type === "reset_done") {
-    if (msg.sessionId) {
-      sessionsResetting.delete(msg.sessionId);
-
-      const waiter = sessionResetWaiters.get(msg.sessionId);
-      if (waiter) {
-        sessionResetWaiters.delete(msg.sessionId);
-        waiter.resolve();
-      }
-    }
-    return;
-  }
-
-  if (msg.type === "model_reset_done") {
-    const waiter = modelResetWaiter;
-    modelResetWaiter = null;
-
-    if (waiter) {
-      waiter.resolve();
-    }
-    return;
-  }
-
-  if (msg.type === "shutdown_done") {
-    const waiter = shutdownWaiter;
-    shutdownWaiter = null;
-
-    if (waiter) {
-      waiter.resolve();
-    }
-    return;
-  }
-
-  if (msg.type === "stream") {
-    const req = scheduler.getRequest(msg.id);
-    if (!req || req.status === "canceled" || req.status === "done") return;
-
-    const token = normalizeToken(msg.token, config);
-    req.finalText += token;
-    pushStream(req, token, config);
-    return;
-  }
-
-  if (msg.type === "done") {
-    const req = scheduler.complete(msg.id);
-    if (!req) return;
-
-    const resultText = req.streamEnabled
-      ? req.finalText
-      : (msg.res ?? req.finalText);
-
-    closeStream(req);
-    traceDone(req);
-    req.resolveDone(resultText);
-    traceDelete(req.id);
-    return;
-  }
-
-  if (msg.type === "error") {
-    const err = toErrorObject(msg.error);
-
-    if (
-      (msg.id === undefined || msg.id === null) &&
-      runtimeResetting &&
-      modelResetWaiter
-    ) {
-      const waiter = modelResetWaiter;
-      modelResetWaiter = null;
-      waiter.reject(err);
-      return;
+        initResolved = true;
+        scheduler.setReady(true);
+        resolveReady();
+        return;
     }
 
-    if (
-      (msg.id === undefined || msg.id === null) &&
-      runtimeShuttingDown &&
-      shutdownWaiter
-    ) {
-      const waiter = shutdownWaiter;
-      shutdownWaiter = null;
-      waiter.reject(err);
-      return;
+    if (msg.type === "reset_done") {
+        if (msg.sessionId) {
+            sessionsResetting.delete(msg.sessionId);
+
+            const waiter = sessionResetWaiters.get(msg.sessionId);
+            if (waiter) {
+                sessionResetWaiters.delete(msg.sessionId);
+                waiter.resolve();
+            }
+        }
+        return;
     }
 
-    if (
-      (msg.id === undefined || msg.id === null) &&
-      !initResolved &&
-      !msg.sessionId
-    ) {
-      rejectReady(err);
-      return;
+    if (msg.type === "model_reset_done") {
+        const waiter = modelResetWaiter;
+        modelResetWaiter = null;
+
+        if (waiter) {
+            waiter.resolve();
+        }
+        return;
     }
 
-    if (
-      (msg.id === undefined || msg.id === null) &&
-      msg.sessionId &&
-      sessionResetWaiters.has(msg.sessionId)
-    ) {
-      sessionsResetting.delete(msg.sessionId);
+    if (msg.type === "shutdown_done") {
+        const waiter = shutdownWaiter;
+        shutdownWaiter = null;
 
-      const waiter = sessionResetWaiters.get(msg.sessionId);
-      sessionResetWaiters.delete(msg.sessionId);
-      waiter.reject(err);
-      return;
+        if (waiter) {
+            waiter.resolve();
+        }
+        return;
     }
 
-    const req = scheduler.fail(msg.id);
-    if (!req) return;
+    if (msg.type === "stream") {
+        const req = scheduler.getRequest(msg.id);
+        if (!req || req.status === "canceled" || req.status === "done") return;
 
-    traceError(req, err);
-    errorStream(req, err);
-    req.rejectDone(err);
-    traceDelete(req.id);
-  }
+        const token = normalizeToken(msg.token, config);
+        req.finalText += token;
+        pushStream(req, token, config);
+        return;
+    }
+
+    if (msg.type === "done") {
+        const req = scheduler.complete(msg.id);
+        if (!req) return;
+
+        const resultText = req.streamEnabled ? req.finalText : (msg.res ?? req.finalText);
+
+        closeStream(req);
+        traceDone(req);
+        req.resolveDone(resultText);
+        traceDelete(req.id);
+        return;
+    }
+
+    if (msg.type === "error") {
+        const err = toErrorObject(msg.error);
+
+        if (msg.initAttemptId !== undefined && msg.initAttemptId !== null) {
+            if (msg.initAttemptId !== activeInitAttemptId) return;
+            rejectReady(err);
+            return;
+        }
+
+        if ((msg.id === undefined || msg.id === null) && runtimeResetting && modelResetWaiter) {
+            const waiter = modelResetWaiter;
+            modelResetWaiter = null;
+            waiter.reject(err);
+            return;
+        }
+
+        if ((msg.id === undefined || msg.id === null) && runtimeShuttingDown && shutdownWaiter) {
+            const waiter = shutdownWaiter;
+            shutdownWaiter = null;
+            waiter.reject(err);
+            return;
+        }
+
+        if ((msg.id === undefined || msg.id === null) && !initResolved && !msg.sessionId) {
+            rejectReady(err);
+            return;
+        }
+
+        if ((msg.id === undefined || msg.id === null) && msg.sessionId && sessionResetWaiters.has(msg.sessionId)) {
+            sessionsResetting.delete(msg.sessionId);
+
+            const waiter = sessionResetWaiters.get(msg.sessionId);
+            sessionResetWaiters.delete(msg.sessionId);
+            waiter.reject(err);
+            return;
+        }
+
+        const req = scheduler.fail(msg.id);
+        if (!req) return;
+
+        traceError(req, err);
+        errorStream(req, err);
+        req.rejectDone(err);
+        traceDelete(req.id);
+    }
 });
 
 export async function initModel(options = {}) {
-  if (runtimeShuttingDown) {
-    throw new Error("Runtime is shutting down");
-  }
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
 
-  if (runtimeResetting) {
-    throw new Error("Runtime is resetting");
-  }
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
 
-  if (initResolved) {
-    return readyPromise;
-  }
+    if (initResolved) {
+        if (hasMeaningfulInitOptions(options)) {
+            throw new Error("Model already initialized; resetModel() required before changing init config");
+        }
 
-  if (initStarted || initInProgress) {
-    throw new Error("Model initialization already in progress");
-  }
+        return readyPromise;
+    }
 
-  const initOptions = resolveInitOptions(options);
-  initInProgress = true;
-  initCyclePromise = runInitCycle(initOptions);
+    if (initStarted || initInProgress) {
+        throw new Error("Model initialization already in progress");
+    }
 
-  try {
-    return await initCyclePromise;
-  } finally {
-    initInProgress = false;
-    initCyclePromise = null;
-  }
+    const rawHadCustomProfileOptions = hasCustomProfileOptions(options);
+    const initOptions = resolveInitOptions(options);
+    const initPlan = await createInitPlan(initOptions);
+
+    try {
+        return await startInitCycle(initPlan);
+    } catch (err) {
+        if (rawHadCustomProfileOptions || initOptions.hasCustomProfileOptions) {
+            lastFailedExplicitInit = {
+                hadMeaningfulOptions: true,
+                strategy: initOptions.strategy,
+                attemptedProfiles: err.attemptedProfiles ?? initPlan.attemptPlan.map((attempt) => attempt.profileName),
+                error: err
+            };
+        }
+
+        throw err;
+    }
 }
 
 export async function prompt(text, options = {}) {
-  const sessionId = options.sessionId || "default";
+    const sessionId = options.sessionId || "default";
 
-  if (runtimeResetting) {
-    throw new Error("Runtime is resetting");
-  }
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
 
-  if (runtimeShuttingDown) {
-    throw new Error("Runtime is shutting down");
-  }
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
 
-  if (sessionsResetting.has(sessionId)) {
-    throw new Error(`Session is resetting: ${sessionId}`);
-  }
+    if (sessionsResetting.has(sessionId)) {
+        throw new Error(`Session is resetting: ${sessionId}`);
+    }
 
-  await ensureModelReady();
+    await ensureModelReady();
 
-  if (scheduler.queuedCount() >= config.runtime.maxQueueSize) {
-    throw new Error("Backpressure: queue full");
-  }
+    if (scheduler.queuedCount() >= config.runtime.maxQueueSize) {
+        throw new Error("Backpressure: queue full");
+    }
 
-  const req = createRequest(text, options);
-  traceQueued(req);
-  scheduler.enqueue(req);
+    const req = createRequest(text, options);
+    traceQueued(req);
+    scheduler.enqueue(req);
 
-  return {
-    id: req.id,
-    stream: req.stream,
-    done: req.done,
-  };
+    return {
+        id: req.id,
+        stream: req.stream,
+        done: req.done
+    };
 }
 
 export function cancelPrompt(promptId) {
-  sendToWorker({
-    type: "cancel",
-    id: promptId,
-  });
+    sendToWorker({
+        type: "cancel",
+        id: promptId
+    });
 
-  const req = scheduler.cancel(promptId);
-  if (!req) return false;
+    const req = scheduler.cancel(promptId);
+    if (!req) return false;
 
-  cancelStream(req);
-  traceCanceled(req);
-  req.rejectDone(new Error("Prompt canceled"));
-  traceDelete(req.id);
+    cancelStream(req);
+    traceCanceled(req);
+    req.rejectDone(new Error("Prompt canceled"));
+    traceDelete(req.id);
 
-  return true;
+    return true;
 }
 
 export async function resetSession(sessionId = "default") {
-  if (runtimeResetting) {
-    throw new Error("Runtime is resetting");
-  }
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
 
-  if (runtimeShuttingDown) {
-    throw new Error("Runtime is shutting down");
-  }
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
 
-  const existing = sessionResetWaiters.get(sessionId);
-  if (existing) {
-    return existing.promise;
-  }
+    const existing = sessionResetWaiters.get(sessionId);
+    if (existing) {
+        return existing.promise;
+    }
 
-  sessionsResetting.add(sessionId);
+    sessionsResetting.add(sessionId);
 
-  let resolveReset;
-  let rejectReset;
-  const promise = new Promise((resolve, reject) => {
-    resolveReset = resolve;
-    rejectReset = reject;
-  });
-
-  sessionResetWaiters.set(sessionId, {
-    promise,
-    resolve: resolveReset,
-    reject: rejectReset,
-  });
-
-  const canceled = scheduler.cancelBySession(sessionId);
-
-  for (const req of canceled) {
-    sendToWorker({
-      type: "cancel",
-      id: req.id,
+    let resolveReset;
+    let rejectReset;
+    const promise = new Promise((resolve, reject) => {
+        resolveReset = resolve;
+        rejectReset = reject;
     });
 
-    cancelStream(req);
-    traceCanceled(req);
-    req.rejectDone(new Error(`Session reset: ${sessionId}`));
-    traceDelete(req.id);
-  }
+    sessionResetWaiters.set(sessionId, {
+        promise,
+        resolve: resolveReset,
+        reject: rejectReset
+    });
 
-  sendToWorker({
-    type: "reset_session",
-    sessionId,
-  });
+    const canceled = scheduler.cancelBySession(sessionId);
 
-  return promise;
+    for (const req of canceled) {
+        sendToWorker({
+            type: "cancel",
+            id: req.id
+        });
+
+        cancelStream(req);
+        traceCanceled(req);
+        req.rejectDone(new Error(`Session reset: ${sessionId}`));
+        traceDelete(req.id);
+    }
+
+    sendToWorker({
+        type: "reset_session",
+        sessionId
+    });
+
+    return promise;
 }
 
 export async function resetModel() {
-  if (runtimeResetting) {
-    throw new Error("Runtime is resetting");
-  }
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
 
-  if (runtimeShuttingDown) {
-    throw new Error("Runtime is shutting down");
-  }
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
 
-  runtimeResetting = true;
-  scheduler.setReady(false);
+    runtimeResetting = true;
+    scheduler.setReady(false);
 
-  const canceled = scheduler.cancelAll();
+    const canceled = scheduler.cancelAll();
 
-  for (const req of canceled) {
-    sendToWorker({
-      type: "cancel",
-      id: req.id,
+    for (const req of canceled) {
+        sendToWorker({
+            type: "cancel",
+            id: req.id
+        });
+
+        cancelStream(req);
+        traceCanceled(req);
+        req.rejectDone(new Error("Model reset"));
+        traceDelete(req.id);
+    }
+
+    let resolveReset;
+    let rejectReset;
+    const waitForWorkerReset = new Promise((resolve, reject) => {
+        resolveReset = resolve;
+        rejectReset = reject;
     });
 
-    cancelStream(req);
-    traceCanceled(req);
-    req.rejectDone(new Error("Model reset"));
-    traceDelete(req.id);
-  }
-
-  let resolveReset;
-  let rejectReset;
-  const waitForWorkerReset = new Promise((resolve, reject) => {
-    resolveReset = resolve;
-    rejectReset = reject;
-  });
-
-  modelResetWaiter = {
-    resolve: resolveReset,
-    reject: rejectReset,
-  };
-
-  try {
-    sendToWorker({
-      type: "reset_model",
-    });
-
-    await waitForWorkerReset;
-    await terminateWorker();
-    recreateWorker();
-
-    const initOptions = resolveInitOptions();
-    initInProgress = true;
-    initCyclePromise = runInitCycle(initOptions);
+    modelResetWaiter = {
+        resolve: resolveReset,
+        reject: rejectReset
+    };
 
     try {
-      await initCyclePromise;
+        sendToWorker({
+            type: "reset_model"
+        });
+
+        await waitForWorkerReset;
+        await terminateWorker();
+        recreateWorker();
+
+        const initPlan = createFixedInitPlanFromLastSuccess() ?? await createInitPlan(resolveInitOptions());
+        await startInitCycle(initPlan);
     } finally {
-      initInProgress = false;
-      initCyclePromise = null;
+        runtimeResetting = false;
+        modelResetWaiter = null;
     }
-  } finally {
-    runtimeResetting = false;
-    modelResetWaiter = null;
-  }
 }
 
 export async function shutdownRuntime({ mode = "abort" } = {}) {
-  if (mode !== "abort") {
-    throw new Error(`Unsupported shutdown mode: ${mode}`);
-  }
+    if (mode !== "abort") {
+        throw new Error(`Unsupported shutdown mode: ${mode}`);
+    }
 
-  if (runtimeResetting) {
-    throw new Error("Runtime is resetting");
-  }
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
 
-  if (runtimeShuttingDown) {
-    throw new Error("Runtime is shutting down");
-  }
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
 
-  runtimeShuttingDown = true;
-  scheduler.setReady(false);
+    runtimeShuttingDown = true;
+    scheduler.setReady(false);
 
-  const canceled = scheduler.cancelAll();
+    const canceled = scheduler.cancelAll();
 
-  for (const req of canceled) {
-    sendToWorker({
-      type: "cancel",
-      id: req.id,
+    for (const req of canceled) {
+        sendToWorker({
+            type: "cancel",
+            id: req.id
+        });
+
+        cancelStream(req);
+        traceCanceled(req);
+        req.rejectDone(new Error("Runtime shutdown"));
+        traceDelete(req.id);
+    }
+
+    let resolveShutdown;
+    let rejectShutdown;
+    const waitForShutdown = new Promise((resolve, reject) => {
+        resolveShutdown = resolve;
+        rejectShutdown = reject;
     });
 
-    cancelStream(req);
-    traceCanceled(req);
-    req.rejectDone(new Error("Runtime shutdown"));
-    traceDelete(req.id);
-  }
+    shutdownWaiter = {
+        resolve: resolveShutdown,
+        reject: rejectShutdown
+    };
 
-  let resolveShutdown;
-  let rejectShutdown;
-  const waitForShutdown = new Promise((resolve, reject) => {
-    resolveShutdown = resolve;
-    rejectShutdown = reject;
-  });
+    try {
+        sendToWorker({
+            type: "shutdown"
+        });
 
-  shutdownWaiter = {
-    resolve: resolveShutdown,
-    reject: rejectShutdown,
-  };
-
-  try {
-    sendToWorker({
-      type: "shutdown",
-    });
-
-    await waitForShutdown;
-    await terminateWorker();
-  } finally {
-    shutdownWaiter = null;
-  }
+        await waitForShutdown;
+        await terminateWorker();
+    } finally {
+        shutdownWaiter = null;
+    }
 }
