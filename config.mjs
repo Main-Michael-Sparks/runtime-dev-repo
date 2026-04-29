@@ -21,7 +21,7 @@ export const config = {
     // - the other one protects CONTEXT CREATION / KV-cache allocation
     ignoreMemorySafetyChecks: false,
   },
-
+  context: {
     // - Very small context sizes can also indirectly constrain practical batching.
     contextSize: "auto",
 
