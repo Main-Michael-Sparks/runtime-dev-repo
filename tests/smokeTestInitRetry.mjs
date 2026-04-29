@@ -114,7 +114,7 @@ async function modeDuplicateExplicitInit() {
   logSection("duplicate explicit init rejection");
 
   const { initModel, shutdownRuntime } =
-    await import("../src/llm/inference.mjs");
+    await import("../inference.mjs");
 
   const firstInit = initModel({
     attempts: 1,
@@ -137,7 +137,7 @@ async function modeDuplicateExplicitInit() {
 async function modePromptAutoInit() {
   logSection("prompt auto-init via ensureModelReady");
 
-  const { prompt, shutdownRuntime } = await import("../src/llm/inference.mjs");
+  const { prompt, shutdownRuntime } = await import("../inference.mjs");
 
   const req = await prompt("Say hello briefly.");
   const result = await readPromptResult(req, { logChunks: false });
@@ -156,7 +156,7 @@ async function modeRetryTimeoutRecovery() {
   logSection("init ready-timeout failure then recovery");
 
   const { initModel, prompt, shutdownRuntime } =
-    await import("../src/llm/inference.mjs");
+    await import("../inference.mjs");
 
   await expectReject(
     "forced init timeout",
@@ -191,7 +191,7 @@ async function modeInvalidOptions() {
   logSection("invalid init options reject before worker init");
 
   const { initModel, shutdownRuntime } =
-    await import("../src/llm/inference.mjs");
+    await import("../inference.mjs");
 
   await expectReject(
     "unsupported init retry strategy",
@@ -228,9 +228,9 @@ async function modeLifecycleRegression() {
     resetSession,
     resetModel,
     shutdownRuntime,
-  } = await import("../src/llm/inference.mjs");
+  } = await import("../inference.mjs");
 
-  const { getTrace, getAllTraces } = await import("../src/utils/observer.mjs");
+  const { getTrace, getAllTraces } = await import("../observer.mjs");
 
   await initModel({
     attempts: 2,
