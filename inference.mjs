@@ -445,11 +445,21 @@ async function ensureModelReady() {
         );
     }
 
-    const initPlan = lastSuccessfulInitPlan
-        ? createFixedInitPlanFromLastSuccess()
-        : await createInitPlan(resolveInitOptions());
+    initInProgress = true;
+    initCyclePromise = (async () => {
+        const initPlan = lastSuccessfulInitPlan
+            ? createFixedInitPlanFromLastSuccess()
+            : await createInitPlan(resolveInitOptions());
 
-    return startInitCycle(initPlan);
+        return runInitCycle(initPlan);
+    })();
+
+    try {
+        return await initCyclePromise;
+    } finally {
+        initInProgress = false;
+        initCyclePromise = null;
+    }
 }
 
 function toErrorObject(raw) {
@@ -602,21 +612,30 @@ export async function initModel(options = {}) {
 
     const rawHadCustomProfileOptions = hasCustomProfileOptions(options);
     const initOptions = resolveInitOptions(options);
-    const initPlan = await createInitPlan(initOptions);
+    let initPlan = null;
+
+    initInProgress = true;
+    initCyclePromise = (async () => {
+        initPlan = await createInitPlan(initOptions);
+        return runInitCycle(initPlan);
+    })();
 
     try {
-        return await startInitCycle(initPlan);
+        return await initCyclePromise;
     } catch (err) {
         if (rawHadCustomProfileOptions || initOptions.hasCustomProfileOptions) {
             lastFailedExplicitInit = {
                 hadMeaningfulOptions: true,
                 strategy: initOptions.strategy,
-                attemptedProfiles: err.attemptedProfiles ?? initPlan.attemptPlan.map((attempt) => attempt.profileName),
+                attemptedProfiles: err.attemptedProfiles ?? initPlan?.attemptPlan?.map((attempt) => attempt.profileName) ?? [],
                 error: err
             };
         }
 
         throw err;
+    } finally {
+        initInProgress = false;
+        initCyclePromise = null;
     }
 }
 
