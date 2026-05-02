@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { config } from "../config.mjs";
 import { deepFreeze } from "../configOverride.mjs";
+import { buildContextRetryProfiles } from "../contextRetryProfiles.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const modelPath = path.resolve(
@@ -134,7 +135,135 @@ async function initModel() {
     return initPromise;
 }
 
-async function getSession(sessionId) {
+function toContextCreateOptions(contextConfig) {
+    return {
+        contextSize: contextConfig.contextSize,
+        batchSize: contextConfig.batchSize,
+        threads: contextConfig.threads,
+        flashAttention: contextConfig.flashAttention,
+        performanceTracking: contextConfig.performanceTracking,
+        sequences: contextConfig.sequences,
+        failedCreationRemedy: contextConfig.failedCreationRemedy,
+        ignoreMemorySafetyChecks: contextConfig.ignoreMemorySafetyChecks
+    };
+}
+
+function buildContextCreationObsoleteError(requestId) {
+    if (requestId !== null && requestId !== undefined && !activeRequests.has(requestId)) {
+        return new Error("Prompt canceled");
+    }
+
+    if (resetting || shuttingDown || !ready || !model) {
+        return new Error("Model is resetting");
+    }
+
+    return null;
+}
+
+async function disposePartialSessionArtifacts({ session, context }) {
+    const cleanupErrors = [];
+
+    if (session?.disposed !== true && typeof session?.dispose === "function") {
+        try {
+            session.dispose({
+                disposeSequence: true
+            });
+        } catch (err) {
+            cleanupErrors.push(err);
+        }
+    }
+
+    if (context?.disposed !== true && typeof context?.dispose === "function") {
+        try {
+            await context.dispose();
+        } catch (err) {
+            cleanupErrors.push(err);
+        }
+    }
+
+    return cleanupErrors;
+}
+
+function buildContextCreationError({ sessionId, attemptedProfiles, lastError }) {
+    const err = new Error(
+        `Context creation failed after ${attemptedProfiles.length} attempt(s). ` +
+        `Session: ${sessionId}. ` +
+        `Attempted profiles: ${attemptedProfiles.join(", ")}. ` +
+        `Last error: ${lastError?.message ?? String(lastError)}`
+    );
+
+    err.sessionId = sessionId;
+    err.attemptedContextProfiles = attemptedProfiles;
+    err.lastError = lastError;
+
+    return err;
+}
+
+async function createSessionContextWithRetry(sessionId, requestId = null) {
+    const profiles = buildContextRetryProfiles({
+        baseContextConfig: activeConfig.context,
+        creationRetry: activeConfig.context.creationRetry,
+        hardwareProbe: activeConfig.hardwareProbe ?? null
+    });
+
+    const attemptedProfiles = [];
+    let lastError = null;
+
+    for (const profile of profiles) {
+        const obsoleteBeforeAttempt = buildContextCreationObsoleteError(requestId);
+        if (obsoleteBeforeAttempt) throw obsoleteBeforeAttempt;
+
+        attemptedProfiles.push(profile.name);
+
+        let context = null;
+        let session = null;
+
+        try {
+            context = await model.createContext(toContextCreateOptions(profile.context));
+
+            if (typeof context.getSequence !== "function") {
+                throw new Error("Context does not expose getSequence()");
+            }
+
+            const sequence = context.getSequence();
+
+            session = new LlamaChatSession({
+                contextSequence: sequence
+            });
+        } catch (err) {
+            lastError = err;
+            await disposePartialSessionArtifacts({ session, context });
+
+            const obsoleteAfterFailure = buildContextCreationObsoleteError(requestId);
+            if (obsoleteAfterFailure) throw obsoleteAfterFailure;
+
+            continue;
+        }
+
+        const wrapper = {
+            session,
+            context,
+            contextProfile: profile.name,
+            contextConfig: profile.context
+        };
+
+        const obsoleteAfterSuccess = buildContextCreationObsoleteError(requestId);
+        if (obsoleteAfterSuccess) {
+            await disposePartialSessionArtifacts(wrapper);
+            throw obsoleteAfterSuccess;
+        }
+
+        return wrapper;
+    }
+
+    throw buildContextCreationError({
+        sessionId,
+        attemptedProfiles,
+        lastError
+    });
+}
+
+async function getSession(sessionId, requestId = null) {
     if (!model) throw new Error("Model not initialized");
 
     if (sessions.has(sessionId)) return sessions.get(sessionId);
@@ -144,28 +273,7 @@ async function getSession(sessionId) {
         await disposeSessionById(oldest);
     }
 
-    const context = await model.createContext({
-        contextSize: activeConfig.context.contextSize,
-        batchSize: activeConfig.context.batchSize,
-        threads: activeConfig.context.threads,
-        flashAttention: activeConfig.context.flashAttention,
-        performanceTracking: activeConfig.context.performanceTracking,
-        sequences: activeConfig.context.sequences,
-        failedCreationRemedy: activeConfig.context.failedCreationRemedy,
-        ignoreMemorySafetyChecks: activeConfig.context.ignoreMemorySafetyChecks
-    });
-
-    if (typeof context.getSequence !== "function") {
-        throw new Error("Context does not expose getSequence()");
-    }
-
-    const sequence = context.getSequence();
-
-    const session = new LlamaChatSession({
-        contextSequence: sequence
-    });
-
-    const wrapper = { session, context };
+    const wrapper = await createSessionContextWithRetry(sessionId, requestId);
     sessions.set(sessionId, wrapper);
 
     return wrapper;
@@ -241,7 +349,7 @@ parentPort.on("message", async (msg) => {
 
             activeRequests.set(id, true);
 
-            const { session } = await getSession(sessionId);
+            const { session } = await getSession(sessionId, id);
 
             let lastTokens = [];
 
@@ -293,6 +401,10 @@ parentPort.on("message", async (msg) => {
             });
         }
     } catch (err) {
+        if (msg.type === "prompt" && msg.id !== undefined && msg.id !== null) {
+            activeRequests.delete(msg.id);
+        }
+
         const initErrorMeta = msg.type === "init" || msg.initAttemptId !== undefined
             ? {
                   initAttemptId: msg.initAttemptId ?? activeInitAttemptId,

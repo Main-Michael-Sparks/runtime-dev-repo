@@ -59,6 +59,7 @@ let activeInitAttemptId = null;
 let activeInitPlan = null;
 let lastSuccessfulInitPlan = null;
 let lastSuccessfulEffectiveConfig = null;
+let lastSuccessfulProbe = null;
 let lastFailedExplicitInit = null;
 let nextInitAttemptId = 0;
 
@@ -259,8 +260,34 @@ function resetInitBarrier() {
     readyPromise = createReadyPromise();
 }
 
+function shouldProbeForHardwareAwareInit(initOptions) {
+    return initOptions.strategy === "hardware-aware-cold-worker" &&
+        initOptions.hardwareAware.probe;
+}
+
+function shouldProbeForContextCreationRetry(effectiveConfig) {
+    const creationRetry = effectiveConfig?.context?.creationRetry;
+
+    return creationRetry?.enabled !== false &&
+        creationRetry?.allowHardwareDerivedBounds === true;
+}
+
+function shouldProbeForInitPlan(initOptions, effectiveConfigCandidate = config) {
+    return shouldProbeForHardwareAwareInit(initOptions) ||
+        shouldProbeForContextCreationRetry(effectiveConfigCandidate);
+}
+
+function createWorkerConfigSnapshot(effectiveConfig, probe) {
+    if (!probe) return effectiveConfig;
+
+    return {
+        ...effectiveConfig,
+        hardwareProbe: probe
+    };
+}
+
 async function createInitPlan(initOptions) {
-    const probe = initOptions.strategy === "hardware-aware-cold-worker" && initOptions.hardwareAware.probe
+    const probe = shouldProbeForInitPlan(initOptions, config)
         ? await probeHardware(initOptions.hardwareAware)
         : null;
 
@@ -319,7 +346,7 @@ function createFixedInitPlanFromLastSuccess() {
         configOverride: undefined,
         hardwareAware: lastSuccessfulInitPlan.hardwareAware ?? {},
         hasCustomProfileOptions: true,
-        probe: null,
+        probe: lastSuccessfulProbe,
         profiles: [profile],
         attemptPlan
     };
@@ -334,7 +361,10 @@ async function attemptInitOnce(attempt) {
         type: "init",
         initAttemptId: attempt.initAttemptId,
         profileName: attempt.profileName,
-        configSnapshot: attempt.effectiveConfig
+        configSnapshot: createWorkerConfigSnapshot(
+            attempt.effectiveConfig,
+            activeInitPlan?.probe ?? null
+        )
     });
 
     return withTimeout(
@@ -379,9 +409,11 @@ async function runInitCycle(initPlan) {
                 readyTimeoutMs: attempt.readyTimeoutMs,
                 retryDelayMs: attempt.retryDelayMs,
                 hardwareAware: initPlan.hardwareAware,
-                attemptedProfiles: [...attemptedProfiles]
+                attemptedProfiles: [...attemptedProfiles],
+                probe: initPlan.probe ?? null
             };
             lastSuccessfulEffectiveConfig = attempt.effectiveConfig;
+            lastSuccessfulProbe = initPlan.probe ?? null;
             lastFailedExplicitInit = null;
             activeInitAttemptId = null;
             activeInitPlan = null;

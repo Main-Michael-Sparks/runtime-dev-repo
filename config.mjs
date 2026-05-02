@@ -4,7 +4,28 @@ export const config = {
         gpuLayers: 0,
         useMmap: true,
         useMlock: false,
-        ignoreMemorySafetyChecks: false
+        ignoreMemorySafetyChecks: false,
+
+        creationRetry: {
+            enabled: true,
+            maxAttempts: 4,
+            fallbackContextSize: {
+                min: 1024,
+                max: 4096
+            },
+            allowHardwareDerivedBounds: true,
+            minContextSize: 1024,
+            maxContextSize: 4096,
+            contextSizeShrinkRatio: 0.5,
+            allowBatchReduction: true,
+            fallbackBatchSize: 256,
+            allowThreadFallback: true,
+            fallbackThreads: {
+                ideal: 0,
+                min: 1
+            },
+            allowFlashAttentionFallback: true
+        }
     },
 
     context: {
