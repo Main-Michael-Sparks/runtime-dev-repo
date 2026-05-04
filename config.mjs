@@ -4,6 +4,23 @@ export const config = {
         gpuLayers: 0,
         useMmap: true,
         useMlock: false,
+        ignoreMemorySafetyChecks: false
+    },
+
+    context: {
+        contextSize: "auto",
+        batchSize: 512,
+        threads: {
+            ideal: 0,
+            min: 1
+        },
+        flashAttention: false,
+        performanceTracking: false,
+        sequences: 1,
+        failedCreationRemedy: {
+            retries: 6,
+            autoContextSizeShrink: 0.16
+        },
         ignoreMemorySafetyChecks: false,
 
         creationRetry: {
@@ -26,23 +43,6 @@ export const config = {
             },
             allowFlashAttentionFallback: true
         }
-    },
-
-    context: {
-        contextSize: "auto",
-        batchSize: 512,
-        threads: {
-            ideal: 0,
-            min: 1
-        },
-        flashAttention: false,
-        performanceTracking: false,
-        sequences: 1,
-        failedCreationRemedy: {
-            retries: 6,
-            autoContextSizeShrink: 0.16
-        },
-        ignoreMemorySafetyChecks: false
     },
 
     model: {

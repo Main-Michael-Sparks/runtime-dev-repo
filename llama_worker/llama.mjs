@@ -181,7 +181,9 @@ async function disposePartialSessionArtifacts({ session, context }) {
         }
     }
 
-    return cleanupErrors;
+    if (cleanupErrors.length > 0) {
+        throw cleanupErrors[0];
+    }
 }
 
 function buildContextCreationError({ sessionId, attemptedProfiles, lastError }) {

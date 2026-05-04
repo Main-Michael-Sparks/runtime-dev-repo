@@ -237,6 +237,36 @@ function deriveBoundFromHardwareProbe(hardwareProbe, creationRetry) {
     return { min, max };
 }
 
+function getContextSizeBaseBounds(baseContextSize) {
+    if (Number.isInteger(baseContextSize) && baseContextSize > 0) {
+        return {
+            min: baseContextSize,
+            max: baseContextSize
+        };
+    }
+
+    if (isBoundedContextSize(baseContextSize)) {
+        return {
+            min: baseContextSize.min,
+            max: baseContextSize.max
+        };
+    }
+
+    return null;
+}
+
+function capContextSizeBoundToBase(bound, baseContextSize) {
+    if (!bound) return null;
+
+    const baseBounds = getContextSizeBaseBounds(baseContextSize);
+    if (baseBounds === null) return bound;
+
+    const max = Math.min(bound.max, baseBounds.max);
+    const min = Math.min(bound.min, baseBounds.min, max);
+
+    return { min, max };
+}
+
 export function normalizeContextCreationRetryOptions(contextConfig = {}) {
     assertPlainObject(contextConfig, "contextConfig");
 
@@ -319,23 +349,38 @@ export function deriveBoundedContextSize({
         creationRetry: creationRetry ?? {}
     });
 
-    const hardwareBound = deriveBoundFromHardwareProbe(hardwareProbe, normalized);
+    const hardwareBound = capContextSizeBoundToBase(
+        deriveBoundFromHardwareProbe(hardwareProbe, normalized),
+        baseContextSize
+    );
     if (hardwareBound) return hardwareBound;
 
     if (normalized.fallbackContextSize) {
-        return clonePlain(normalized.fallbackContextSize);
+        return capContextSizeBoundToBase(
+            clonePlain(normalized.fallbackContextSize),
+            baseContextSize
+        );
     }
 
-    const fixedBound = deriveBoundFromFixedContextSize(baseContextSize, normalized);
+    const fixedBound = capContextSizeBoundToBase(
+        deriveBoundFromFixedContextSize(baseContextSize, normalized),
+        baseContextSize
+    );
     if (fixedBound) return fixedBound;
 
-    const boundedBound = deriveBoundFromBoundedContextSize(baseContextSize, normalized);
+    const boundedBound = capContextSizeBoundToBase(
+        deriveBoundFromBoundedContextSize(baseContextSize, normalized),
+        baseContextSize
+    );
     if (boundedBound) return boundedBound;
 
-    return {
-        min: normalized.minContextSize,
-        max: normalized.maxContextSize
-    };
+    return capContextSizeBoundToBase(
+        {
+            min: normalized.minContextSize,
+            max: normalized.maxContextSize
+        },
+        baseContextSize
+    );
 }
 
 function addUniqueProfile(profiles, profile) {
