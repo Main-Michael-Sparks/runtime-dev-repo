@@ -1,0 +1,691 @@
+# Runtime Dev Dev Notes — Hardware-Aware Init Retry + Context Creation Retry
+
+**Date:** 2026-05-04  
+**Branches covered:**
+
+```text
+hardware-aware-degraded-init-retry-v1
+context-creation-retry-v1
+```
+
+**Purpose:** preserve behavior, caveats, hidden contracts, and future-assistant guidance for the last two Runtime Dev branches. This document emphasizes behavior that is not obvious from reading individual code files.
+
+---
+
+## High-Level Branch Relationship
+
+These two branches are related but intentionally separate.
+
+```text
+hardware-aware-degraded-init-retry-v1
+  -> handles model/init retry, validated init-time configOverride, hardware-aware profile planning, worker config snapshots.
+
+context-creation-retry-v1
+  -> handles per-session worker-local createContext retry after the model is already loaded.
+```
+
+Do not blur these layers:
+
+```text
+init retry != context creation retry
+configOverride != retry strategy
+hardware probe metadata != createContext options
+model load config != context allocation config
+prompt retry != context retry
+```
+
+The hardware-aware branch may select safer starting config/profiles during initialization. The context-retry branch retries `model.createContext(...)` when session context creation fails.
+
+---
+
+## Branch 1 — Hardware-Aware / Degraded Init Retry v1
+
+### Core Behavior
+
+This branch extended Init Retry v1 with:
+
+```text
+validated configOverride
+passive CPU/RAM hardware probe
+retry profile planning
+worker config snapshots
+initAttemptId/profileName identity
+reset/auto-init safety
+```
+
+The branch preserves these lifecycle boundaries:
+
+```text
+queue-based concurrency remains intact
+worker remains the model execution boundary
+request lifecycle ownership remains in the parent runtime layer
+stream shaping remains parent-side and static
+shutdown remains terminal/off
+prompt/output semantics are not intentionally changed
+model identity is not overrideable
+```
+
+### Important Non-Obvious Behavior
+
+#### 1. `configOverride` is not a general runtime patch system
+
+`configOverride` is init-time only. It controls the starting effective config for an init attempt; it does not hot-patch a running model.
+
+Allowed surfaces:
+
+```js
+modelLoad: {
+    gpuLayers,
+    useMmap,
+    useMlock,
+    ignoreMemorySafetyChecks
+}
+
+context: {
+    contextSize,
+    batchSize,
+    threads,
+    flashAttention,
+    performanceTracking,
+    sequences,
+    failedCreationRemedy,
+    ignoreMemorySafetyChecks
+}
+```
+
+Rejected surfaces:
+
+```js
+modelLoad.baseModel
+runtime
+sessions
+stream
+model
+```
+
+Do not allow `modelLoad.baseModel` without redesigning worker model path resolution. The worker still builds a static `modelPath` from the worker location and `config.modelLoad.baseModel`.
+
+#### 2. `configOverride` and retry strategy are separate concepts
+
+Keep these distinct:
+
+```text
+configOverride -> starting effective config
+strategy       -> retry/profile generation behavior
+```
+
+A user override can be used with same-config retry. Hardware-aware strategy can produce profiles. Do not let configOverride mutate the global config object.
+
+#### 3. Worker config snapshots are the bridge
+
+The parent sends a full `configSnapshot` during init. The worker stores it as `activeConfig` and uses it for:
+
+```text
+model load options
+context creation options
+session limits
+generation config reads
+```
+
+The worker should not reach back to mutable parent state. Treat `activeConfig` as the worker’s current effective runtime contract.
+
+#### 4. Init attempt identity prevents stale worker messages
+
+The branch added `initAttemptId` and `profileName`. Stale `ready` and init-error messages must be ignored. Timeout/failure invalidates the active attempt before worker replacement.
+
+This is important because native worker operations may resolve after the parent already moved on.
+
+#### 5. Duplicate explicit init race was real
+
+The branch found a race where `initModel()` did not mark `initInProgress` early enough. A second explicit init could enter during the async planning window.
+
+Locked behavior:
+
+```text
+initModel() sets initInProgress before async planning.
+ensureModelReady() has similar planning-window protection.
+duplicate explicit init rejects immediately.
+```
+
+Expected error:
+
+```text
+Model initialization already in progress
+```
+
+Do not move `initInProgress = true` later.
+
+#### 6. Failed explicit custom/profile init blocks silent default auto-init
+
+If an explicit custom/profile init fails, `prompt()` should not silently auto-init with default config. That could hide a failed custom safety/profile decision.
+
+Expected behavior:
+
+```text
+prompt after failed explicit custom/profile init rejects and tells caller to call initModel() with corrected options.
+```
+
+#### 7. `resetModel()` preserves the last winning effective config
+
+After hardware-aware/degraded init, `resetModel()` should not silently fall back to defaults. It reuses the last successful effective config / profile state.
+
+That behavior is critical when the default config is unsafe but a degraded profile succeeded.
+
+#### 8. Passive hardware probing is non-fatal and CPU/RAM-focused
+
+The branch added CPU/RAM hardware probe shape. GPU probing remains best-effort / not implemented in v1. Probe failures should not crash init.
+
+Do not treat missing GPU probe data as failure.
+
+---
+
+## Branch 1 Testing Notes
+
+Current-contract tests:
+
+```bash
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+Legacy/reference only:
+
+```text
+tests/legacy/smokeTestInitRetry.mjs
+```
+
+Do not treat the legacy smoke as current-contract if it checks the old “configOverride is reserved” behavior.
+
+Known benign warning:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature
+```
+
+This warning appeared during branch validation and did not fail tests.
+
+---
+
+## Branch 2 — Context Creation Retry v1
+
+### Core Behavior
+
+This branch adds retry around worker-local session context creation:
+
+```text
+getSession(sessionId)
+  if session exists: return it
+  maybe evict oldest
+  create context through retry profiles
+  create LlamaChatSession
+  store wrapper only after success
+```
+
+The feature is scoped to:
+
+```js
+model.createContext(...)
+```
+
+It is not:
+
+```text
+model-load retry
+prompt retry
+generation retry
+native operation cancellation
+tool calling
+drain shutdown
+```
+
+### Files Added / Modified
+
+```text
+config.mjs
+contextRetryProfiles.mjs
+inference.mjs
+llama_worker/llama.mjs
+tests/smokeTestContextCreationRetry.mjs
+```
+
+### Required Config Placement
+
+`creationRetry` belongs under:
+
+```js
+context: {
+    creationRetry: { ... }
+}
+```
+
+It must not be under:
+
+```js
+modelLoad: {
+    creationRetry: { ... } // wrong
+}
+```
+
+This placement error happened once during the branch. Always verify it explicitly.
+
+### Important Non-Obvious Behavior
+
+#### 1. `creationRetry` is not part of `configOverride` in v1
+
+Do not add `context.creationRetry` to the `configOverride` surface in this branch.
+
+Reason: `inference.mjs` currently decides whether context retry needs passive probe data from the base config. That remains safe only because `configOverride` cannot change `creationRetry`.
+
+Future warning:
+
+```text
+If configOverride.context.creationRetry is ever allowed, createInitPlan() must decide probing from the effective config candidate, not base config.
+```
+
+#### 2. Context retry profiles are worker-local but generated by helper
+
+`contextRetryProfiles.mjs` builds profiles for the worker to consume:
+
+```text
+base-context
+batch-safe-context
+bounded-context-safe
+conservative-context
+```
+
+`maxAttempts` slices the deduplicated profile ladder. Default is:
+
+```text
+maxAttempts: 4
+```
+
+Profile dedupe is based on the createContext-option signature, not deep semantic equivalence.
+
+#### 3. `creationRetry` must not leak into `model.createContext(...)`
+
+The helper deletes `creationRetry` from generated profile contexts.
+
+The worker also uses:
+
+```js
+toContextCreateOptions(profile.context)
+```
+
+as an allowlist before calling:
+
+```js
+model.createContext(...)
+```
+
+This double layer matters. Keep both.
+
+#### 4. Hardware probe metadata must not leak into `createContext`
+
+`inference.mjs` may attach:
+
+```js
+hardwareProbe
+```
+
+to the outbound worker `configSnapshot`.
+
+That metadata is for helper profile planning only. It must not reach `model.createContext(...)`.
+
+The worker’s `toContextCreateOptions()` prevents this.
+
+#### 5. Context retry can trigger passive probe even without hardware-aware init strategy
+
+Context retry adds a second reason to probe:
+
+```text
+1. hardware-aware init strategy needs probe
+2. context.creationRetry.enabled !== false &&
+   context.creationRetry.allowHardwareDerivedBounds === true
+```
+
+This means default init may now perform passive CPU/RAM probing even when `strategy` is still `same-config-cold-worker`.
+
+Users can disable this through static config:
+
+```js
+context: {
+    creationRetry: {
+        enabled: false
+        // or
+        allowHardwareDerivedBounds: false
+    }
+}
+```
+
+#### 6. `lastSuccessfulProbe` is separate from effective config
+
+`inference.mjs` stores probe metadata separately:
+
+```text
+lastSuccessfulEffectiveConfig
+lastSuccessfulProbe
+```
+
+Do not mutate the effective config to stash probe data. Reset fixed re-init should carry `lastSuccessfulProbe` into the worker config snapshot separately.
+
+#### 7. Memory-pressure cap wins
+
+Accepted policy:
+
+```text
+Retry context bounds are derived from hardware/config fallback, then capped by the base context bounds so retry never increases context memory pressure relative to the failed base attempt.
+```
+
+If base `contextSize` is fixed or bounded, retry fallback must not exceed that base attempt.
+
+Examples:
+
+```text
+baseContextSize: 2048
+fallback: { min: 1024, max: 4096 }
+result: { min: 1024, max: 2048 }
+
+baseContextSize: 512
+fallback: { min: 1024, max: 4096 }
+result: { min: 512, max: 512 }
+
+baseContextSize: { min: 512, max: 1024 }
+fallback: { min: 1024, max: 4096 }
+result: { min: 512, max: 1024 }
+
+baseContextSize: "auto"
+result: normal configured/hardware bounded fallback
+```
+
+The counterintuitive part: configured `minContextSize` is not an absolute lower bound if the failed base attempt is smaller. The base cap wins.
+
+Reason: retry should recover from allocation failure, not request a larger allocation than the failed attempt.
+
+#### 8. Fallback batch must not increase base batch
+
+If base `batchSize` is already smaller than `fallbackBatchSize`, keep the smaller base value.
+
+This mirrors the memory-pressure policy for context size.
+
+#### 9. Context creation failures are request-scoped, not init-scoped
+
+Context creation happens during `getSession()` for a prompt/session after model init. If all profiles fail, the worker should return a prompt/request error such as:
+
+```text
+Context creation failed after N attempt(s).
+Session: <sessionId>.
+Attempted profiles: ...
+Last error: ...
+```
+
+Do not route these as model init failures.
+
+#### 10. Partial cleanup failure aborts retry
+
+Worker v2 behavior:
+
+```js
+disposePartialSessionArtifacts(...)
+```
+
+attempts cleanup and then throws the first cleanup error if cleanup fails.
+
+This is intentional. Do not keep retrying after a partial context/session cleanup failure.
+
+Reason: continuing after failed disposal risks native resource leakage or inconsistent worker state.
+
+#### 11. Obsolete/canceled state is checked around await boundaries
+
+The worker checks obsolete/canceled state:
+
+```text
+before createContext attempt
+after createContext/session creation failure
+after successful context/session creation before storing wrapper
+```
+
+This handles cases where a prompt is canceled/reset while an awaited operation is in progress.
+
+Caveat: if native `createContext()` blocks the worker message loop, cancel/reset may not be observed until `createContext()` returns. Preemptive native cancellation is out of scope for v1.
+
+#### 12. Session reuse bypasses retry
+
+If a session already exists:
+
+```js
+if (sessions.has(sessionId)) return sessions.get(sessionId);
+```
+
+then no context retry happens. Retry is only for creating a new session context.
+
+#### 13. Eviction still happens before new context creation
+
+If `sessions.maxCount` is reached, the oldest session is disposed before creating a new one.
+
+This behavior was preserved. No rollback layer was added if new context creation fails after eviction.
+
+---
+
+## Branch 2 Testing Notes
+
+Current context retry test:
+
+```bash
+node ./tests/smokeTestContextCreationRetry.mjs
+```
+
+Expected child modes:
+
+```text
+pure-context-profiles
+real-context-retry-fallback
+mock-context-retry-success
+mock-context-retry-failure
+mock-cleanup-failure-abort
+```
+
+The important coverage is:
+
+```text
+helper validation rejects unknown creationRetry keys
+real runtime completes after oversized base context config
+mock retry succeeds after fallback
+mock retry exhaustion remains request-scoped
+cleanup failure aborts retry
+```
+
+Regression tests that should still pass after this branch:
+
+```bash
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+---
+
+## Diagnostic / Testing Caveats From This Branch
+
+### Fixture path-resolution trap
+
+A temporary isolation test that copied the runtime tree into `.tmp-reset-isolation-*` changed the worker-relative model path resolution.
+
+Production worker model path logic:
+
+```js
+const modelPath = path.resolve(
+    __dirname,
+    `${config.modelLoad.baseModel}`
+);
+```
+
+When the worker file is copied to a different directory depth, the same relative `../../../base/...` no longer points to the same place.
+
+Do not diagnose production model-load behavior from a copied fixture unless the fixture also patches `baseModel` to an absolute path or preserves directory depth exactly.
+
+### Native hard-exit / heat/resource noise
+
+During testing, a Windows native child-process exit occurred once around `model reset idle` with code:
+
+```text
+3221226505
+```
+
+Narrow reset isolation modes later passed, and the lifecycle regression child/full orchestrator passed after rerun. Treat similar single hard exits as serious signals, but isolate before assuming a deterministic code regression.
+
+Good isolation sequence:
+
+```bash
+SMOKE_MODE=lifecycle-regression node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+If reset-specific:
+
+```text
+reset-no-session
+reset-after-one-session
+reset-after-two-sessions
+reset-after-session-reset
+```
+
+Avoid copied-runtime fixture modes unless the model path issue is solved.
+
+### Heat clamp delays are not failures
+
+Heat clamp/sleep messages appeared during local tests. These are runtime/environment throttling behavior and not test failures.
+
+---
+
+## Workflow Lessons / Guardrails
+
+### Do not trust generated artifacts until reopened and guarded
+
+During context retry work, several bad artifacts/canvases were produced before the workflow was tightened:
+
+```text
+bad patch
+bad zip
+wrong config placement
+invalid full-module canvas
+stale worker file without v2 cleanup fix
+missing smoke test in branch
+```
+
+Correct flow:
+
+```text
+source material check
+plan alignment check
+stage one file
+copy-completeness check
+recognized-patch review
+cross-file propagation review
+fix concrete issues
+re-review
+only then rebuild artifacts
+run artifact guard
+then run local tests
+then verify GitHub
+```
+
+### Use the toolbox where it fits
+
+Useful tools:
+
+```text
+impact_map.py
+  -> structural propagation/import surface review
+
+artifact_guard.py
+  -> required files, forbidden files, placement anchors, syntax checks
+
+line_profile_compare_tool.py
+  -> fallback copy/completeness check when hashing or visual review is unreliable
+```
+
+The line-profile tool is not proof of identical content. Same-length substitutions can still pass. It is a fallback structural completeness signal.
+
+### GitHub raw/file fetch may be visually misleading
+
+A raw/view fetch appeared line-collapsed during branch verification, but content anchors were correct. Do not assume formatting is broken unless local `git diff` or the GitHub UI confirms it.
+
+---
+
+## Current Validation Set After Both Branches
+
+Recommended current validation commands:
+
+```bash
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestContextCreationRetry.mjs
+```
+
+Legacy/reference:
+
+```text
+tests/legacy/smokeTestInitRetry.mjs
+```
+
+Do not treat the legacy test as active contract.
+
+---
+
+## Future Branch Warnings
+
+### Config override expansion
+
+Do not add these to `configOverride` casually:
+
+```text
+runtime
+sessions
+stream
+model
+modelLoad.baseModel
+context.creationRetry
+```
+
+`context.creationRetry` in particular requires changing probe-decision logic in `inference.mjs`.
+
+### Worker operation serialization
+
+Context retry does not solve worker-level native operation serialization or native cancellation. If this becomes a concern, make it a separate branch:
+
+```text
+worker operation serialization / native-operation cancellation boundary
+```
+
+### Drain shutdown
+
+Shutdown remains abort-only and terminal/off. Drain and drain-with-timeout remain future work.
+
+### Cleanup and optimization
+
+Keep cleanup and optimization as separate approved passes. Do not mix them with feature work.
+
+### GPU probing
+
+Hardware probing remains CPU/RAM-oriented in v1. GPU probe expansion is separate future work and should stay non-fatal.
+
+---
+
+## Final Status Snapshot
+
+```text
+hardware-aware-degraded-init-retry-v1:
+  COMPLETE / VERIFIED FEATURE BRANCH
+
+context-creation-retry-v1:
+  TEST-CLEAN after:
+    smokeTestContextCreationRetry.mjs
+    smokeTestLifecycleRegression.mjs
+    smokeTestHardwareAwareInitRetry.mjs
+  GitHub required-content verification passed after branch update propagation.
+```
+
+Recommended preservation:
+
+```text
+Upload this file to Project Files alongside the branch checkpoint material.
+```
