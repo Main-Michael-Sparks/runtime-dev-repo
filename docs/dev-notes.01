@@ -1,0 +1,471 @@
+# Runtime Dev — Branch / Feature Dev Notes and Caveats
+
+Generated for Michael Sparks.  
+Purpose: preserve branch history, non-obvious behavior, and regression-sensitive caveats for future Runtime Dev work.
+
+> Timestamp note: where a checkpoint file explicitly recorded a date, that date is used as the implementation/checkpoint timestamp. Where no explicit date was recorded, the best available timestamp is the Project File creation/upload timestamp and is marked as such. Treat exact commit timestamps in GitHub as the final authority if needed.
+
+---
+
+## Source-of-truth rule going forward
+
+1. **GitHub main** is the active working base after verified merges.
+2. **Project Files / checkpoint zips / checkpoint markdown** are preservation and reference sources.
+3. **Old scratchpads** are historical; do not patch from them unless explicitly doing restoration or comparison.
+4. **Canvas** is working RAM only. Use one working scratchpad and one staged-final record per feature pass.
+5. **Cleanup and optimization are separate approved passes.** Do not mix them into feature work or bug fixes.
+
+---
+
+## Timeline / branch map
+
+| Timestamp | Branch / Feature | Status | Notes |
+|---|---|---|---|
+| 2026-04-26T01:28:21Z | Modular runtime / lifecycle scratchpad archive | Archived reference | Archive contains modular runtime, lifecycle hardening contract, reset/shutdown semantics, and next-pass Init Retry plan. |
+| 2026-04-26T01:57:18Z | `main` starting reference | Baseline pointer | Repo reference says main started from `baseline lifecycle freeze v1`. |
+| 2026-04-28T08:31:31Z | Init Retry Logic v1 summary | Merged/smoke-tested summary | Summary records Init Retry v1 features; exact implementation commit timestamp not separately recorded in summary. |
+| 2026-04-29T04:12:17Z | `smokeTestInitRetry.mjs` | Legacy validation artifact | Validated Init Retry v1 contract where `configOverride` was still reserved. Later moved to legacy/reference after hardware-aware branch. |
+| 2026-05-01 | `hardware-aware-degraded-init-retry-v1` | Implemented, pushed, smoke-tested, regression-tested | Adds validated `configOverride`, passive hardware probing, retry profile planning, config snapshots, attempt identity, and reset/auto-init safety. |
+| 2026-05-01 | Test layout cleanup | Current contract test layout | Active tests became `smokeTestHardwareAwareInitRetry.mjs` and `smokeTestLifecycleRegression.mjs`; old Init Retry smoke moved to legacy/reference. |
+| 2026-05-02T03:35:23Z | Hardware-aware checkpoint upload | Preservation checkpoint | Project-file checkpoint for hardware-aware/degraded init retry branch. |
+| 2026-05-02T03:54:58Z | Test layout addendum upload | Preservation checkpoint | Project-file addendum for active vs legacy test layout. |
+| 2026-05-05T01:15Z | Main reference / Material-contextRetry zip upload | Current main reference material | Contains current mainline files after hardware-aware branch. Name suggests context retry planning material, but no completed context-creation retry implementation is recorded in the checkpoint docs. |
+
+---
+
+## 1. Lifecycle-Hardened Baseline v1
+
+### Implementation / checkpoint timestamp
+
+- Best available timestamp: **2026-04-26T01:28:21Z** from `llm_runtime_modular_scratchpad_archive.md` Project File creation.
+- Main branch starting pointer recorded **2026-04-26T01:57:18Z** and says main starts from `baseline lifecycle freeze v1`.
+
+### What it established
+
+- Modular runtime split.
+- Queue-based concurrency model.
+- Worker-based `node-llama-cpp` execution boundary.
+- Streaming + final `done` result handle.
+- Cancellation.
+- Session reset and model reset.
+- Abort-style shutdown.
+- Worker replacement support.
+- Worker-side disposal helpers.
+- Config-driven tuning.
+- Token detokenization path.
+- Stream micro-batching.
+- Lightweight observability.
+
+### Non-obvious behavior / caveats
+
+#### Request lifecycle vs runtime lifecycle
+
+The request object / REO owns request-specific lifecycle only:
+
+- id
+- stream controller
+- `done` promise
+- final text
+- status/timeline
+
+It does **not** own session/model/context shutdown. Runtime/session/model lifecycle lives higher up in `inference.mjs` and worker-side lifecycle helpers.
+
+#### `done.catch(() => {})` is intentional
+
+`request.mjs` attaches a noop rejection handler to `done`. This prevents early cancellation/reset rejection from surfacing as an unhandled promise rejection before the caller attaches `await req.done`. External `await req.done` still rejects normally. Do not remove this as “dead code.”
+
+#### Stream micro-batching is transport-only
+
+Micro-batching smooths emitted stream chunks and reduces IPC/noise. It is not model batching, not inference batching, and should not be treated as affecting token generation semantics.
+
+#### Hybrid flush behavior is deliberate
+
+The stream controller flushes on configured boundaries, max buffered characters, and timer fallback. Boundary flush exists to reduce ugly token fragments without stalling output. Avoid replacing it with a single timer-only flush unless intentionally changing UX.
+
+#### Normalizer strips actual ESC bytes only
+
+The normalizer uses explicit `\x1b` escape regexes. It strips actual terminal escape/control sequences, not printable code text like `"\\x1b[31m"`.
+
+#### Reset semantics are cancel-first
+
+- `resetSession(sessionId)` cancels queued/running requests for that session, sends worker cancels, closes streams, rejects `done`, then waits for `reset_done` before unblocking the session.
+- `resetModel()` cancels all requests, asks worker to dispose/reset model stack, terminates old worker, recreates worker, and awaits ready before clearing reset state.
+- Shutdown is abort-style and terminal/off.
+
+#### Session eviction must dispose
+
+When `sessions.maxCount` is exceeded, the oldest session/context should be disposed before deleting the map entry. Do not revert to a raw `delete(oldest)` pattern.
+
+#### Worker disposal order matters
+
+Disposal chain is session/sequence/context first, then model. The parent should orchestrate policy; the worker owns real node-llama-cpp object disposal.
+
+---
+
+## 2. Init Retry Logic v1
+
+### Implementation / checkpoint timestamp
+
+- Best available summary timestamp: **2026-04-28T08:31:31Z** from `InitRetryLogic-v1-summary.md` Project File creation.
+- Smoke test artifact timestamp: **2026-04-29T04:12:17Z** from `smokeTestInitRetry.mjs` Project File creation.
+
+### What it added
+
+- `runtime.initRetry` config block.
+- Public `initModel(options = {})`.
+- Internal `ensureModelReady()`.
+- Same-config cold-worker retry.
+- Ready timeout.
+- Duplicate explicit init rejection.
+- Full-cycle init tracking through `initCyclePromise`.
+- `resetModel()` re-init through the internal retry cycle.
+- Smoke test coverage for retry and lifecycle regression.
+
+### Non-obvious behavior / caveats
+
+#### `initModel(options = {})` is explicit lifecycle control
+
+This is not just a convenience wrapper. It starts an explicit init cycle, owns retry options, rejects during shutdown, rejects during model reset, and rejects duplicate explicit init while another init is active.
+
+#### `ensureModelReady()` is the internal prompt gate
+
+`prompt()` should use `ensureModelReady()`, not public `initModel()`. This allows prompt auto-init to wait on an existing init cycle without competing for explicit init options.
+
+#### `initCyclePromise` is required
+
+`readyPromise` is per worker attempt. During retry, a failed attempt may reject while the overall retry cycle is still ongoing. `initCyclePromise` represents the full init cycle and prevents prompts arriving during retry from attaching to a failed per-attempt promise.
+
+#### Retry lives in parent runtime, not worker
+
+The worker receives one `init` message and either sends `ready` or `error`. Retry orchestration, worker termination, worker recreation, timeout handling, and final failure reporting live in `inference.mjs`.
+
+#### `enabled: false` does not disable timeout
+
+Policy: `runtime.initRetry.enabled: false` forces attempts to `1`, but `readyTimeoutMs` still applies if configured.
+
+#### `configOverride` was intentionally reserved in this phase
+
+In Init Retry v1, `configOverride` rejected. That changed in the later hardware-aware branch. This is why the original `smokeTestInitRetry.mjs` is now legacy/reference rather than current-contract.
+
+#### A historical config packaging regression occurred
+
+At one point, a packaged/repo `config.mjs` lost the `context: { ... }` wrapper, leaving context fields flattened. That broke the shape expected by `llama_worker/llama.mjs` (`config.context.*`). Future package/branch verification should always check top-level config shape:
+
+```js
+modelLoad
+context
+model
+runtime
+sessions
+stream
+```
+
+The later hardware-aware staged files and current main reference material restore the correct `context` object shape.
+
+---
+
+## 3. Hardware-Aware / Degraded Init Retry v1
+
+### Implementation / checkpoint timestamp
+
+- Explicit checkpoint date: **2026-05-01**.
+- Project File creation/upload timestamp: **2026-05-02T03:35:23Z**.
+- Branch: `hardware-aware-degraded-init-retry-v1`.
+- Status recorded as implemented, pushed to GitHub branch, smoke-tested locally, and regression-tested locally.
+
+### What it added
+
+- `configOverride.mjs`.
+- `hardwareProbe.mjs`.
+- `retryProfiles.mjs`.
+- `tests/smokeTestHardwareAwareInitRetry.mjs`.
+- `tests/smokeTestLifecycleRegression.mjs`.
+- Changes to `config.mjs`, `inference.mjs`, and `llama_worker/llama.mjs`.
+
+### Core behavior
+
+#### Validated `configOverride`
+
+`configOverride` became active, but only as a controlled init-safe patch surface. Allowed override surface:
+
+```js
+modelLoad: {
+  gpuLayers,
+  useMmap,
+  useMlock,
+  ignoreMemorySafetyChecks
+}
+
+context: {
+  contextSize,
+  batchSize,
+  threads,
+  flashAttention,
+  performanceTracking,
+  sequences,
+  failedCreationRemedy,
+  ignoreMemorySafetyChecks
+}
+```
+
+Rejected override surface:
+
+```js
+modelLoad.baseModel
+runtime
+sessions
+stream
+model
+```
+
+This also blocks prototype-pollution keys and validates values.
+
+#### `modelLoad.baseModel` remains non-overridable
+
+This is deliberate. Worker model path resolution is still static enough that allowing model path overrides would require a separate redesign. Do not allow `modelLoad.baseModel` through `configOverride` without redesigning worker model path handling.
+
+#### Passive hardware probing
+
+Adds CPU/RAM probing. GPU data remains best-effort / not implemented in v1. Probe failure is non-fatal.
+
+#### Retry profiles
+
+The branch adds retry profile planning for:
+
+- base / user override
+- hardware-safe fallback
+- memory-safe fallback
+
+Important separation:
+
+- `configOverride` controls the starting effective config.
+- `strategy` controls retry/profile generation.
+
+#### Worker config snapshots
+
+Parent sends full `configSnapshot` during init. Worker stores `activeConfig` and uses it for model load, context creation, session limits, and generation config reads. This means the worker is no longer simply reading all runtime behavior from imported static `config.mjs` after init.
+
+#### Init attempt identity
+
+`initAttemptId` and `profileName` are included in init/ready/init-error flow. Stale `ready` or init-error messages are ignored. Timeout/failure invalidates the active attempt before worker replacement.
+
+#### Reset/auto-init safety
+
+`resetModel()` reuses the last winning effective config instead of falling back to defaults. Failed explicit custom/profile init blocks silent prompt auto-init with unsafe defaults.
+
+### Important bug found and fixed
+
+A duplicate explicit init race was found during lifecycle regression testing. Initially there was an async planning window before `initInProgress` was set, so a second explicit init could enter the path. On Windows this could cause a hard native child-process exit or an unexpected timeout. Fix: set `initInProgress = true` before async plan creation; `ensureModelReady()` received similar protection.
+
+### Naming caveat
+
+The ambiguous flag `allowGpuLayerFallback` was rejected. The active flag is:
+
+```js
+allowCpuModelLoadFallback
+```
+
+Meaning: retry planner may fall back to CPU model loading by setting `gpuLayers: 0` and `useMlock: false`.
+
+### Validation
+
+Current hardware-aware branch validation targets:
+
+```bash
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+The checkpoint records both final results as passing:
+
+- `All lifecycle regression smoke tests finished.`
+- `All hardware-aware/degraded init retry smoke tests finished.`
+
+### Known non-issue
+
+Node may print:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+```
+
+This warning appeared during tests and did not indicate branch failure.
+
+---
+
+## 4. Test Layout Cleanup
+
+### Implementation / checkpoint timestamp
+
+- Explicit checkpoint date: **2026-05-01**.
+- Project File creation/upload timestamp: **2026-05-02T03:54:58Z**.
+- Branch context: `hardware-aware-degraded-init-retry-v1` merged / merge-ready context.
+
+### Current test contract
+
+Active current-contract tests:
+
+```text
+tests/smokeTestHardwareAwareInitRetry.mjs
+tests/smokeTestLifecycleRegression.mjs
+```
+
+Legacy/reference test:
+
+```text
+tests/legacy/smokeTestInitRetry.mjs
+```
+
+### Caveat
+
+Do not treat `tests/legacy/smokeTestInitRetry.mjs` as a failing current test if it checks for old `configOverride is reserved` behavior. In the current hardware-aware branch, `configOverride` is active and validated.
+
+---
+
+## 5. Current main reference / Material-contextRetry zip
+
+### Timestamp
+
+- Uploaded in current project file set: **2026-05-05T01:15Z**.
+- File: `runtime-dev-repo-main-reference-Material-contextRetry.zip`.
+
+### Observed contents
+
+The zip contains the current main reference module set:
+
+- `config.mjs`
+- `configOverride.mjs`
+- `hardwareProbe.mjs`
+- `retryProfiles.mjs`
+- `inference.mjs`
+- `llama_worker/llama.mjs`
+- runtime support modules
+- active tests
+- legacy Init Retry smoke under `tests/legacy/`
+
+### Caveat
+
+Despite the `Material-contextRetry` name, the checkpoint docs still list **context creation retry** as an open future branch. Treat this zip as current main reference material for planning context retry, not proof that context creation retry has been implemented.
+
+---
+
+## 6. Supporting comparison/debug tooling
+
+### Timestamp
+
+- Line profile compare tool files appear in Project File search around **2026-05-03**.
+
+### Purpose
+
+A helper tool was created to compare copied/canvas/staged files by:
+
+- total line count
+- total character count
+- per-line character counts
+- optional normalized per-line counts
+- first differing line
+- missing/extra line structure
+
+### Caveat
+
+This is a copy/completeness aid, not a semantic proof. Same-length substitutions can pass the profile. Use it before deeper code review when canvas/chats/copied files may have formatting or line-ending drift.
+
+---
+
+## Open future branches / recommended separation
+
+Current future work should remain explicitly separated:
+
+1. **Context creation retry**
+   - Still separate.
+   - Current hardware-aware branch may choose safer context settings, but it does not retry `createContext()` failures.
+
+2. **Drain / drain-with-timeout shutdown**
+   - Current shutdown remains abort-only and terminal/off.
+
+3. **Tool calling support**
+   - Not implemented.
+
+4. **Code cleanup pass**
+   - Separate approved pass only.
+   - Do not mix with feature work.
+
+5. **Optimization pass**
+   - Separate approved pass only.
+   - Do not mix with cleanup or feature work.
+
+6. **Hardware probing expansion**
+   - GPU probing remains best-effort / not implemented in v1.
+   - Future branch may add vendor-specific probes, but should remain non-fatal.
+
+7. **Model path override redesign**
+   - Required if `modelLoad.baseModel` override is ever allowed.
+   - Do not slip this into config override casually.
+
+---
+
+## High-risk surfaces to watch in future work
+
+### `initModel()`
+
+Sensitive because it owns explicit lifecycle semantics, duplicate-init rejection, config override behavior, effective config planning, and attempt identity. Avoid adding async work before `initInProgress` is set.
+
+### `ensureModelReady()`
+
+Sensitive because prompt auto-init must not silently override or bypass failed explicit custom/profile init. It must also not compete with explicit init options.
+
+### `resetModel()`
+
+Sensitive because it must preserve last winning effective config after hardware-aware init. It should not fall back to defaults after custom/profile init unless explicitly designed.
+
+### Worker `activeConfig`
+
+The worker now uses config snapshots. Future changes must be clear about whether they change static imported config, effective parent config, or worker active config.
+
+### Test contract drift
+
+After hardware-aware branch, old Init Retry v1 tests are not current contract. Always run current tests:
+
+```bash
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+### Config shape verification
+
+Always verify `config.mjs` keeps this shape:
+
+```js
+export const config = {
+  modelLoad: { ... },
+  context: { ... },
+  model: { ... },
+  runtime: { ... },
+  sessions: { ... },
+  stream: { ... }
+};
+```
+
+The worker expects `config.context.*` / effectiveConfig context shape. Flattening context fields is a real regression.
+
+---
+
+## Suggested branch names going forward
+
+```text
+feature/context-creation-retry
+feature/drain-shutdown
+feature/tool-calling-runtime
+maintenance/code-cleanup-v1
+optimization/runtime-tuning-v1
+feature/hardware-probe-expansion
+feature/model-path-override-redesign
+```
+
+---
+
+## Recommended next-thread boot note
+
+If a future thread starts from this file, use this operational summary:
+
+> Current mainline includes Lifecycle-Hardened Baseline v1, Init Retry Logic v1, and Hardware-Aware / Degraded Init Retry v1. Treat GitHub/main and the current main reference zip as active base. Treat old lifecycle and init-retry zip/checkpoints as historical references. Current validation tests are `smokeTestHardwareAwareInitRetry.mjs` and `smokeTestLifecycleRegression.mjs`. Do not use legacy `smokeTestInitRetry.mjs` as current contract. Context creation retry, drain shutdown, tool calling, cleanup, and optimization remain separate future branches.
