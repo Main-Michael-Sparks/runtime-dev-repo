@@ -1,0 +1,567 @@
+# Drain Shutdown v1 — Branch Notes and Dev Notes
+
+## Branch
+
+```text
+drain-shutdown-v1
+```
+
+## Final candidate artifacts
+
+Final package:
+
+```text
+drain-shutdown-v1-final-v3-audited.zip
+```
+
+Final verification report:
+
+```text
+drain-shutdown-v1-final-v3-verification-report.md
+```
+
+Final ZIP SHA-256:
+
+```text
+443bc37fea10420e1068e27b9cf7f7a0bdceb40a7df1623af9155eb697dfb896
+```
+
+## Branch status
+
+```text
+Implemented.
+Mock smoke tested.
+Real-runtime branch-scoped smoke tested locally by Michael.
+Final v3 package verified from clean unzip.
+Ready for local review / merge decision.
+```
+
+## Scope implemented
+
+This branch adds graceful shutdown modes while preserving the existing abort shutdown contract.
+
+Public API now supports:
+
+```js
+await shutdownRuntime();
+await shutdownRuntime({ mode: "abort" });
+await shutdownRuntime({ mode: "drain" });
+await shutdownRuntime({ mode: "drain-with-timeout", timeoutMs: 30000 });
+```
+
+Implemented behavior:
+
+```text
+abort:
+  existing/default shutdown behavior preserved.
+  blocks new intake, stops dispatch, cancels accepted queued/running work, rejects done promises, sends worker shutdown, waits for shutdown_done, terminates worker.
+
+drain:
+  blocks new intake immediately.
+  leaves scheduler dispatch enabled.
+  lets already accepted queued/running work finish.
+  waits for scheduler idle.
+  sends worker shutdown, waits for shutdown_done, terminates worker.
+
+drain-with-timeout:
+  blocks new intake immediately.
+  leaves scheduler dispatch enabled while waiting.
+  waits for scheduler idle or timeout.
+  if timeout expires, stops scheduler dispatch and locally cancels/rejects remaining accepted work.
+  sends worker shutdown, waits for shutdown_done, terminates worker.
+```
+
+## Files changed / added
+
+Changed:
+
+```text
+scheduler.mjs
+inference.mjs
+```
+
+Added:
+
+```text
+tests/smokeTestDrainShutdown.mjs
+```
+
+Expected unchanged:
+
+```text
+llama_worker/llama.mjs
+workerBridge.mjs
+config.mjs
+configOverride.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+retryProfiles.mjs
+```
+
+## `scheduler.mjs` implementation details
+
+Added idle/accounting helpers:
+
+```js
+isIdle()
+waitForIdle()
+notifyIdleWaiters()
+```
+
+Idle means:
+
+```text
+queue.length === 0
+pending.size === 0
+inFlight === 0
+```
+
+`waitForIdle()` resolves immediately if scheduler is already idle. Otherwise it stores a waiter until the scheduler becomes idle.
+
+`notifyIdleWaiters()` is called after work-removal paths:
+
+```text
+complete()
+fail()
+cancel()
+cancelAll()
+cancelBySession()
+```
+
+Important architecture boundary:
+
+```text
+scheduler.mjs does not own shutdown policy.
+scheduler.mjs only exposes idle/accounting state for inference.mjs to use.
+```
+
+## `inference.mjs` implementation details
+
+### Prompt admission gate
+
+Added:
+
+```js
+assertPromptAdmissionAllowed(sessionId)
+```
+
+`prompt()` now checks lifecycle gates both before and after readiness:
+
+```text
+assertPromptAdmissionAllowed(sessionId)
+await ensureModelReady()
+assertPromptAdmissionAllowed(sessionId)
+create request
+enqueue request
+```
+
+Reason:
+
+```text
+runtime reset/shutdown or session reset can begin while prompt is awaiting readiness.
+```
+
+This closes a pre-admission race without turning pre-readiness waiters into accepted drainable work.
+
+### Shutdown option validation
+
+Added:
+
+```js
+validateShutdownOptions(options)
+```
+
+Rules:
+
+```text
+mode must be "abort", "drain", or "drain-with-timeout".
+default mode remains "abort".
+timeoutMs is required for "drain-with-timeout".
+timeoutMs must be a positive integer.
+timeoutMs with "abort" or "drain" rejects.
+```
+
+### Active-init shutdown guard
+
+Added:
+
+```js
+isInitActive()
+```
+
+Current condition:
+
+```text
+initInProgress || (initStarted && !initResolved)
+```
+
+If shutdown is requested during active initialization, `shutdownRuntime()` rejects with:
+
+```text
+Model initialization is in progress
+```
+
+Important: this branch does not cancel active init. It only rejects shutdown during active init.
+
+### Shutdown helpers
+
+Added internal helpers:
+
+```js
+cancelRequestsForShutdown(reason)
+finalizeWorkerShutdown()
+shutdownAbort()
+shutdownDrain()
+waitForSchedulerIdleOrTimeout(timeoutMs)
+shutdownDrainWithTimeout(timeoutMs)
+```
+
+Design principle:
+
+```text
+helper extraction is behavior-driven and minimal.
+this branch is not a broad cleanup or modularization pass.
+```
+
+## Important behavioral notes
+
+### Intake vs dispatch
+
+This branch preserves a strict distinction:
+
+```text
+runtimeShuttingDown blocks new prompt intake.
+scheduler readiness controls dispatch of already accepted work.
+```
+
+For `drain`, the implementation intentionally does **not** call:
+
+```js
+scheduler.setReady(false)
+```
+
+at shutdown start.
+
+Reason:
+
+```text
+accepted queued work must be allowed to dispatch and finish during drain.
+```
+
+For `abort`, `scheduler.setReady(false)` is still correct and preserved.
+
+For `drain-with-timeout`, `scheduler.setReady(false)` is called only after the timeout expires, when the branch deliberately switches to abort-like fallback cancellation for remaining accepted work.
+
+### Accepted work definition
+
+A prompt is accepted drainable work only after it has a request object and is queued/pending/running in scheduler accounting.
+
+A prompt waiting inside `ensureModelReady()` is still pre-admission work and is not drainable accepted work.
+
+### Runtime remains terminal after shutdown
+
+All shutdown modes leave the runtime shut down. This branch does not implement restart after shutdown.
+
+### Reset remains separate
+
+`resetModel()` remains semantically separate from shutdown.
+
+```text
+resetModel(): cancels work, disposes/rebuilds worker, reinitializes runtime.
+shutdownRuntime(): disposes/terminates worker and remains off.
+```
+
+No new `resetModel()` semantics were intentionally introduced.
+
+## Native / worker caveats
+
+### Native prompt preemption is not implemented
+
+`drain-with-timeout` is a parent-side timeout.
+
+It guarantees:
+
+```text
+parent stops waiting for accepted scheduler work after timeout.
+remaining accepted requests are locally canceled/rejected.
+streams are closed/canceled locally.
+done promises reject with "Runtime shutdown timeout".
+worker shutdown is requested afterward.
+```
+
+It does **not** guarantee:
+
+```text
+node-llama-cpp generation stops immediately.
+shutdownRuntime() returns within timeoutMs.
+worker/native calls are interrupted.
+```
+
+Current worker cancellation still depends on the existing worker behavior. If `session.prompt(...)` is already inside a native call, the worker may continue until that call returns.
+
+### Future native cancellation branch
+
+A later branch should wire native prompt cancellation where supported by `node-llama-cpp`, likely through:
+
+```text
+parent cancel / abort / drain-timeout
+-> worker cancel message
+-> AbortController.abort(reason)
+-> session.prompt(..., { signal })
+```
+
+Suggested future branch boundary:
+
+```text
+worker-native-cancellation-boundary-v1
+```
+
+or:
+
+```text
+worker-prompt-abort-signal-v1
+```
+
+This belongs with worker operation serialization / native-operation cancellation boundary work, not with `drain-shutdown-v1`.
+
+## Real smoke-test design correction
+
+An earlier real smoke mode incorrectly treated plain `drain` as proof that real prompt generation would complete within a fixed test timeout.
+
+That was corrected.
+
+Final v3 real smoke test now matches the implemented branch:
+
+```text
+real-drain-idle:
+  verifies real init + drain shutdown + worker/model shutdown with no accepted work.
+
+real-abort-parent-cancel:
+  verifies parent-side cancellation/rejection and worker/model shutdown under abort.
+
+real-drain-timeout-parent-cancel:
+  verifies parent-side timeout cancellation/rejection and worker/model shutdown under drain-with-timeout.
+```
+
+Optional extended/manual mode remains:
+
+```text
+real-drain-queued-completes-extended
+```
+
+That optional mode tests real prompt completion during plain drain, but it is not part of the branch-scoped real orchestrator because real model speed/generation behavior is outside this branch's core guarantee.
+
+The final smoke test prints:
+
+```text
+[SMOKE] version: drain-shutdown-v1-branch-scoped-real-modes-v3
+[SMOKE] file: <actual file path>
+[SMOKE] orchestrator modes: ...
+[SMOKE] real orchestrator modes: ...
+```
+
+to prevent stale-file confusion.
+
+## Final smoke-test commands
+
+Default deterministic/mock smoke:
+
+```bash
+node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Real-runtime branch-scoped orchestrator:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Mock + branch-scoped real modes:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Individual real modes:
+
+```bash
+SMOKE_MODE=real-drain-idle node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-abort-parent-cancel node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-drain-timeout-parent-cancel node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Optional extended/manual mode:
+
+```bash
+SMOKE_MODE=real-drain-queued-completes-extended node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Useful tunables:
+
+```bash
+SMOKE_CHILD_DEADLINE_MS=300000
+REAL_READY_TIMEOUT_MS=120000
+REAL_PARENT_CANCEL_DEADLINE_MS=30000
+REAL_SHUTDOWN_DEADLINE_MS=240000
+REAL_DRAIN_TIMEOUT_MS=150
+REAL_TIMEOUT_MAX_ACCEPTED_PROMPTS=8
+REAL_TIMEOUT_MAX_SUBMIT_ATTEMPTS=16
+REAL_TIMEOUT_ENQUEUE_WINDOW_MS=1500
+REAL_TIMEOUT_SUBMIT_DELAY_MS=10
+```
+
+## Verification performed
+
+Final v3 sandbox verification from clean unzip:
+
+```text
+unzip -t: PASS
+node --check all .mjs files: PASS
+node ./tests/smokeTestDrainShutdown.mjs: PASS
+SMOKE_MODE=pure-context-profiles node ./tests/smokeTestContextCreationRetry.mjs: PASS
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs: PASS
+artifact_guard.py: PASS
+repo_fingerprint.py: expected differences only
+impact_map.py: PASS
+```
+
+Note:
+
+```text
+node --check is only a parser/syntax check. It does not prove lifecycle behavior.
+```
+
+Michael also ran the v3 smoke test locally with real runtime enabled. The local run passed the branch-scoped real modes:
+
+```text
+real-drain-idle
+real-abort-parent-cancel
+real-drain-timeout-parent-cancel
+```
+
+Observed local confirmations included:
+
+```text
+real runtime drain idle shutdown resolved
+real abort rejected request parent-side and completed worker/model shutdown
+real drain-with-timeout parent-canceled 8 request(s) and completed worker/model shutdown
+All drain-shutdown smoke tests finished.
+```
+
+## Context-retry carry-over note
+
+During sandbox verification, an earlier context-retry mock-style path showed a mismatch around fallback context bounds. Michael's local tests passed, and the mismatch appeared to be reproducible against the baseline reference in the sandbox, so it was not treated as a drain-shutdown regression.
+
+The important condition preserved for future review:
+
+```text
+Context creation retry must not increase context memory pressure relative to the failed base createContext attempt.
+```
+
+More specifically:
+
+```text
+If the failed base attempt used a fixed or bounded context size, retry fallback bounds should be capped by the base attempt's context bounds.
+```
+
+Do not change context retry logic in this branch unless current local/current-contract tests reproduce an issue.
+
+## Known warnings / non-issues
+
+### JSON module warning
+
+Real runtime tests may print:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+```
+
+This warning appeared during local real-runtime testing and did not fail the smoke run.
+
+### Line endings
+
+Some source files in the reference package used CRLF line endings, while staged/generated files may use LF. This can produce diff noise but is not a logic issue.
+
+## Deferred / future work
+
+Do not fold these into `drain-shutdown-v1` unless explicitly opening a new planned branch:
+
+```text
+Runtime Lifecycle Owner / Runtime State Controller
+active-init abort/cancellation
+native prompt cancellation / AbortSignal wiring
+worker operation serialization
+native-operation cancellation boundary
+forced worker termination deadline
+resetSession/shutdown overlap redesign
+resetModel active-init overlap redesign
+lifecycle modularization
+code cleanup pass
+optimization pass
+```
+
+## Plan-review decisions preserved
+
+Accepted:
+
+```text
+shutdown during active resetSession is not redesigned in this branch.
+drain-with-timeout tests must not assert total shutdown returns within timeoutMs.
+active-init guard is intentionally conservative.
+full combined inference/scheduler canvases/checkpoints should be used before deeper stages.
+worker file impact remains none unless a concrete need appears.
+```
+
+Accepted test strategy:
+
+```text
+Use bounded prompt-feeding to create realistic queue pressure.
+Use reasonable small timeout values.
+Stop prompt submission using hard safety caps.
+Do not rely on infinite prompt spam.
+Do not assert shutdownRuntime returns within timeoutMs.
+```
+
+## Merge / review checklist
+
+Before merge:
+
+```bash
+node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+SMOKE_MODE=pure-context-profiles node ./tests/smokeTestContextCreationRetry.mjs
+```
+
+If running only low-cost checks first:
+
+```bash
+node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=pure-context-profiles node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Review changed files:
+
+```text
+scheduler.mjs
+inference.mjs
+tests/smokeTestDrainShutdown.mjs
+```
+
+Confirm no intentional changes to:
+
+```text
+llama_worker/llama.mjs
+workerBridge.mjs
+configOverride/contextRetry/hardware/retry-profile logic
+resetModel semantics
+```
+
+## Bottom line
+
+`drain-shutdown-v1` is a parent-side lifecycle/shutdown feature branch. It adds graceful `drain` and bounded parent-side `drain-with-timeout`, preserves abort, fixes prompt admission re-checking after readiness, and rejects active-init shutdown conflicts.
+
+The branch is verified for its intended scope. It intentionally does not solve native prompt preemption or broader worker lifecycle serialization.
