@@ -4,6 +4,30 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
 
   const queue = [];
   const pending = new Map();
+  const idleWaiters = new Set();
+
+  function isIdle() {
+    return queue.length === 0 && pending.size === 0 && inFlight === 0;
+  }
+
+  function notifyIdleWaiters() {
+    if (!isIdle() || idleWaiters.size === 0) return;
+
+    const waiters = [...idleWaiters];
+    idleWaiters.clear();
+
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  function waitForIdle() {
+    if (isIdle()) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      idleWaiters.add(resolve);
+    });
+  }
 
   function drain() {
     queueMicrotask(() => {
@@ -62,6 +86,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
     req.timeline.finishedAt = Date.now();
 
     drain();
+    notifyIdleWaiters();
     return req;
   }
 
@@ -76,6 +101,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
     req.timeline.finishedAt = Date.now();
 
     drain();
+    notifyIdleWaiters();
     return req;
   }
 
@@ -85,6 +111,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
       const [req] = queue.splice(queuedIndex, 1);
       req.status = "canceled";
       req.timeline.finishedAt = Date.now();
+      notifyIdleWaiters();
       return req;
     }
 
@@ -95,6 +122,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
       req.status = "canceled";
       req.timeline.finishedAt = Date.now();
       drain();
+      notifyIdleWaiters();
       return req;
     }
 
@@ -113,6 +141,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
       req.timeline.finishedAt = Date.now();
     }
 
+    notifyIdleWaiters();
     return all;
   }
 
@@ -140,6 +169,7 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
     }
 
     drain();
+    notifyIdleWaiters();
     return canceled;
   }
 
@@ -163,6 +193,8 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
     cancelAll,
     cancelBySession,
     snapshot,
+    isIdle,
+    waitForIdle,
     isReady: () => ready,
   };
 }

@@ -48,6 +48,12 @@ const VALID_HARDWARE_AWARE_KEYS = new Set([
     "allowContextAutoFallback"
 ]);
 
+const VALID_SHUTDOWN_MODES = new Set([
+    "abort",
+    "drain",
+    "drain-with-timeout"
+]);
+
 let initStarted = false;
 let initResolved = false;
 let initInProgress = false;
@@ -671,9 +677,7 @@ export async function initModel(options = {}) {
     }
 }
 
-export async function prompt(text, options = {}) {
-    const sessionId = options.sessionId || "default";
-
+function assertPromptAdmissionAllowed(sessionId) {
     if (runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
@@ -685,8 +689,16 @@ export async function prompt(text, options = {}) {
     if (sessionsResetting.has(sessionId)) {
         throw new Error(`Session is resetting: ${sessionId}`);
     }
+}
+
+export async function prompt(text, options = {}) {
+    const sessionId = options.sessionId || "default";
+
+    assertPromptAdmissionAllowed(sessionId);
 
     await ensureModelReady();
+
+    assertPromptAdmissionAllowed(sessionId);
 
     if (scheduler.queuedCount() >= config.runtime.maxQueueSize) {
         throw new Error("Backpressure: queue full");
@@ -826,22 +838,36 @@ export async function resetModel() {
     }
 }
 
-export async function shutdownRuntime({ mode = "abort" } = {}) {
-    if (mode !== "abort") {
+function validateShutdownOptions(options = {}) {
+    assertPlainObjectOrUndefined(options, "shutdown options");
+
+    const {
+        mode = "abort",
+        timeoutMs
+    } = options;
+
+    if (!VALID_SHUTDOWN_MODES.has(mode)) {
         throw new Error(`Unsupported shutdown mode: ${mode}`);
     }
 
-    if (runtimeResetting) {
-        throw new Error("Runtime is resetting");
+    if (mode === "drain-with-timeout") {
+        if (timeoutMs === undefined) {
+            throw new Error("timeoutMs is required for drain-with-timeout shutdown");
+        }
+
+        assertPositiveInteger(timeoutMs, "timeoutMs");
+    } else if (timeoutMs !== undefined) {
+        throw new Error("timeoutMs is only supported for drain-with-timeout shutdown");
     }
 
-    if (runtimeShuttingDown) {
-        throw new Error("Runtime is shutting down");
-    }
+    return { mode, timeoutMs };
+}
 
-    runtimeShuttingDown = true;
-    scheduler.setReady(false);
+function isInitActive() {
+    return initInProgress || (initStarted && !initResolved);
+}
 
+function cancelRequestsForShutdown(reason) {
     const canceled = scheduler.cancelAll();
 
     for (const req of canceled) {
@@ -852,10 +878,14 @@ export async function shutdownRuntime({ mode = "abort" } = {}) {
 
         cancelStream(req);
         traceCanceled(req);
-        req.rejectDone(new Error("Runtime shutdown"));
+        req.rejectDone(new Error(reason));
         traceDelete(req.id);
     }
 
+    return canceled;
+}
+
+async function finalizeWorkerShutdown() {
     let resolveShutdown;
     let rejectShutdown;
     const waitForShutdown = new Promise((resolve, reject) => {
@@ -878,4 +908,78 @@ export async function shutdownRuntime({ mode = "abort" } = {}) {
     } finally {
         shutdownWaiter = null;
     }
+}
+
+async function shutdownAbort() {
+    runtimeShuttingDown = true;
+    scheduler.setReady(false);
+    cancelRequestsForShutdown("Runtime shutdown");
+    await finalizeWorkerShutdown();
+}
+
+async function shutdownDrain() {
+    runtimeShuttingDown = true;
+    await scheduler.waitForIdle();
+    await finalizeWorkerShutdown();
+}
+
+function waitForSchedulerIdleOrTimeout(timeoutMs) {
+    let timer;
+
+    const idlePromise = scheduler.waitForIdle().then(() => true);
+    const timeoutPromise = new Promise((resolve) => {
+        timer = setTimeout(() => {
+            resolve(false);
+        }, timeoutMs);
+    });
+
+    return Promise.race([idlePromise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
+}
+
+async function shutdownDrainWithTimeout(timeoutMs) {
+    runtimeShuttingDown = true;
+
+    const finishedBeforeTimeout = await waitForSchedulerIdleOrTimeout(timeoutMs);
+
+    if (!finishedBeforeTimeout) {
+        scheduler.setReady(false);
+        cancelRequestsForShutdown("Runtime shutdown timeout");
+    }
+
+    await finalizeWorkerShutdown();
+}
+
+export async function shutdownRuntime(options = {}) {
+    const { mode, timeoutMs } = validateShutdownOptions(options);
+
+    if (runtimeResetting) {
+        throw new Error("Runtime is resetting");
+    }
+
+    if (runtimeShuttingDown) {
+        throw new Error("Runtime is shutting down");
+    }
+
+    if (isInitActive()) {
+        throw new Error("Model initialization is in progress");
+    }
+
+    if (mode === "abort") {
+        await shutdownAbort();
+        return;
+    }
+
+    if (mode === "drain") {
+        await shutdownDrain();
+        return;
+    }
+
+    if (mode === "drain-with-timeout") {
+        await shutdownDrainWithTimeout(timeoutMs);
+        return;
+    }
+
+    throw new Error(`Shutdown mode is not implemented yet: ${mode}`);
 }
