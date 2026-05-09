@@ -3,10 +3,35 @@
 // Purpose:
 // - Branch-scoped deterministic smoke coverage for worker-native cancellation boundaries.
 // - Verifies worker-side AbortSignal observation and disposal ordering with a fake node-llama-cpp.
+// - Provides optional real-runtime modes that exercise the local model and node-llama-cpp AbortSignal path.
 // - Complements smokeTestDrainShutdown.mjs, which primarily preserves parent-side shutdown behavior.
 //
-// Run:
+// Run deterministic/mock smoke:
 //   node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//
+// Run mock + branch-scoped real-runtime smoke against local node-llama-cpp/model setup:
+//   REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//
+// Run only real-runtime modes:
+//   SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//   SMOKE_MODE=real-cancel-active-prompt-native-boundary node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//   SMOKE_MODE=real-reset-session-active-prompt-native-boundary node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//   SMOKE_MODE=real-shutdown-abort-native-boundary node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//   SMOKE_MODE=real-drain-timeout-native-boundary node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//
+// Useful real-runtime tuning env vars:
+//   REAL_READY_TIMEOUT_MS=120000
+//   REAL_PROMPT_DEADLINE_MS=300000
+//   REAL_SHUTDOWN_DEADLINE_MS=240000
+//   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1000
+//   REAL_NATIVE_BOUNDARY_DEADLINE_MS=240000
+//
+// Notes:
+// - Child processes isolate runtime/module state per scenario.
+// - Mock modes build a temporary fixture with a fake node-llama-cpp package.
+// - Real-runtime modes import the repository runtime directly and require a working local model setup.
+// - Real-runtime modes cannot inspect worker internals directly; they prove native-boundary behavior by
+//   requiring cancel/reset/shutdown to complete and then, where applicable, requiring the same session to work again.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -16,7 +41,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-mock-v1";
+const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-real-modes-v3";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
@@ -44,6 +69,33 @@ function logSection(title) {
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function readPositiveIntEnv(name, fallback) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return fallback;
+
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+        throw new Error(`${name} must be a positive integer`);
+    }
+
+    return value;
+}
+
+function shouldRunRealRuntimeModes() {
+    return process.env.REAL_RUNTIME === "1";
+}
+
+async function waitForCondition(predicate, timeoutMs, label, intervalMs = 25) {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+        if (predicate()) return true;
+        await sleep(intervalMs);
+    }
+
+    throw new Error(`[FAIL] timed out waiting for ${label} after ${timeoutMs}ms`);
 }
 
 function withDeadline(promise, ms, label) {
@@ -93,6 +145,66 @@ async function consumeStream(req) {
 
 async function readPromptResult(req) {
     await consumeStream(req);
+    return req.done;
+}
+
+function startStreamPump(req, { logChunks = false } = {}) {
+    const stats = {
+        chunks: 0,
+        text: ""
+    };
+
+    const done = (async () => {
+        if (!req.stream) return stats;
+
+        const reader = req.stream.getReader();
+
+        while (true) {
+            const { value, done: streamDone } = await reader.read();
+            if (streamDone) break;
+
+            stats.chunks += 1;
+            stats.text += String(value ?? "");
+
+            if (logChunks) {
+                console.log("chunk:", JSON.stringify(value));
+            }
+        }
+
+        return stats;
+    })();
+
+    return { stats, done };
+}
+
+function collectDone(req) {
+    return req.done.then(
+        (value) => ({ status: "resolved", value }),
+        (err) => ({ status: "rejected", message: err.message })
+    );
+}
+
+async function readExpectedRejectionAndPump(req, pump, label, expectedText, deadlineMs) {
+    await withDeadline(pump.done, deadlineMs, `${label} stream close`);
+    await expectReject(label, () => req.done, expectedText);
+}
+
+function longRealPrompt(label) {
+    return `${label}. Write a long, detailed explanation with many numbered points. ` +
+        `Continue until the response is complete. Include examples, caveats, and a conclusion.`;
+}
+
+async function importRealRuntime(label) {
+    const inferenceUrl = pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href;
+    return import(`${inferenceUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
+}
+
+async function readShortRealPrompt(prompt, text, options = {}) {
+    const req = await prompt(text, {
+        stream: false,
+        ...options
+    });
+
     return req.done;
 }
 
@@ -762,6 +874,159 @@ async function modeSessionMaxRejectsWhenAllSessionsActive() {
     console.log("[OK] active session eviction was rejected safely");
 }
 
+async function modeRealCancelActivePromptNativeBoundary() {
+    logSection("real runtime cancel active prompt reaches native boundary");
+
+    const { initModel, prompt, cancelPrompt, shutdownRuntime } = await importRealRuntime("real-cancel-active-prompt-native-boundary");
+    const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
+    const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
+    const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
+
+    await initModel({ attempts: 1, readyTimeoutMs });
+
+    const req = await prompt(longRealPrompt("Real cancel active prompt native-boundary smoke"), {
+        sessionId: "real-cancel-alpha",
+        stream: true
+    });
+    const pump = startStreamPump(req);
+
+    await sleep(cancelDelayMs);
+    assert.equal(cancelPrompt(req.id), true);
+    await readExpectedRejectionAndPump(req, pump, "real canceled prompt", "Prompt canceled", nativeBoundaryDeadlineMs);
+
+    const followResult = await withDeadline(
+        readShortRealPrompt(prompt, "After cancellation, answer with exactly: OK", { sessionId: "real-cancel-alpha" }),
+        promptDeadlineMs,
+        "real same-session prompt after cancellation"
+    );
+
+    assert.equal(typeof followResult, "string");
+    assert.ok(followResult.length > 0, "same-session prompt after cancellation should return text");
+
+    await withDeadline(shutdownRuntime({ mode: "abort" }), shutdownDeadlineMs, "real cancel native-boundary cleanup shutdown");
+    console.log("[OK] real cancel active prompt reached native boundary and same session remained usable");
+}
+
+async function modeRealResetSessionActivePromptNativeBoundary() {
+    logSection("real runtime resetSession active prompt reaches native boundary");
+
+    const { initModel, prompt, resetSession, shutdownRuntime } = await importRealRuntime("real-reset-session-active-prompt-native-boundary");
+    const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
+    const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
+    const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
+
+    await initModel({ attempts: 1, readyTimeoutMs });
+
+    const req = await prompt(longRealPrompt("Real resetSession active prompt native-boundary smoke"), {
+        sessionId: "real-reset-alpha",
+        stream: true
+    });
+    const pump = startStreamPump(req);
+
+    await sleep(cancelDelayMs);
+
+    await Promise.all([
+        readExpectedRejectionAndPump(req, pump, "real session-reset canceled prompt", "Session reset: real-reset-alpha", nativeBoundaryDeadlineMs),
+        withDeadline(resetSession("real-reset-alpha"), nativeBoundaryDeadlineMs, "real resetSession native boundary")
+    ]);
+
+    const followResult = await withDeadline(
+        readShortRealPrompt(prompt, "After resetSession, answer with exactly: OK", { sessionId: "real-reset-alpha" }),
+        promptDeadlineMs,
+        "real same-session prompt after resetSession"
+    );
+
+    assert.equal(typeof followResult, "string");
+    assert.ok(followResult.length > 0, "same-session prompt after resetSession should return text");
+
+    await withDeadline(shutdownRuntime({ mode: "abort" }), shutdownDeadlineMs, "real resetSession native-boundary cleanup shutdown");
+    console.log("[OK] real resetSession waited for native boundary and same session remained usable");
+}
+
+async function modeRealShutdownAbortNativeBoundary() {
+    logSection("real runtime shutdown abort reaches native boundary");
+
+    const { initModel, prompt, shutdownRuntime } = await importRealRuntime("real-shutdown-abort-native-boundary");
+    const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
+
+    await initModel({ attempts: 1, readyTimeoutMs });
+
+    const req = await prompt(longRealPrompt("Real shutdown abort native-boundary smoke"), {
+        sessionId: "real-shutdown-alpha",
+        stream: true
+    });
+    const pump = startStreamPump(req);
+
+    await sleep(cancelDelayMs);
+
+    await Promise.all([
+        readExpectedRejectionAndPump(req, pump, "real shutdown canceled prompt", "Runtime shutdown", nativeBoundaryDeadlineMs),
+        withDeadline(shutdownRuntime({ mode: "abort" }), nativeBoundaryDeadlineMs, "real shutdown abort native boundary")
+    ]);
+
+    await expectReject(
+        "prompt after real shutdown abort",
+        () => prompt("This should reject after shutdown."),
+        "Runtime is shutting down"
+    );
+
+    console.log("[OK] real shutdown abort reached native boundary and completed shutdown");
+}
+
+async function modeRealDrainTimeoutNativeBoundary() {
+    logSection("real runtime drain-with-timeout reaches native boundary");
+
+    const { initModel, prompt, shutdownRuntime } = await importRealRuntime("real-drain-timeout-native-boundary");
+    const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
+    const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
+    const timeoutMs = readPositiveIntEnv("REAL_DRAIN_TIMEOUT_MS", 150);
+
+    await initModel({ attempts: 1, readyTimeoutMs });
+
+    const req = await prompt(longRealPrompt("Real drain-with-timeout native-boundary smoke"), {
+        sessionId: "real-timeout-alpha",
+        stream: true
+    });
+    const pump = startStreamPump(req);
+
+    await Promise.all([
+        readExpectedRejectionAndPump(req, pump, "real drain-timeout canceled prompt", "Runtime shutdown timeout", nativeBoundaryDeadlineMs),
+        withDeadline(shutdownRuntime({ mode: "drain-with-timeout", timeoutMs }), nativeBoundaryDeadlineMs, "real drain-timeout native boundary")
+    ]);
+
+    await expectReject(
+        "prompt after real drain-timeout shutdown",
+        () => prompt("This should reject after drain-timeout shutdown."),
+        "Runtime is shutting down"
+    );
+
+    console.log("[OK] real drain-with-timeout reached native boundary and completed shutdown");
+}
+
+async function realOrchestrator() {
+    const modes = [
+        "real-cancel-active-prompt-native-boundary",
+        "real-reset-session-active-prompt-native-boundary",
+        "real-shutdown-abort-native-boundary",
+        "real-drain-timeout-native-boundary"
+    ];
+
+    console.log("[SMOKE] real orchestrator modes:", modes.join(", "));
+
+    for (const mode of modes) {
+        logSection(`real child mode: ${mode}`);
+        await runChild(mode);
+    }
+
+    console.log("\nAll branch-scoped real worker-native cancellation boundary smoke tests finished.");
+}
+
 async function orchestrator() {
     const modes = [
         "mock-cancel-active-prompt-aborts-signal",
@@ -776,6 +1041,17 @@ async function orchestrator() {
         "mock-cancel-during-context-creation-disposes-partial-artifacts",
         "mock-session-max-rejects-when-all-sessions-active"
     ];
+
+    if (shouldRunRealRuntimeModes()) {
+        modes.push(
+            "real-cancel-active-prompt-native-boundary",
+            "real-reset-session-active-prompt-native-boundary",
+            "real-shutdown-abort-native-boundary",
+            "real-drain-timeout-native-boundary"
+        );
+    }
+
+    console.log("[SMOKE] orchestrator modes:", modes.join(", "));
 
     for (const mode of modes) {
         logSection(`child mode: ${mode}`);
@@ -826,6 +1102,21 @@ async function main() {
             break;
         case "mock-session-max-rejects-when-all-sessions-active":
             await modeSessionMaxRejectsWhenAllSessionsActive();
+            break;
+        case "real-orchestrator":
+            await realOrchestrator();
+            break;
+        case "real-cancel-active-prompt-native-boundary":
+            await modeRealCancelActivePromptNativeBoundary();
+            break;
+        case "real-reset-session-active-prompt-native-boundary":
+            await modeRealResetSessionActivePromptNativeBoundary();
+            break;
+        case "real-shutdown-abort-native-boundary":
+            await modeRealShutdownAbortNativeBoundary();
+            break;
+        case "real-drain-timeout-native-boundary":
+            await modeRealDrainTimeoutNativeBoundary();
             break;
         default:
             throw new Error(`Unknown SMOKE_MODE: ${MODE}`);
