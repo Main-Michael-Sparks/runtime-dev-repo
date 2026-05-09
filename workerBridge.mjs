@@ -40,12 +40,12 @@ export function onWorkerMessage(handler) {
   bindMessageHandler(worker);
 }
 
-export function sendToWorker(message) {
+export function sendToWorker(message, transferList = []) {
   if (!worker) {
     initWorkerBridge();
   }
 
-  worker.postMessage(message);
+  worker.postMessage(message, transferList);
 }
 
 export function getWorker() {

@@ -1,4 +1,4 @@
-import { parentPort } from "worker_threads";
+import { parentPort, receiveMessageOnPort } from "worker_threads";
 import { getLlama, LlamaChatSession } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -53,12 +53,15 @@ function createPromptAbortError(message, meta = {}) {
     return err;
 }
 
-function createActiveRequestRecord({ id, sessionId }) {
+function createActiveRequestRecord({ id, sessionId, cancelPort }) {
+    cancelPort?.unref?.();
+
     return {
         id,
         sessionId,
         sequence: ++nextActiveRequestSequence,
         controller: new AbortController(),
+        cancelPort: cancelPort ?? null,
         state: "running",
         abortReason: null,
         error: null,
@@ -71,7 +74,35 @@ function getActiveRequest(id) {
 }
 
 function isActiveRequestAborting(record) {
-    return record?.state === "aborting" || record?.controller?.signal?.aborted === true;
+    return record?.state === "aborting" ||
+        record?.controller?.signal?.aborted === true;
+}
+
+function readCancelPortMessage(record) {
+    if (!record?.cancelPort) return null;
+
+    let latestCancel = null;
+
+    while (true) {
+        const packet = receiveMessageOnPort(record.cancelPort);
+        if (!packet) break;
+
+        if (packet.message?.type === "cancel") {
+            latestCancel = packet.message;
+        }
+    }
+
+    return latestCancel;
+}
+
+function synchronizeExternalCancellation(record, message = "Prompt canceled") {
+    const packet = readCancelPortMessage(record);
+    if (!packet) return false;
+
+    return abortActiveRequest(record, record.abortReason ?? createPromptAbortError(packet.reason ?? message, {
+        requestId: record.id,
+        sessionId: record.sessionId
+    }));
 }
 
 function isPromptAbortError(record, err) {
@@ -91,6 +122,8 @@ function buildRequestObsoleteError(requestId) {
     if (!record) {
         return createPromptAbortError("Prompt canceled", { requestId });
     }
+
+    synchronizeExternalCancellation(record);
 
     if (isActiveRequestAborting(record)) {
         return record.abortReason ?? createPromptAbortError("Prompt canceled", {
@@ -520,11 +553,14 @@ async function runPromptTask(record, msg) {
     } = msg;
 
     await waitForPriorSessionRequestBoundaries(sessionId, id);
+    synchronizeExternalCancellation(record);
 
     const obsoleteBeforeSession = buildRequestObsoleteError(id);
     if (obsoleteBeforeSession) throw obsoleteBeforeSession;
 
     const { session } = await getSession(sessionId, id);
+    synchronizeExternalCancellation(record);
+
     const toChunk = toChunkFactory();
 
     const result = await session.prompt(text, {
@@ -536,19 +572,19 @@ async function runPromptTask(record, msg) {
         signal: record.controller.signal,
         stopOnAbortSignal: false,
 
-        onToken: stream
-            ? (t) => {
-                  if (isRequestObsolete(id)) return;
+        onToken(t) {
+            synchronizeExternalCancellation(record);
+            if (isRequestObsolete(id)) return;
+            if (!stream) return;
 
-                  const chunk = toChunk(t);
+            const chunk = toChunk(t);
 
-                  parentPort.postMessage({
-                      type: "stream",
-                      id,
-                      token: chunk
-                  });
-              }
-            : undefined
+            parentPort.postMessage({
+                type: "stream",
+                id,
+                token: chunk
+            });
+        }
     });
 
     const obsoleteAfterPrompt = buildRequestObsoleteError(id);
@@ -564,10 +600,11 @@ async function runPromptTask(record, msg) {
 async function handlePromptMessage(msg) {
     const {
         id,
-        sessionId = "default"
+        sessionId = "default",
+        cancelPort = null
     } = msg;
 
-    const record = createActiveRequestRecord({ id, sessionId });
+    const record = createActiveRequestRecord({ id, sessionId, cancelPort });
     activeRequests.set(id, record);
 
     record.promise = (async () => {
@@ -584,6 +621,12 @@ async function handlePromptMessage(msg) {
         } finally {
             record.state = "done";
             activeRequests.delete(id);
+
+            try {
+                record.cancelPort?.close();
+            } catch {
+                // no-op: port may already be closed
+            }
         }
     })();
 

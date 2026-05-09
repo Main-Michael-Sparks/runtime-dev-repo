@@ -574,6 +574,7 @@ onWorkerMessage((msg) => {
         const resultText = req.streamEnabled ? req.finalText : (msg.res ?? req.finalText);
 
         closeStream(req);
+        closeRequestCancelChannel(req);
         traceDone(req);
         req.resolveDone(resultText);
         traceDelete(req.id);
@@ -620,6 +621,7 @@ onWorkerMessage((msg) => {
         const req = scheduler.fail(msg.id);
         if (!req) return;
 
+        closeRequestCancelChannel(req);
         traceError(req, err);
         errorStream(req, err);
         req.rejectDone(err);
@@ -697,6 +699,31 @@ function assertNoSessionResetInProgress(operationName) {
     }
 }
 
+function notifyRequestCancellationRequested(req, reason = "Prompt canceled") {
+    if (!req?.parentCancelPort || req.status !== "running") return;
+
+    try {
+        req.parentCancelPort.postMessage({
+            type: "cancel",
+            id: req.id,
+            sessionId: req.sessionId,
+            reason
+        });
+    } catch {
+        // no-op: port may already be closed during cleanup
+    }
+}
+
+function notifyRequestsCancellationRequested(requests, reason) {
+    for (const req of requests) {
+        notifyRequestCancellationRequested(req, reason);
+    }
+}
+
+function closeRequestCancelChannel(req) {
+    req?.closeCancelChannel?.();
+}
+
 export async function prompt(text, options = {}) {
     const sessionId = options.sessionId || "default";
 
@@ -723,6 +750,7 @@ export async function prompt(text, options = {}) {
 
 export function cancelPrompt(promptId) {
     const existing = scheduler.getRequest(promptId);
+    notifyRequestCancellationRequested(existing, "Prompt canceled");
 
     sendToWorker({
         type: "cancel",
@@ -772,6 +800,7 @@ export async function resetSession(sessionId = "default") {
     });
 
     const canceled = scheduler.cancelBySession(sessionId);
+    notifyRequestsCancellationRequested(canceled, `Session reset: ${sessionId}`);
 
     for (const req of canceled) {
         sendToWorker({
@@ -810,6 +839,7 @@ export async function resetModel() {
     scheduler.setReady(false);
 
     const canceled = scheduler.cancelAll();
+    notifyRequestsCancellationRequested(canceled, "Model reset");
 
     for (const req of canceled) {
         sendToWorker({
@@ -885,6 +915,7 @@ function isInitActive() {
 
 function cancelRequestsForShutdown(reason) {
     const canceled = scheduler.cancelAll();
+    notifyRequestsCancellationRequested(canceled, reason);
 
     for (const req of canceled) {
         sendToWorker({

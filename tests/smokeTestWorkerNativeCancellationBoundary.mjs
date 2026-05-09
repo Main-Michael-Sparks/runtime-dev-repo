@@ -3,6 +3,7 @@
 // Purpose:
 // - Branch-scoped deterministic smoke coverage for worker-native cancellation boundaries.
 // - Verifies worker-side AbortSignal observation and disposal ordering with a fake node-llama-cpp.
+// - Verifies MessageChannel cancel delivery through onToken polling during a blocked token loop.
 // - Provides optional real-runtime modes that exercise the local model and node-llama-cpp AbortSignal path.
 // - Complements smokeTestDrainShutdown.mjs, which primarily preserves parent-side shutdown behavior.
 //
@@ -11,6 +12,13 @@
 //
 // Run mock + branch-scoped real-runtime smoke against local node-llama-cpp/model setup:
 //   REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//
+// Windows PowerShell:
+//   $env:REAL_RUNTIME="1"; node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+//   Remove-Item Env:REAL_RUNTIME
+//
+// Windows cmd.exe:
+//   set REAL_RUNTIME=1&& node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
 //
 // Run only real-runtime modes:
 //   SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
@@ -25,6 +33,7 @@
 //   REAL_SHUTDOWN_DEADLINE_MS=240000
 //   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1000
 //   REAL_NATIVE_BOUNDARY_DEADLINE_MS=240000
+//   REAL_FIRST_CHUNK_TIMEOUT_MS=120000
 //
 // Notes:
 // - Child processes isolate runtime/module state per scenario.
@@ -41,7 +50,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-real-modes-v3";
+const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v6";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
@@ -84,7 +93,8 @@ function readPositiveIntEnv(name, fallback) {
 }
 
 function shouldRunRealRuntimeModes() {
-    return process.env.REAL_RUNTIME === "1";
+    const raw = String(process.env.REAL_RUNTIME ?? "").trim().toLowerCase();
+    return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 async function waitForCondition(predicate, timeoutMs, label, intervalMs = 25) {
@@ -175,6 +185,17 @@ function startStreamPump(req, { logChunks = false } = {}) {
     })();
 
     return { stats, done };
+}
+
+async function waitForFirstStreamChunk(pump, label) {
+    const timeoutMs = readPositiveIntEnv("REAL_FIRST_CHUNK_TIMEOUT_MS", 120000);
+
+    await waitForCondition(
+        () => pump.stats.chunks > 0,
+        timeoutMs,
+        `${label} first streamed chunk`,
+        50
+    );
 }
 
 function collectDone(req) {
@@ -344,6 +365,29 @@ function readDelay(name, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function readInt(name, fallback) {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isInteger(value) && value >= 0 ? value : fallback;
+}
+
+function blockWorkerThread(ms) {
+  if (ms <= 0) return;
+
+  const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const view = new Int32Array(buffer);
+  Atomics.wait(view, 0, 0, ms);
+}
+
+function settleAbort({ text, sessionId, signal, reject }) {
+  const abortSettleDelayMs = readDelay("MOCK_ABORT_SETTLE_DELAY_MS", 0);
+  event("prompt.abort-observed", { text, sessionId });
+
+  setTimeout(() => {
+    event("prompt.abort-settled", { text, sessionId });
+    reject(signal.reason ?? new Error("aborted"));
+  }, abortSettleDelayMs);
+}
+
 function waitForPromptOrAbort({ text, sessionId, signal }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -376,13 +420,16 @@ function waitForPromptOrAbort({ text, sessionId, signal }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      event("prompt.abort-observed", { text, sessionId });
 
-      setTimeout(() => {
-        cleanup();
-        event("prompt.abort-settled", { text, sessionId });
-        reject(signal.reason ?? new Error("aborted"));
-      }, abortSettleDelayMs);
+      settleAbort({
+        text,
+        sessionId,
+        signal,
+        reject: (err) => {
+          cleanup();
+          reject(err);
+        },
+      });
     };
 
     signal?.addEventListener("abort", abortListener, { once: true });
@@ -442,6 +489,34 @@ export class LlamaChatSession {
 
   async prompt(text, options = {}) {
     event("prompt.start", { text, sessionId: this.sessionId });
+
+    const tokenLoopTicks = readInt("MOCK_TOKEN_LOOP_TICKS", 0);
+
+    if (tokenLoopTicks > 0) {
+      const blockMs = readDelay("MOCK_TOKEN_LOOP_BLOCK_MS", 5);
+
+      for (let i = 0; i < tokenLoopTicks; i++) {
+        if (options.signal?.aborted) {
+          event("prompt.abort-observed", { text, sessionId: this.sessionId, beforeToken: true });
+          throw options.signal.reason ?? new Error("aborted");
+        }
+
+        event("prompt.token", { text, sessionId: this.sessionId, index: i });
+        options.onToken?.("tick-" + i + " ");
+
+        if (options.signal?.aborted) {
+          event("prompt.abort-observed", { text, sessionId: this.sessionId, afterToken: true });
+          event("prompt.abort-settled", { text, sessionId: this.sessionId });
+          throw options.signal.reason ?? new Error("aborted");
+        }
+
+        blockWorkerThread(blockMs);
+      }
+
+      event("prompt.finish", { text, sessionId: this.sessionId });
+      return "mock response: " + String(text).slice(0, 32);
+    }
+
     await waitForPromptOrAbort({ text, sessionId: this.sessionId, signal: options.signal });
 
     const output = "mock response: " + String(text).slice(0, 32);
@@ -520,6 +595,35 @@ async function modeCancelActivePromptAbortsSignal() {
     });
 
     console.log("[OK] cancel active prompt reached worker abort signal");
+}
+
+async function modeMessageChannelCancelDuringBlockedTokenLoop() {
+    logSection("MessageChannel cancel reaches worker during blocked token loop");
+
+    await withMockRuntime(async ({ initModel, prompt, cancelPrompt, shutdownRuntime }, eventLogPath) => {
+        await initModel();
+
+        const req = await prompt("message-channel-token-loop-A");
+        req.done.catch(() => {});
+
+        await waitForEvent(eventLogPath, (event) => (
+            event.type === "prompt.token" && event.text === "message-channel-token-loop-A"
+        ), "prompt.token message-channel-token-loop-A");
+
+        assert.equal(cancelPrompt(req.id), true);
+        await expectReject("message-channel token-loop prompt canceled", () => readPromptResult(req), "Prompt canceled");
+
+        await waitForEvent(eventLogPath, (event) => (
+            event.type === "prompt.abort-observed" && event.text === "message-channel-token-loop-A"
+        ), "MessageChannel prompt.abort-observed message-channel-token-loop-A", 5000);
+
+        await shutdownRuntime({ mode: "abort" });
+    }, {
+        MOCK_TOKEN_LOOP_TICKS: 400,
+        MOCK_TOKEN_LOOP_BLOCK_MS: 5
+    });
+
+    console.log("[OK] MessageChannel cancellation reached blocked token loop");
 }
 
 async function modeResetSessionAbortsBeforeDispose() {
@@ -892,6 +996,7 @@ async function modeRealCancelActivePromptNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
+    await waitForFirstStreamChunk(pump, "real cancel active prompt");
     await sleep(cancelDelayMs);
     assert.equal(cancelPrompt(req.id), true);
     await readExpectedRejectionAndPump(req, pump, "real canceled prompt", "Prompt canceled", nativeBoundaryDeadlineMs);
@@ -927,6 +1032,7 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
+    await waitForFirstStreamChunk(pump, "real resetSession active prompt");
     await sleep(cancelDelayMs);
 
     await Promise.all([
@@ -963,6 +1069,7 @@ async function modeRealShutdownAbortNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
+    await waitForFirstStreamChunk(pump, "real shutdown abort active prompt");
     await sleep(cancelDelayMs);
 
     await Promise.all([
@@ -994,6 +1101,8 @@ async function modeRealDrainTimeoutNativeBoundary() {
         stream: true
     });
     const pump = startStreamPump(req);
+
+    await waitForFirstStreamChunk(pump, "real drain-timeout active prompt");
 
     await Promise.all([
         readExpectedRejectionAndPump(req, pump, "real drain-timeout canceled prompt", "Runtime shutdown timeout", nativeBoundaryDeadlineMs),
@@ -1030,6 +1139,7 @@ async function realOrchestrator() {
 async function orchestrator() {
     const modes = [
         "mock-cancel-active-prompt-aborts-signal",
+        "mock-message-channel-cancel-during-blocked-token-loop",
         "mock-reset-session-aborts-before-session-dispose",
         "mock-reset-model-aborts-before-model-dispose",
         "mock-shutdown-abort-aborts-before-model-dispose",
@@ -1065,6 +1175,7 @@ async function main() {
     console.log("[SMOKE] mode:", MODE);
     console.log("[SMOKE] version:", SMOKE_TEST_VERSION);
     console.log("[SMOKE] file:", SELF_PATH);
+    console.log("[SMOKE] REAL_RUNTIME:", process.env.REAL_RUNTIME ?? "<unset>");
 
     switch (MODE) {
         case "orchestrator":
@@ -1072,6 +1183,9 @@ async function main() {
             break;
         case "mock-cancel-active-prompt-aborts-signal":
             await modeCancelActivePromptAbortsSignal();
+            break;
+        case "mock-message-channel-cancel-during-blocked-token-loop":
+            await modeMessageChannelCancelDuringBlockedTokenLoop();
             break;
         case "mock-reset-session-aborts-before-session-dispose":
             await modeResetSessionAbortsBeforeDispose();
