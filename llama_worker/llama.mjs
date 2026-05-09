@@ -20,6 +20,7 @@ let shuttingDown = false;
 let activeConfig = config;
 let activeInitAttemptId = null;
 let activeProfileName = null;
+let nextActiveRequestSequence = 0;
 
 const sessions = new Map();
 const activeRequests = new Map();
@@ -38,6 +39,167 @@ function resetActiveInitConfig() {
     activeConfig = config;
     activeInitAttemptId = null;
     activeProfileName = null;
+}
+
+function createPromptAbortError(message, meta = {}) {
+    const err = new Error(message);
+    err.name = "PromptAbortError";
+    err.isPromptAbort = true;
+
+    for (const [key, value] of Object.entries(meta)) {
+        err[key] = value;
+    }
+
+    return err;
+}
+
+function createActiveRequestRecord({ id, sessionId }) {
+    return {
+        id,
+        sessionId,
+        sequence: ++nextActiveRequestSequence,
+        controller: new AbortController(),
+        state: "running",
+        abortReason: null,
+        error: null,
+        promise: null
+    };
+}
+
+function getActiveRequest(id) {
+    return activeRequests.get(id) ?? null;
+}
+
+function isActiveRequestAborting(record) {
+    return record?.state === "aborting" || record?.controller?.signal?.aborted === true;
+}
+
+function isPromptAbortError(record, err) {
+    if (!record) return false;
+    if (err === record.abortReason) return true;
+    if (err?.isPromptAbort === true) return true;
+    if (err?.name === "AbortError" && isActiveRequestAborting(record)) return true;
+
+    return false;
+}
+
+function buildRequestObsoleteError(requestId) {
+    if (requestId === null || requestId === undefined) return null;
+
+    const record = getActiveRequest(requestId);
+
+    if (!record) {
+        return createPromptAbortError("Prompt canceled", { requestId });
+    }
+
+    if (isActiveRequestAborting(record)) {
+        return record.abortReason ?? createPromptAbortError("Prompt canceled", {
+            requestId,
+            sessionId: record.sessionId
+        });
+    }
+
+    return null;
+}
+
+function isRequestObsolete(requestId) {
+    return buildRequestObsoleteError(requestId) !== null;
+}
+
+function abortActiveRequest(record, reason) {
+    if (!record || record.state === "done") return false;
+
+    if (!record.abortReason) {
+        record.abortReason = reason ?? createPromptAbortError("Prompt canceled", {
+            requestId: record.id,
+            sessionId: record.sessionId
+        });
+    }
+
+    record.state = "aborting";
+
+    if (!record.controller.signal.aborted) {
+        record.controller.abort(record.abortReason);
+    }
+
+    return true;
+}
+
+function abortActiveRequestById(id, reason) {
+    const record = getActiveRequest(id);
+    if (!record) return false;
+
+    return abortActiveRequest(record, reason ?? createPromptAbortError("Prompt canceled", {
+        requestId: id,
+        sessionId: record.sessionId
+    }));
+}
+
+function getActiveRequestRecords(filterFn = null) {
+    const records = [];
+
+    for (const record of activeRequests.values()) {
+        if (record.state === "done") continue;
+        if (filterFn && !filterFn(record)) continue;
+
+        records.push(record);
+    }
+
+    return records;
+}
+
+function abortActiveRequests(filterFn, reasonFactory) {
+    const records = getActiveRequestRecords(filterFn);
+
+    for (const record of records) {
+        const reason = typeof reasonFactory === "function"
+            ? reasonFactory(record)
+            : reasonFactory;
+
+        abortActiveRequest(record, reason ?? createPromptAbortError("Prompt canceled", {
+            requestId: record.id,
+            sessionId: record.sessionId
+        }));
+    }
+
+    return records;
+}
+
+async function waitForActiveRequestBoundaries(records) {
+    const pending = records
+        .map((record) => record?.promise)
+        .filter(Boolean);
+
+    if (pending.length === 0) return [];
+
+    return Promise.allSettled(pending);
+}
+
+async function waitForPriorSessionRequestBoundaries(sessionId, currentRequestId) {
+    const current = getActiveRequest(currentRequestId);
+    if (!current) return;
+
+    const priorRecords = getActiveRequestRecords((record) => (
+        record.sessionId === sessionId &&
+        record.id !== currentRequestId &&
+        record.sequence < current.sequence
+    ));
+
+    await waitForActiveRequestBoundaries(priorRecords);
+}
+
+function hasActiveRequestForSession(sessionId) {
+    return getActiveRequestRecords((record) => record.sessionId === sessionId).length > 0;
+}
+
+function findEvictableSessionId() {
+    for (const sessionId of sessions.keys()) {
+        if (!hasActiveRequestForSession(sessionId)) {
+            return sessionId;
+        }
+    }
+
+    return null;
 }
 
 async function disposeSessionEntry(entry) {
@@ -149,9 +311,8 @@ function toContextCreateOptions(contextConfig) {
 }
 
 function buildContextCreationObsoleteError(requestId) {
-    if (requestId !== null && requestId !== undefined && !activeRequests.has(requestId)) {
-        return new Error("Prompt canceled");
-    }
+    const requestObsoleteError = buildRequestObsoleteError(requestId);
+    if (requestObsoleteError) return requestObsoleteError;
 
     if (resetting || shuttingDown || !ready || !model) {
         return new Error("Model is resetting");
@@ -271,8 +432,13 @@ async function getSession(sessionId, requestId = null) {
     if (sessions.has(sessionId)) return sessions.get(sessionId);
 
     if (sessions.size >= activeConfig.sessions.maxCount) {
-        const oldest = sessions.keys().next().value;
-        await disposeSessionById(oldest);
+        const evictableSessionId = findEvictableSessionId();
+
+        if (!evictableSessionId) {
+            throw new Error("Cannot create session: all sessions are active");
+        }
+
+        await disposeSessionById(evictableSessionId);
     }
 
     const wrapper = await createSessionContextWithRetry(sessionId, requestId);
@@ -282,21 +448,146 @@ async function getSession(sessionId, requestId = null) {
 }
 
 async function resetSession(sessionId) {
+    const records = abortActiveRequests(
+        (record) => record.sessionId === sessionId,
+        (record) => createPromptAbortError(`Session reset: ${sessionId}`, {
+            requestId: record.id,
+            sessionId
+        })
+    );
+
+    await waitForActiveRequestBoundaries(records);
     await disposeSessionById(sessionId);
 }
 
 async function resetModel() {
     resetting = true;
-    activeRequests.clear();
 
+    const records = abortActiveRequests(
+        () => true,
+        (record) => createPromptAbortError("Model reset", {
+            requestId: record.id,
+            sessionId: record.sessionId
+        })
+    );
+
+    await waitForActiveRequestBoundaries(records);
     await disposeModelStack();
 }
 
 async function shutdownWorker() {
     shuttingDown = true;
-    activeRequests.clear();
 
+    const records = abortActiveRequests(
+        () => true,
+        (record) => createPromptAbortError("Runtime shutdown", {
+            requestId: record.id,
+            sessionId: record.sessionId
+        })
+    );
+
+    await waitForActiveRequestBoundaries(records);
     await disposeModelStack();
+}
+
+function toChunkFactory() {
+    let lastTokens = [];
+
+    return function toChunk(t) {
+        if (Array.isArray(t)) {
+            const chunk = model.detokenize(t, false, lastTokens);
+            lastTokens = [...lastTokens, ...t].slice(-8);
+            return chunk;
+        }
+
+        if (typeof t === "number") {
+            const tokens = [t];
+            const chunk = model.detokenize(tokens, false, lastTokens);
+            lastTokens = [...lastTokens, ...tokens].slice(-8);
+            return chunk;
+        }
+
+        return String(t);
+    };
+}
+
+async function runPromptTask(record, msg) {
+    const {
+        id,
+        text,
+        sessionId = "default",
+        stream = true
+    } = msg;
+
+    await waitForPriorSessionRequestBoundaries(sessionId, id);
+
+    const obsoleteBeforeSession = buildRequestObsoleteError(id);
+    if (obsoleteBeforeSession) throw obsoleteBeforeSession;
+
+    const { session } = await getSession(sessionId, id);
+    const toChunk = toChunkFactory();
+
+    const result = await session.prompt(text, {
+        maxTokens: activeConfig.model.maxTokens,
+        temperature: activeConfig.model.temperature,
+        topK: activeConfig.model.topK,
+        topP: activeConfig.model.topP,
+        repeatPenalty: activeConfig.model.repeatPenalty,
+        signal: record.controller.signal,
+        stopOnAbortSignal: false,
+
+        onToken: stream
+            ? (t) => {
+                  if (isRequestObsolete(id)) return;
+
+                  const chunk = toChunk(t);
+
+                  parentPort.postMessage({
+                      type: "stream",
+                      id,
+                      token: chunk
+                  });
+              }
+            : undefined
+    });
+
+    const obsoleteAfterPrompt = buildRequestObsoleteError(id);
+    if (obsoleteAfterPrompt) throw obsoleteAfterPrompt;
+
+    parentPort.postMessage({
+        type: "done",
+        id,
+        res: stream ? undefined : result
+    });
+}
+
+async function handlePromptMessage(msg) {
+    const {
+        id,
+        sessionId = "default"
+    } = msg;
+
+    const record = createActiveRequestRecord({ id, sessionId });
+    activeRequests.set(id, record);
+
+    record.promise = (async () => {
+        try {
+            await runPromptTask(record, msg);
+        } catch (err) {
+            record.error = err;
+
+            if (isPromptAbortError(record, err)) {
+                return;
+            }
+
+            throw err;
+        } finally {
+            record.state = "done";
+            activeRequests.delete(id);
+        }
+    })();
+
+    await record.promise;
 }
 
 parentPort.on("message", async (msg) => {
@@ -308,7 +599,13 @@ parentPort.on("message", async (msg) => {
         }
 
         if (msg.type === "cancel") {
-            activeRequests.delete(msg.id);
+            const record = getActiveRequest(msg.id);
+            const reason = createPromptAbortError(msg.reason ?? "Prompt canceled", {
+                requestId: msg.id,
+                sessionId: msg.sessionId ?? record?.sessionId ?? null
+            });
+
+            abortActiveRequestById(msg.id, reason);
             return;
         }
 
@@ -342,71 +639,9 @@ parentPort.on("message", async (msg) => {
         }
 
         if (msg.type === "prompt") {
-            const {
-                id,
-                text,
-                sessionId = "default",
-                stream = true
-            } = msg;
-
-            activeRequests.set(id, true);
-
-            const { session } = await getSession(sessionId, id);
-
-            let lastTokens = [];
-
-            function toChunk(t) {
-                if (Array.isArray(t)) {
-                    const chunk = model.detokenize(t, false, lastTokens);
-                    lastTokens = [...lastTokens, ...t].slice(-8);
-                    return chunk;
-                }
-
-                if (typeof t === "number") {
-                    const tokens = [t];
-                    const chunk = model.detokenize(tokens, false, lastTokens);
-                    lastTokens = [...lastTokens, ...tokens].slice(-8);
-                    return chunk;
-                }
-
-                return String(t);
-            }
-
-            const result = await session.prompt(text, {
-                maxTokens: activeConfig.model.maxTokens,
-                temperature: activeConfig.model.temperature,
-                topK: activeConfig.model.topK,
-                topP: activeConfig.model.topP,
-                repeatPenalty: activeConfig.model.repeatPenalty,
-
-                onToken: stream
-                    ? (t) => {
-                          if (!activeRequests.has(id)) return;
-
-                          const chunk = toChunk(t);
-
-                          parentPort.postMessage({
-                              type: "stream",
-                              id,
-                              token: chunk
-                          });
-                      }
-                    : undefined
-            });
-
-            activeRequests.delete(id);
-
-            parentPort.postMessage({
-                type: "done",
-                id,
-                res: stream ? undefined : result
-            });
+            await handlePromptMessage(msg);
         }
     } catch (err) {
-        if (msg.type === "prompt" && msg.id !== undefined && msg.id !== null) {
-            activeRequests.delete(msg.id);
-        }
-
         const initErrorMeta = msg.type === "init" || msg.initAttemptId !== undefined
             ? {
                   initAttemptId: msg.initAttemptId ?? activeInitAttemptId,

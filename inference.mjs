@@ -691,6 +691,12 @@ function assertPromptAdmissionAllowed(sessionId) {
     }
 }
 
+function assertNoSessionResetInProgress(operationName) {
+    if (sessionResetWaiters.size > 0) {
+        throw new Error(`${operationName} cannot start while a session reset is in progress`);
+    }
+}
+
 export async function prompt(text, options = {}) {
     const sessionId = options.sessionId || "default";
 
@@ -716,9 +722,13 @@ export async function prompt(text, options = {}) {
 }
 
 export function cancelPrompt(promptId) {
+    const existing = scheduler.getRequest(promptId);
+
     sendToWorker({
         type: "cancel",
-        id: promptId
+        id: promptId,
+        sessionId: existing?.sessionId ?? null,
+        reason: "Prompt canceled"
     });
 
     const req = scheduler.cancel(promptId);
@@ -766,7 +776,9 @@ export async function resetSession(sessionId = "default") {
     for (const req of canceled) {
         sendToWorker({
             type: "cancel",
-            id: req.id
+            id: req.id,
+            sessionId: req.sessionId,
+            reason: `Session reset: ${sessionId}`
         });
 
         cancelStream(req);
@@ -792,6 +804,8 @@ export async function resetModel() {
         throw new Error("Runtime is shutting down");
     }
 
+    assertNoSessionResetInProgress("Model reset");
+
     runtimeResetting = true;
     scheduler.setReady(false);
 
@@ -800,7 +814,9 @@ export async function resetModel() {
     for (const req of canceled) {
         sendToWorker({
             type: "cancel",
-            id: req.id
+            id: req.id,
+            sessionId: req.sessionId,
+            reason: "Model reset"
         });
 
         cancelStream(req);
@@ -873,7 +889,9 @@ function cancelRequestsForShutdown(reason) {
     for (const req of canceled) {
         sendToWorker({
             type: "cancel",
-            id: req.id
+            id: req.id,
+            sessionId: req.sessionId,
+            reason
         });
 
         cancelStream(req);
@@ -965,6 +983,8 @@ export async function shutdownRuntime(options = {}) {
     if (isInitActive()) {
         throw new Error("Model initialization is in progress");
     }
+
+    assertNoSessionResetInProgress("Runtime shutdown");
 
     if (mode === "abort") {
         await shutdownAbort();
