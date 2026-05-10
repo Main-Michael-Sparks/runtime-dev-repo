@@ -44,13 +44,17 @@ export function createScheduler({ maxInFlight, sendToWorker, onDispatch }) {
 
         onDispatch?.(req);
 
+        const workerCancelPort = req.workerCancelPort;
+        req.workerCancelPort = null;
+
         sendToWorker({
           type: "prompt",
           id: req.id,
           text: req.text,
           sessionId: req.sessionId,
           stream: req.streamEnabled,
-        });
+          cancelPort: workerCancelPort,
+        }, workerCancelPort ? [workerCancelPort] : []);
       }
     });
   }
