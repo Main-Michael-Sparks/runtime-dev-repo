@@ -52,7 +52,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v8";
+const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v9";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
@@ -593,7 +593,9 @@ export class LlamaChatSession {
     await waitForPromptOrAbort({ text, sessionId: this.sessionId, signal: options.signal });
 
     const output = "mock response: " + String(text).slice(0, 32);
-    options.onToken?.(output);
+    if (process.env.MOCK_SKIP_ON_TOKEN !== "1") {
+      options.onToken?.(output);
+    }
     return output;
   }
 
@@ -839,6 +841,25 @@ async function modeDrainTimeoutAbortsBeforeDispose() {
     });
 
     console.log("[OK] drain-with-timeout waited for native prompt boundary before dispose");
+}
+
+async function modeStreamDoneFallsBackToPromptResult() {
+    logSection("streaming done falls back to prompt result when no chunks arrive");
+
+    await withMockRuntime(async ({ prompt, shutdownRuntime }) => {
+        const req = await prompt("stream fallback prompt uses result");
+        const result = await readPromptResult(req);
+
+        assert.equal(typeof result, "string");
+        assert.ok(result.length > 0, "streaming prompt should resolve done with prompt result fallback");
+        assert.match(result, /mock response/);
+
+        await shutdownRuntime({ mode: "abort" });
+    }, {
+        MOCK_SKIP_ON_TOKEN: "1"
+    });
+
+    console.log("[OK] streaming done used prompt result fallback when no chunks arrived");
 }
 
 async function modeDrainCompletesWithoutAbort() {
@@ -1223,6 +1244,7 @@ async function orchestrator() {
         "mock-reset-model-aborts-before-model-dispose",
         "mock-shutdown-abort-aborts-before-model-dispose",
         "mock-drain-timeout-aborts-before-model-dispose",
+        "mock-stream-done-falls-back-to-prompt-result",
         "mock-drain-completes-without-abort",
         "mock-cancel-active-then-next-same-session-waits-for-abort-boundary",
         "mock-reset-model-rejects-during-session-reset",
@@ -1277,6 +1299,9 @@ async function main() {
             break;
         case "mock-drain-timeout-aborts-before-model-dispose":
             await modeDrainTimeoutAbortsBeforeDispose();
+            break;
+        case "mock-stream-done-falls-back-to-prompt-result":
+            await modeStreamDoneFallsBackToPromptResult();
             break;
         case "mock-drain-completes-without-abort":
             await modeDrainCompletesWithoutAbort();

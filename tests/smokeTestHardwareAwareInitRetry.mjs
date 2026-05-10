@@ -222,9 +222,19 @@ async function modePureProfiles() {
 
     const overrideProfiles = buildInitProfiles({
         baseConfig: config,
+        // Keep this runtime smoke conservative. The pure profile tests above
+        // validate hardware-aware planning. This mode validates that the
+        // hardware-aware init path can load, prompt, and shut down on the
+        // local machine without relying on an unbounded auto context first
+        // attempt that may native-crash before JS retry handling can recover.
         configOverride: {
+            modelLoad: {
+                gpuLayers: 0,
+                useMlock: false
+            },
             context: {
-                batchSize: 256
+                contextSize: 2048,
+                batchSize: 128
             }
         },
         options: {
@@ -286,9 +296,19 @@ async function modePureProfiles() {
 
     const sameConfigProfiles = buildInitProfiles({
         baseConfig: config,
+        // Keep this runtime smoke conservative. The pure profile tests above
+        // validate hardware-aware planning. This mode validates that the
+        // hardware-aware init path can load, prompt, and shut down on the
+        // local machine without relying on an unbounded auto context first
+        // attempt that may native-crash before JS retry handling can recover.
         configOverride: {
+            modelLoad: {
+                gpuLayers: 0,
+                useMlock: false
+            },
             context: {
-                batchSize: 256
+                contextSize: 2048,
+                batchSize: 128
             }
         },
         options: {
@@ -442,9 +462,19 @@ async function modeRuntimeHardwareAwarePrompt() {
         attempts: 3,
         readyTimeoutMs: 120000,
         retryDelayMs: 0,
+        // Keep this runtime smoke conservative. The pure profile tests above
+        // validate hardware-aware planning. This mode validates that the
+        // hardware-aware init path can load, prompt, and shut down on the
+        // local machine without relying on an unbounded auto context first
+        // attempt that may native-crash before JS retry handling can recover.
         configOverride: {
+            modelLoad: {
+                gpuLayers: 0,
+                useMlock: false
+            },
             context: {
-                batchSize: 256
+                contextSize: 2048,
+                batchSize: 128
             }
         },
         hardwareAware: {
