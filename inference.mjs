@@ -571,7 +571,9 @@ onWorkerMessage((msg) => {
         const req = scheduler.complete(msg.id);
         if (!req) return;
 
-        const resultText = req.streamEnabled ? req.finalText : (msg.res ?? req.finalText);
+        const resultText = req.streamEnabled
+            ? (req.finalText !== "" ? req.finalText : (msg.res ?? req.finalText))
+            : (msg.res ?? req.finalText);
 
         closeStream(req);
         closeRequestCancelChannel(req);

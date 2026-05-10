@@ -34,6 +34,8 @@
 //   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1000
 //   REAL_NATIVE_BOUNDARY_DEADLINE_MS=240000
 //   REAL_FIRST_CHUNK_TIMEOUT_MS=120000
+//   REAL_SMOKE_CONTEXT_SIZE=2048
+//   REAL_SMOKE_BATCH_SIZE=128
 //
 // Notes:
 // - Child processes isolate runtime/module state per scenario.
@@ -50,7 +52,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v6";
+const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v9";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
@@ -90,6 +92,35 @@ function readPositiveIntEnv(name, fallback) {
     }
 
     return value;
+}
+
+
+function readOptionalPositiveIntEnv(name) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return null;
+
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) {
+        throw new Error(`${name} must be a positive integer`);
+    }
+
+    return value;
+}
+
+function buildRealInitOptions(readyTimeoutMs) {
+    const contextSize = readOptionalPositiveIntEnv("REAL_SMOKE_CONTEXT_SIZE") ?? 2048;
+    const batchSize = readOptionalPositiveIntEnv("REAL_SMOKE_BATCH_SIZE") ?? 128;
+
+    return {
+        attempts: 1,
+        readyTimeoutMs,
+        configOverride: {
+            context: {
+                contextSize,
+                batchSize
+            }
+        }
+    };
 }
 
 function shouldRunRealRuntimeModes() {
@@ -187,15 +218,43 @@ function startStreamPump(req, { logChunks = false } = {}) {
     return { stats, done };
 }
 
-async function waitForFirstStreamChunk(pump, label) {
+async function waitForFirstStreamChunk(req, pump, label) {
     const timeoutMs = readPositiveIntEnv("REAL_FIRST_CHUNK_TIMEOUT_MS", 120000);
 
-    await waitForCondition(
-        () => pump.stats.chunks > 0,
-        timeoutMs,
-        `${label} first streamed chunk`,
-        50
-    );
+    await Promise.race([
+        waitForCondition(
+            () => pump.stats.chunks > 0,
+            timeoutMs,
+            `${label} first streamed chunk`,
+            50
+        ),
+        pump.done.then(
+            () => {
+                if (pump.stats.chunks === 0) {
+                    throw new Error(`[FAIL] ${label} stream closed before first streamed chunk`);
+                }
+            },
+            (err) => {
+                throw new Error(
+                    `[FAIL] ${label} stream errored before first streamed chunk: ${err?.message ?? err}`
+                );
+            }
+        ),
+        req.done.then(
+            (value) => {
+                if (pump.stats.chunks === 0) {
+                    throw new Error(
+                        `[FAIL] ${label} request resolved before first streamed chunk: ${String(value).slice(0, 160)}`
+                    );
+                }
+            },
+            (err) => {
+                throw new Error(
+                    `[FAIL] ${label} request rejected before first streamed chunk: ${err?.message ?? err}`
+                );
+            }
+        )
+    ]);
 }
 
 function collectDone(req) {
@@ -211,8 +270,8 @@ async function readExpectedRejectionAndPump(req, pump, label, expectedText, dead
 }
 
 function longRealPrompt(label) {
-    return `${label}. Write a long, detailed explanation with many numbered points. ` +
-        `Continue until the response is complete. Include examples, caveats, and a conclusion.`;
+    return `${label}. Begin immediately, then write a numbered list of 120 short items about runtime lifecycle safety. ` +
+        `Keep each item short and continue until complete.`;
 }
 
 async function importRealRuntime(label) {
@@ -227,6 +286,20 @@ async function readShortRealPrompt(prompt, text, options = {}) {
     });
 
     return req.done;
+}
+
+async function warmRealSession(prompt, sessionId, label, deadlineMs) {
+    const result = await withDeadline(
+        readShortRealPrompt(prompt, "Reply with exactly: OK", { sessionId }),
+        deadlineMs,
+        `${label} warmup prompt`
+    );
+
+    if (typeof result !== "string" || result.length === 0) {
+        throw new Error(`[FAIL] ${label} warmup prompt produced no text`);
+    }
+
+    console.log(`[OK] ${label} warmup prompt resolved`);
 }
 
 async function readEvents(eventLogPath) {
@@ -520,7 +593,9 @@ export class LlamaChatSession {
     await waitForPromptOrAbort({ text, sessionId: this.sessionId, signal: options.signal });
 
     const output = "mock response: " + String(text).slice(0, 32);
-    options.onToken?.(output);
+    if (process.env.MOCK_SKIP_ON_TOKEN !== "1") {
+      options.onToken?.(output);
+    }
     return output;
   }
 
@@ -768,6 +843,25 @@ async function modeDrainTimeoutAbortsBeforeDispose() {
     console.log("[OK] drain-with-timeout waited for native prompt boundary before dispose");
 }
 
+async function modeStreamDoneFallsBackToPromptResult() {
+    logSection("streaming done falls back to prompt result when no chunks arrive");
+
+    await withMockRuntime(async ({ prompt, shutdownRuntime }) => {
+        const req = await prompt("stream fallback prompt uses result");
+        const result = await readPromptResult(req);
+
+        assert.equal(typeof result, "string");
+        assert.ok(result.length > 0, "streaming prompt should resolve done with prompt result fallback");
+        assert.match(result, /mock response/);
+
+        await shutdownRuntime({ mode: "abort" });
+    }, {
+        MOCK_SKIP_ON_TOKEN: "1"
+    });
+
+    console.log("[OK] streaming done used prompt result fallback when no chunks arrived");
+}
+
 async function modeDrainCompletesWithoutAbort() {
     logSection("plain drain completes accepted work without abort");
 
@@ -988,7 +1082,8 @@ async function modeRealCancelActivePromptNativeBoundary() {
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
-    await initModel({ attempts: 1, readyTimeoutMs });
+    await initModel(buildRealInitOptions(readyTimeoutMs));
+    await warmRealSession(prompt, "real-cancel-alpha", "real cancel session", promptDeadlineMs);
 
     const req = await prompt(longRealPrompt("Real cancel active prompt native-boundary smoke"), {
         sessionId: "real-cancel-alpha",
@@ -996,7 +1091,7 @@ async function modeRealCancelActivePromptNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
-    await waitForFirstStreamChunk(pump, "real cancel active prompt");
+    await waitForFirstStreamChunk(req, pump, "real cancel active prompt");
     await sleep(cancelDelayMs);
     assert.equal(cancelPrompt(req.id), true);
     await readExpectedRejectionAndPump(req, pump, "real canceled prompt", "Prompt canceled", nativeBoundaryDeadlineMs);
@@ -1024,7 +1119,8 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
-    await initModel({ attempts: 1, readyTimeoutMs });
+    await initModel(buildRealInitOptions(readyTimeoutMs));
+    await warmRealSession(prompt, "real-reset-alpha", "real reset session", promptDeadlineMs);
 
     const req = await prompt(longRealPrompt("Real resetSession active prompt native-boundary smoke"), {
         sessionId: "real-reset-alpha",
@@ -1032,7 +1128,7 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
-    await waitForFirstStreamChunk(pump, "real resetSession active prompt");
+    await waitForFirstStreamChunk(req, pump, "real resetSession active prompt");
     await sleep(cancelDelayMs);
 
     await Promise.all([
@@ -1060,8 +1156,10 @@ async function modeRealShutdownAbortNativeBoundary() {
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
     const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
+    const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
-    await initModel({ attempts: 1, readyTimeoutMs });
+    await initModel(buildRealInitOptions(readyTimeoutMs));
+    await warmRealSession(prompt, "real-shutdown-alpha", "real shutdown session", promptDeadlineMs);
 
     const req = await prompt(longRealPrompt("Real shutdown abort native-boundary smoke"), {
         sessionId: "real-shutdown-alpha",
@@ -1069,7 +1167,7 @@ async function modeRealShutdownAbortNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
-    await waitForFirstStreamChunk(pump, "real shutdown abort active prompt");
+    await waitForFirstStreamChunk(req, pump, "real shutdown abort active prompt");
     await sleep(cancelDelayMs);
 
     await Promise.all([
@@ -1093,8 +1191,10 @@ async function modeRealDrainTimeoutNativeBoundary() {
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const timeoutMs = readPositiveIntEnv("REAL_DRAIN_TIMEOUT_MS", 150);
+    const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
-    await initModel({ attempts: 1, readyTimeoutMs });
+    await initModel(buildRealInitOptions(readyTimeoutMs));
+    await warmRealSession(prompt, "real-timeout-alpha", "real drain-timeout session", promptDeadlineMs);
 
     const req = await prompt(longRealPrompt("Real drain-with-timeout native-boundary smoke"), {
         sessionId: "real-timeout-alpha",
@@ -1102,7 +1202,7 @@ async function modeRealDrainTimeoutNativeBoundary() {
     });
     const pump = startStreamPump(req);
 
-    await waitForFirstStreamChunk(pump, "real drain-timeout active prompt");
+    await waitForFirstStreamChunk(req, pump, "real drain-timeout active prompt");
 
     await Promise.all([
         readExpectedRejectionAndPump(req, pump, "real drain-timeout canceled prompt", "Runtime shutdown timeout", nativeBoundaryDeadlineMs),
@@ -1144,6 +1244,7 @@ async function orchestrator() {
         "mock-reset-model-aborts-before-model-dispose",
         "mock-shutdown-abort-aborts-before-model-dispose",
         "mock-drain-timeout-aborts-before-model-dispose",
+        "mock-stream-done-falls-back-to-prompt-result",
         "mock-drain-completes-without-abort",
         "mock-cancel-active-then-next-same-session-waits-for-abort-boundary",
         "mock-reset-model-rejects-during-session-reset",
@@ -1198,6 +1299,9 @@ async function main() {
             break;
         case "mock-drain-timeout-aborts-before-model-dispose":
             await modeDrainTimeoutAbortsBeforeDispose();
+            break;
+        case "mock-stream-done-falls-back-to-prompt-result":
+            await modeStreamDoneFallsBackToPromptResult();
             break;
         case "mock-drain-completes-without-abort":
             await modeDrainCompletesWithoutAbort();

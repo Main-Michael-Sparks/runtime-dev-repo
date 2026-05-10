@@ -593,7 +593,7 @@ async function runPromptTask(record, msg) {
     parentPort.postMessage({
         type: "done",
         id,
-        res: stream ? undefined : result
+        res: result
     });
 }
 
