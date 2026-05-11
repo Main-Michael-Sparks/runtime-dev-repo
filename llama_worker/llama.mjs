@@ -61,6 +61,7 @@ function createActiveRequestRecord({ id, sessionId, cancelPort }) {
         sessionId,
         sequence: ++nextActiveRequestSequence,
         controller: new AbortController(),
+        contextController: null,
         cancelPort: cancelPort ?? null,
         state: "running",
         abortReason: null,
@@ -75,7 +76,8 @@ function getActiveRequest(id) {
 
 function isActiveRequestAborting(record) {
     return record?.state === "aborting" ||
-        record?.controller?.signal?.aborted === true;
+        record?.controller?.signal?.aborted === true ||
+        record?.contextController?.signal?.aborted === true;
 }
 
 function readCancelPortMessage(record) {
@@ -153,6 +155,10 @@ function abortActiveRequest(record, reason) {
 
     if (!record.controller.signal.aborted) {
         record.controller.abort(record.abortReason);
+    }
+
+    if (record.contextController && !record.contextController.signal.aborted) {
+        record.contextController.abort(record.abortReason);
     }
 
     return true;
@@ -413,9 +419,24 @@ async function createSessionContextWithRetry(sessionId, requestId = null) {
 
         let context = null;
         let session = null;
+        let contextController = null;
+        const record = getActiveRequest(requestId);
 
         try {
-            context = await model.createContext(toContextCreateOptions(profile.context));
+            contextController = new AbortController();
+
+            if (record) {
+                record.contextController = contextController;
+                synchronizeExternalCancellation(record, "Context creation canceled");
+            }
+
+            const obsoleteBeforeCreate = buildContextCreationObsoleteError(requestId);
+            if (obsoleteBeforeCreate) throw obsoleteBeforeCreate;
+
+            context = await model.createContext({
+                ...toContextCreateOptions(profile.context),
+                createSignal: contextController.signal
+            });
 
             if (typeof context.getSequence !== "function") {
                 throw new Error("Context does not expose getSequence()");
@@ -434,6 +455,10 @@ async function createSessionContextWithRetry(sessionId, requestId = null) {
             if (obsoleteAfterFailure) throw obsoleteAfterFailure;
 
             continue;
+        } finally {
+            if (record?.contextController === contextController) {
+                record.contextController = null;
+            }
         }
 
         const wrapper = {
