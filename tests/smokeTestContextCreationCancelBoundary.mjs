@@ -10,6 +10,12 @@
 // Run deterministic/mock smoke:
 //   node ./tests/smokeTestContextCreationCancelBoundary.mjs
 //
+// Run deterministic/mock smoke plus local real-model smoke:
+//   REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+//
+// Run real-model smoke only:
+//   SMOKE_MODE=real-orchestrator node ./tests/smokeTestContextCreationCancelBoundary.mjs
+//
 // Run one mode:
 //   SMOKE_MODE=mock-cancel-during-context-creation-aborts-create-signal node ./tests/smokeTestContextCreationCancelBoundary.mjs
 
@@ -569,19 +575,14 @@ async function modeResetSessionDuringContextCreation() {
 
         const resetPromise = resetSession("alpha");
 
-        await Promise.race([
-            resetPromise.then(() => {
-                throw new Error("[FAIL] resetSession resolved before context abort boundary settled");
-            }),
-            waitForEvent(eventLogPath, (event) => event.type === "context.abort-settled", "context.abort-settled reset-context-A")
-        ]);
-
         await Promise.all([
             expectReject("session reset canceled context request", () => readPromptResult(req), "Session reset: alpha"),
-            resetPromise
+            withDeadline(resetPromise, 5000, "resetSession during context creation")
         ]);
 
         const events = await readEvents(eventLogPath);
+        assert.equal(events.some((event) => event.type === "context.abort-observed"), true, "context abort should be observed during resetSession");
+        assert.equal(events.some((event) => event.type === "context.abort-settled"), true, "context abort boundary should settle during resetSession");
         assertNoEvent(events, (event) => event.type === "prompt.start", "prompt.start after resetSession context abort");
 
         await shutdownRuntime({ mode: "abort" });
@@ -718,6 +719,158 @@ async function modePlainDrainDoesNotAbortContextCreation() {
     console.log("[OK] plain drain did not abort context creation");
 }
 
+
+function readEnvInt(name, fallback) {
+    const value = Number(process.env[name] ?? fallback);
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+async function realPromptResult(req) {
+    return readPromptResult(req);
+}
+
+async function realInit(runtime) {
+    await withDeadline(
+        runtime.initModel({
+            attempts: 2,
+            readyTimeoutMs: readEnvInt("REAL_READY_TIMEOUT_MS", 120000),
+            retryDelayMs: 100,
+            configOverride: {
+                context: {
+                    contextSize: readEnvInt("REAL_SMOKE_CONTEXT_SIZE", 2048),
+                    batchSize: readEnvInt("REAL_SMOKE_BATCH_SIZE", 128)
+                }
+            }
+        }),
+        readEnvInt("REAL_READY_TIMEOUT_MS", 120000) + 30000,
+        "real initModel"
+    );
+}
+
+async function modeRealFreshSessionCancelContextBoundary() {
+    logSection("real fresh-session cancel context boundary");
+
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    await realInit(runtime);
+
+    const sessionId = `real-cancel-${Date.now()}`;
+    const req = await runtime.prompt("Write a long explanation of recursion.", {
+        sessionId,
+        stream: true
+    });
+
+    req.done.catch(() => {});
+
+    setTimeout(() => {
+        runtime.cancelPrompt(req.id);
+    }, readEnvInt("REAL_CONTEXT_CANCEL_DELAY_MS", 25));
+
+    await withDeadline(
+        expectReject("real fresh-session cancel request", () => realPromptResult(req), "Prompt canceled"),
+        readEnvInt("REAL_CONTEXT_BOUNDARY_DEADLINE_MS", 240000),
+        "real fresh-session cancel boundary"
+    );
+
+    const after = await runtime.prompt("Say OK briefly.", { sessionId, stream: false });
+    await withDeadline(realPromptResult(after), readEnvInt("REAL_PROMPT_DEADLINE_MS", 300000), "real prompt after cancel boundary");
+
+    await withDeadline(
+        runtime.shutdownRuntime({ mode: "abort" }),
+        readEnvInt("REAL_SHUTDOWN_DEADLINE_MS", 240000),
+        "real shutdown after cancel boundary"
+    );
+
+    console.log("[OK] real fresh-session cancel context boundary completed");
+}
+
+async function modeRealFreshSessionResetContextBoundary() {
+    logSection("real fresh-session reset context boundary");
+
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    await realInit(runtime);
+
+    const sessionId = `real-reset-${Date.now()}`;
+    const req = await runtime.prompt("Write a long explanation of recursion.", {
+        sessionId,
+        stream: true
+    });
+
+    req.done.catch(() => {});
+
+    await sleep(readEnvInt("REAL_CONTEXT_CANCEL_DELAY_MS", 25));
+
+    await Promise.all([
+        withDeadline(
+            expectReject("real fresh-session reset request", () => realPromptResult(req), `Session reset: ${sessionId}`),
+            readEnvInt("REAL_CONTEXT_BOUNDARY_DEADLINE_MS", 240000),
+            "real reset request rejection"
+        ),
+        withDeadline(
+            runtime.resetSession(sessionId),
+            readEnvInt("REAL_CONTEXT_BOUNDARY_DEADLINE_MS", 240000),
+            "real resetSession context boundary"
+        )
+    ]);
+
+    const after = await runtime.prompt("Say OK briefly.", { sessionId, stream: false });
+    await withDeadline(realPromptResult(after), readEnvInt("REAL_PROMPT_DEADLINE_MS", 300000), "real prompt after reset boundary");
+
+    await withDeadline(
+        runtime.shutdownRuntime({ mode: "abort" }),
+        readEnvInt("REAL_SHUTDOWN_DEADLINE_MS", 240000),
+        "real shutdown after reset boundary"
+    );
+
+    console.log("[OK] real fresh-session reset context boundary completed");
+}
+
+async function modeRealFreshSessionShutdownContextBoundary() {
+    logSection("real fresh-session shutdown context boundary");
+
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    await realInit(runtime);
+
+    const sessionId = `real-shutdown-${Date.now()}`;
+    const req = await runtime.prompt("Write a long explanation of recursion.", {
+        sessionId,
+        stream: true
+    });
+
+    req.done.catch(() => {});
+
+    await sleep(readEnvInt("REAL_CONTEXT_CANCEL_DELAY_MS", 25));
+
+    await Promise.all([
+        withDeadline(
+            expectReject("real fresh-session shutdown request", () => realPromptResult(req), "Runtime shutdown"),
+            readEnvInt("REAL_CONTEXT_BOUNDARY_DEADLINE_MS", 240000),
+            "real shutdown request rejection"
+        ),
+        withDeadline(
+            runtime.shutdownRuntime({ mode: "abort" }),
+            readEnvInt("REAL_SHUTDOWN_DEADLINE_MS", 240000),
+            "real shutdown context boundary"
+        )
+    ]);
+
+    console.log("[OK] real fresh-session shutdown context boundary completed");
+}
+
+async function realOrchestrator() {
+    const modes = [
+        "real-fresh-session-cancel-context-boundary",
+        "real-fresh-session-reset-context-boundary",
+        "real-fresh-session-shutdown-context-boundary"
+    ];
+
+    for (const mode of modes) {
+        logSection(`child mode: ${mode}`);
+        await runChild(mode);
+    }
+
+    console.log("\nAll real context creation cancel-boundary smoke tests finished.");
+}
+
 async function orchestrator() {
     const modes = [
         "mock-create-signal-is-passed-to-create-context",
@@ -735,6 +888,11 @@ async function orchestrator() {
     for (const mode of modes) {
         logSection(`child mode: ${mode}`);
         await runChild(mode);
+    }
+
+    if (process.env.REAL_RUNTIME === "1") {
+        logSection("real-runtime modes");
+        await realOrchestrator();
     }
 
     console.log("\nAll context creation cancel-boundary smoke tests finished.");
@@ -776,6 +934,18 @@ async function main() {
             break;
         case "mock-plain-drain-does-not-abort-context-creation":
             await modePlainDrainDoesNotAbortContextCreation();
+            break;
+        case "real-orchestrator":
+            await realOrchestrator();
+            break;
+        case "real-fresh-session-cancel-context-boundary":
+            await modeRealFreshSessionCancelContextBoundary();
+            break;
+        case "real-fresh-session-reset-context-boundary":
+            await modeRealFreshSessionResetContextBoundary();
+            break;
+        case "real-fresh-session-shutdown-context-boundary":
+            await modeRealFreshSessionShutdownContextBoundary();
             break;
         default:
             throw new Error(`Unknown SMOKE_MODE: ${MODE}`);

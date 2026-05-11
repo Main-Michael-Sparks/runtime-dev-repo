@@ -1,0 +1,327 @@
+# Context Creation Cancel Boundary v1 — Branch and Dev Notes Final
+
+## Branch
+
+`context-creation-cancel-boundary-v1`
+
+## Source base
+
+Primary source truth for this branch session:
+
+```text
+active-source-truth_runtime-dev-repo-main.zip
+```
+
+GitHub main remains fallback/reference.
+
+## Purpose
+
+Define and verify the cancellation/reset/shutdown boundary for requests that are inside native context creation before `session.prompt(...)` begins:
+
+```js
+model.createContext(...)
+```
+
+The branch closes the pre-generation native boundary that remained after `worker-native-cancellation-boundary-v1` closed active prompt-generation cancellation.
+
+## Implementation summary
+
+### Runtime change
+
+Modified:
+
+```text
+llama_worker/llama.mjs
+```
+
+Implemented:
+
+```text
+- Active request records now include `contextController`.
+- `isActiveRequestAborting()` treats an aborted context controller as an active abort state.
+- `abortActiveRequest()` aborts both:
+  - prompt AbortController for `session.prompt(...)`;
+  - context AbortController for `model.createContext(...)`.
+- `createSessionContextWithRetry()` creates a fresh AbortController for each context profile attempt.
+- `model.createContext(...)` now receives `createSignal: contextController.signal`.
+- `record.contextController` is cleared in `finally` after each attempt.
+- Existing obsolete/cancellation checks stop retry on cancel/reset/shutdown.
+- Genuine context creation failures continue to use the existing retry path.
+```
+
+Key code shape:
+
+```js
+context = await model.createContext({
+    ...toContextCreateOptions(profile.context),
+    createSignal: contextController.signal
+});
+```
+
+### Test change
+
+Added:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+```
+
+The new branch-scoped test includes deterministic mock coverage plus optional local real-runtime coverage.
+
+Mock coverage validates:
+
+```text
+- `createSignal` is passed to `createContext`.
+- cancelPrompt aborts context creation signal.
+- canceled context creation does not retry.
+- genuine context creation failure still retries.
+- ignored createSignal fallback waits for the boundary and cleans partial artifacts.
+- resetSession waits for context abort boundary before disposal.
+- resetModel waits for context abort boundary before model disposal.
+- shutdown abort waits for context abort boundary before model disposal.
+- drain-with-timeout aborts context creation only after timeout.
+- plain drain does not abort accepted context creation.
+```
+
+Real-runtime coverage validates local model safety/completion for:
+
+```text
+- fresh-session cancel context boundary;
+- fresh-session reset context boundary;
+- fresh-session shutdown context boundary.
+```
+
+## Important test fix during branch
+
+The first test version used a fragile `Promise.race` assertion in the resetSession mock mode:
+
+```text
+resetSession resolved before context abort boundary settled
+```
+
+That assertion could race file-log polling against legitimate reset completion after the mock had already written `context.abort-settled`.
+
+Final test now verifies the event log after completion instead:
+
+```text
+- context.abort-observed exists;
+- context.abort-settled exists;
+- prompt.start did not occur.
+```
+
+The final artifact was verified to exclude the old fragile failure text and include the real-runtime modes.
+
+## Files changed
+
+```text
+Modified:
+llama_worker/llama.mjs
+
+Added:
+tests/smokeTestContextCreationCancelBoundary.mjs
+```
+
+No public API changes.
+
+No changes to:
+
+```text
+inference.mjs
+request.mjs
+scheduler.mjs
+workerBridge.mjs
+config.mjs
+configOverride.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+retryProfiles.mjs
+streamController.mjs
+observer.mjs
+normalizer.mjs
+```
+
+## Propagation review
+
+### cancelPrompt during context creation
+
+```text
+cancelPrompt()
+-> parent rejects/closes request quickly
+-> request cancel MessagePort reaches worker
+-> abortActiveRequest()
+-> record.contextController.abort(...)
+-> createContext boundary settles
+-> worker does not enter session.prompt(...)
+```
+
+### resetSession during context creation
+
+```text
+resetSession(sessionId)
+-> parent cancels matching requests
+-> worker reset_session aborts matching active records
+-> context createSignal is aborted
+-> waitForActiveRequestBoundaries()
+-> disposeSessionById()
+-> reset_done only after boundary/disposal
+```
+
+### resetModel during context creation
+
+```text
+resetModel()
+-> parent cancels all accepted requests
+-> worker reset_model aborts all active records
+-> context boundary settles
+-> disposeModelStack()
+-> model_reset_done only after safe disposal
+```
+
+### shutdown abort during context creation
+
+```text
+shutdownRuntime({ mode: "abort" })
+-> parent cancels accepted work
+-> worker shutdown aborts active context/prompt records
+-> context boundary settles
+-> model.dispose happens after boundary
+-> shutdown_done
+```
+
+### drain modes
+
+```text
+plain drain:
+accepted context creation is not aborted.
+
+drain-with-timeout:
+context creation abort happens only after timeout-driven cancellation.
+```
+
+### context retry
+
+```text
+genuine context creation failure still retries.
+cancel/reset/shutdown during context creation does not retry.
+ignored createSignal fallback waits for createContext to return, disposes partial artifacts, and avoids prompt start.
+```
+
+## Validation results
+
+### Sandbox validation
+
+Passed after final artifact reconstitution:
+
+```bash
+node --check ./llama_worker/llama.mjs
+node --check ./tests/smokeTestContextCreationCancelBoundary.mjs
+node ./tests/smokeTestContextCreationCancelBoundary.mjs
+```
+
+Final staged artifact expansion was verified by unzipping the staged files ZIP over a clean source tree and running the mock branch-scoped smoke from that reconstituted tree.
+
+### Local validation from Michael
+
+Passed locally:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestContextCreationRetry.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Reported final lines included:
+
+```text
+All real context creation cancel-boundary smoke tests finished.
+All lifecycle regression smoke tests finished.
+All context creation retry smoke tests finished.
+All worker-native cancellation boundary smoke tests finished.
+All drain-shutdown smoke tests finished.
+All hardware-aware/degraded init retry smoke tests finished.
+```
+
+## Known warnings
+
+Real-runtime tests still print known warnings:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+These warnings were already observed in prior Runtime Dev real-runtime tests and did not fail the smoke suites.
+
+## Artifact verification correction
+
+During this branch, stale generated artifacts were accidentally reported as refreshed. This was corrected by adding a stronger verification step:
+
+```text
+- rebuild artifact directory from scratch;
+- unzip staged files ZIP into a clean source tree;
+- verify forbidden old text is absent;
+- verify required new text/modes are present;
+- run smoke test from the reconstituted artifact tree;
+- run artifact_guard against the full candidate tree with content checks.
+```
+
+Future artifact handoff should always verify the actual downloadable ZIP, not just the working candidate tree.
+
+## Artifact guard summary
+
+Artifact guard passed on the final full candidate:
+
+```text
+Passed: true
+source_file_count: 25
+candidate_file_count: 26
+changed_file_count: 1
+candidate_only_file_count: 1
+failing_finding_count: 0
+changed file: llama_worker/llama.mjs
+candidate-only file: tests/smokeTestContextCreationCancelBoundary.mjs
+```
+
+Content checks included:
+
+```text
+- contextController: null present;
+- record.contextController.abort(record.abortReason) present;
+- createSignal: contextController.signal present;
+- old resetSession fragile failure text absent;
+- fixed resetSession withDeadline assertion present;
+- real-orchestrator present;
+- real fresh-session cancel/reset/shutdown modes present.
+```
+
+## Caveats
+
+```text
+- Real-runtime context creation timing cannot directly inspect native createContext internals.
+- Deterministic mock tests provide the exact createSignal proof.
+- Real-runtime tests provide local model safety/completion coverage.
+- If a future node-llama-cpp version changes createSignal behavior, this branch should be revalidated.
+```
+
+## Branch status
+
+```text
+IMPLEMENTED
+SANDBOX MOCK VERIFIED
+LOCAL REAL-RUNTIME VERIFIED
+REGRESSION SMOKE VERIFIED
+ARTIFACT-GUARDED
+READY FOR GITHUB BRANCH APPLICATION / FINAL REPO VERIFICATION
+```
+
+## Future work not included
+
+```text
+native-operation-hard-stop-policy-v1
+worker-operation-serialization-v1
+current-contract-test-stabilization-v1
+runtime-lifecycle-modularization-v1
+```
