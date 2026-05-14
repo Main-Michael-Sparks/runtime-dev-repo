@@ -1,0 +1,453 @@
+# Runtime Dev Dev Notes 06 — Native Operation Timeout Policy v1 / Option A
+
+**Date:** 2026-05-14  
+**Branch:** `native-operation-hard-stop-policy-v1`  
+**Final policy shape:** Option A / conservative timeout detection  
+**Status:** Implemented, packaged, sandbox smoke/regression checked, and real-runtime smoke tested locally by Michael.
+
+---
+
+## Purpose
+
+This branch defines the fallback policy for lifecycle operations that wait on native worker boundaries and do not receive the expected cooperative acknowledgement in time.
+
+The final branch intentionally does **not** use worker-thread termination as the default native hard-stop behavior. Real-runtime testing showed that terminating a `worker_thread` while `node-llama-cpp` native work may still be active can crash the child process on Windows. The branch was therefore pivoted to conservative timeout detection and explicit unhealthy-state reporting.
+
+Final policy:
+
+```text
+Detect native lifecycle boundary timeout.
+Mark the runtime as unhealthy/stuck for global lifecycle failures.
+Reject/report clearly.
+Do not terminate an active native worker_thread before the cooperative boundary arrives.
+```
+
+True hard-kill recovery should be handled by a future child-process execution boundary, not by killing a native worker thread inside the same Node process.
+
+---
+
+## Final Config Addition
+
+`config.mjs` adds:
+
+```js
+nativeOperationHardStop: {
+    enabled: true,
+    resetModelTimeoutMs: 120000,
+    shutdownTimeoutMs: 120000,
+    resetSessionTimeoutMs: 120000,
+    timeoutAction: "mark-unhealthy"
+}
+```
+
+Policy notes:
+
+- `enabled: true` enables timeout detection.
+- `enabled: false` preserves cooperative wait behavior.
+- `timeoutAction` only supports `"mark-unhealthy"` in this branch.
+- Unsafe worker-kill actions are intentionally rejected.
+- This config is not exposed through `configOverride`; runtime overrides remain rejected by the existing config override rules.
+
+---
+
+## Final Behavior
+
+### `cancelPrompt(promptId)`
+
+No worker hard-stop behavior is added.
+
+```text
+cancelPrompt()
+-> parent rejects/closes the request quickly
+-> worker receives cancel
+-> native prompt may still settle cooperatively
+-> worker_thread is not terminated by default
+```
+
+### `resetSession(sessionId)`
+
+Timeout behavior:
+
+```text
+resetSession sends reset_session
+waits for reset_done until resetSessionTimeoutMs
+if reset_done arrives:
+    clear session reset gate
+    resolve resetSession
+if timeout expires:
+    reject resetSession with timeout
+    keep the target session blocked
+    do not terminate/recreate worker_thread
+```
+
+If the worker eventually sends `reset_done`, the session gate can still clear. Otherwise process restart is the conservative recovery boundary.
+
+### `resetModel()`
+
+Cooperative behavior is unchanged:
+
+```text
+cancel accepted work
+send reset_model
+wait for model_reset_done
+if model_reset_done arrives:
+    terminate old worker after safe boundary
+    recreate worker
+    reinitialize
+    resolve after ready
+```
+
+Timeout behavior:
+
+```text
+if model_reset_done does not arrive by resetModelTimeoutMs:
+    mark runtime unhealthy
+    reject resetModel with clear timeout error
+    do not terminate worker_thread before the safe boundary
+    future prompt/init/reset calls reject with the unhealthy-state error
+```
+
+### `shutdownRuntime({ mode: "abort" })`
+
+Cooperative behavior is unchanged:
+
+```text
+cancel accepted work
+send shutdown
+wait for shutdown_done
+if shutdown_done arrives:
+    terminate worker after safe boundary
+    remain shut down
+    resolve shutdownRuntime
+```
+
+Timeout behavior:
+
+```text
+if shutdown_done does not arrive by shutdownTimeoutMs:
+    mark runtime unhealthy/stuck
+    reject shutdownRuntime with clear timeout error
+    do not terminate worker_thread before the safe boundary
+```
+
+### `shutdownRuntime({ mode: "drain-with-timeout" })`
+
+Two-stage behavior remains:
+
+```text
+first timeout: parent-side drain timeout cancels remaining accepted work
+second timeout: shutdownTimeoutMs waits for cooperative shutdown_done
+if shutdown_done does not arrive:
+    mark unhealthy/stuck
+    reject/report clearly
+    do not terminate worker_thread before the safe boundary
+```
+
+### `shutdownRuntime({ mode: "drain" })`
+
+Plain drain remains cooperative and does not gain hard-stop behavior.
+
+---
+
+## Runtime State Added
+
+The parent runtime now tracks an unhealthy native-operation timeout state.
+
+Shape:
+
+```js
+{
+    reason: "native-operation-timeout",
+    operation,
+    timeoutMs,
+    message,
+    at
+}
+```
+
+Global timeout operations such as `resetModel()` and shutdown mark the runtime unhealthy. Once unhealthy, prompts/init/reset paths reject clearly rather than silently continuing against a possibly stuck native worker.
+
+---
+
+## Files Changed
+
+Modified:
+
+```text
+config.mjs
+inference.mjs
+workerBridge.mjs
+```
+
+Added:
+
+```text
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+Added as final branch documentation:
+
+```text
+docs/dev-notes.06
+```
+
+No intentional changes to:
+
+```text
+llama_worker/llama.mjs
+scheduler.mjs
+request.mjs
+streamController.mjs
+normalizer.mjs
+observer.mjs
+configOverride.mjs
+hardwareProbe.mjs
+retryProfiles.mjs
+contextRetryProfiles.mjs
+```
+
+---
+
+## Important Design Pivot
+
+Earlier candidates attempted to terminate/recreate the worker thread when a native operation did not settle. Real-runtime testing showed that this can crash the child process if native `node-llama-cpp` work is still active.
+
+Resulting branch decision:
+
+```text
+worker_thread termination before native boundary settlement is not a safe default hard-stop policy.
+```
+
+Final Option A decision:
+
+```text
+timeout detection + unhealthy marking + clear rejection
+```
+
+Future true hard-kill recovery should be implemented by moving model execution to a `child_process` boundary or equivalent process-isolated design.
+
+---
+
+## Real-Runtime Findings During Development
+
+### Unsafe worker-thread termination finding
+
+A previous real-runtime candidate passed parent-side cancellation but then exited with a native Windows process code after shutdown tried to hard-stop active native work. This was treated as a real safety signal and caused the Option A pivot.
+
+### Test overreach finding
+
+A branch-specific real smoke initially tried to validate post-reset prompt behavior after `initModel() -> resetModel()` directly. That prompt timed out in the branch-specific test, but the existing current-contract lifecycle regression passed both idle and active model-reset post-reset prompt checks.
+
+Final branch real smoke was narrowed to branch-relevant behavior, while post-reset prompt semantics remain covered by `tests/smokeTestLifecycleRegression.mjs`.
+
+### Potential follow-up bug / investigation: `initModel() -> resetModel()` with no intervening prompt
+
+During branch real-smoke development, this sequence was observed as suspicious:
+
+```text
+initModel()
+resetModel()
+prompt()
+```
+
+with no intervening successful prompt before `resetModel()`. The branch-specific test saw the first post-reset prompt time out in that shape, while `smokeTestLifecycleRegression.mjs` passed post-reset prompts after a richer lifecycle sequence that included earlier prompt activity.
+
+This is **not fixed in this branch** and is not part of the Option A native-timeout policy. It should be investigated separately as a possible lifecycle/test edge case:
+
+```text
+Does resetModel immediately after initModel, before any session/prompt has been created, leave later prompt state different from resetModel after normal prompt usage?
+```
+
+Recommended future test slice:
+
+```text
+real-init-then-reset-without-prior-prompt-v1
+```
+
+Potential checks:
+
+```text
+initModel resolves
+resetModel resolves
+first prompt after reset completes
+shutdown completes
+repeat with stream true and stream false if needed
+```
+
+Do not mix this investigation into the native operation timeout policy branch unless it reproduces as a direct regression from this branch.
+
+---
+
+## Test Added
+
+New branch-scoped smoke:
+
+```text
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+Mock modes cover:
+
+```text
+mock-reset-model-timeout-marks-unhealthy-without-terminating-worker
+mock-shutdown-timeout-marks-unhealthy-without-terminating-worker
+mock-drain-timeout-then-shutdown-timeout-marks-unhealthy
+mock-reset-session-timeout-rejects-and-keeps-session-blocked
+mock-reset-session-timeout-clears-when-worker-eventually-completes
+mock-timeout-policy-disabled-waits-for-cooperative-boundary
+mock-cooperative-reset-model-still-terminates-after-boundary
+mock-cooperative-shutdown-still-terminates-after-boundary
+mock-invalid-hard-stop-config-rejects-before-side-effects
+```
+
+Real modes cover safe real-runtime behavior:
+
+```text
+real-hard-stop-config-validation
+real-cooperative-reset-model-normal-path
+real-cooperative-shutdown-normal-path
+real-drain-with-timeout-normal-path
+```
+
+Real modes intentionally do not force unsafe worker-thread termination while native work is active.
+
+---
+
+## Validation Summary
+
+### Sandbox validation from exact extracted package
+
+Command:
+
+```bash
+node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+Result:
+
+```text
+All native operation timeout policy smoke tests finished.
+```
+
+Available regression checks run from the exact extracted package:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+node ./tests/smokeTestContextCreationCancelBoundary.mjs
+node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS in sandbox
+```
+
+### Michael local real-runtime validation
+
+Command:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+Passed real modes:
+
+```text
+real-hard-stop-config-validation
+real-cooperative-reset-model-normal-path
+real-cooperative-shutdown-normal-path
+real-drain-with-timeout-normal-path
+```
+
+Final result:
+
+```text
+All real native operation timeout policy smoke tests finished.
+```
+
+Known non-failing warnings observed:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+These warnings also appeared in prior Runtime Dev validation and did not fail the smoke tests.
+
+### Existing lifecycle regression
+
+Michael also ran:
+
+```bash
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+Result:
+
+```text
+All lifecycle regression smoke tests finished.
+```
+
+Important checked behavior included post-reset prompts after both idle and active model reset.
+
+---
+
+## Artifact / Package Status
+
+Final implementation artifact before adding these notes:
+
+```text
+native-operation-hard-stop-policy-v1-option-a-real-smoke-narrowed-v6.zip
+SHA-256: 3d74da039308f7e86f174dd2b9c6031306732d4c94b4c454d92eb8ac5267d589
+```
+
+This documentation file should be included as `docs/dev-notes.06` in the branch before GitHub branch verification.
+
+---
+
+## Caveats
+
+- This branch does not provide true process-level recovery from a stuck native operation.
+- If the runtime is marked unhealthy after a reset/shutdown timeout, process restart is the conservative recovery boundary.
+- Worker-thread termination remains unsafe as a default when native work may still be active.
+- `resetSession()` timeout leaves the affected session blocked unless the worker later completes the reset or the process is restarted.
+- The `initModel() -> resetModel() -> prompt()` without prior prompt observation should be investigated separately.
+
+---
+
+## Future Work Not Included
+
+Recommended future branches:
+
+```text
+child-process-native-execution-boundary-v1
+real-init-then-reset-without-prior-prompt-v1
+worker-operation-serialization-v1
+current-contract-test-stabilization-v1
+runtime-lifecycle-modularization-v1
+```
+
+Do not mix these into this branch.
+
+---
+
+## Branch Readiness Judgment
+
+Recommended status after adding `docs/dev-notes.06`:
+
+```text
+IMPLEMENTED / REVIEWED / REAL-RUNTIME SMOKE TESTED / READY FOR GITHUB BRANCH APPLICATION + VERIFICATION
+```
+
+Final GitHub verification should confirm:
+
+```text
+config.mjs includes runtime.nativeOperationHardStop
+actions are conservative and timeoutAction only supports mark-unhealthy
+inference.mjs marks runtime unhealthy on native timeout instead of terminating worker_thread before boundary
+tests/smokeTestNativeOperationHardStopPolicy.mjs is present and contains real-orchestrator modes
+docs/dev-notes.06 is present
+```

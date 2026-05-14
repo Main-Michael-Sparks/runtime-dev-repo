@@ -2,6 +2,9 @@ import { Worker } from "worker_threads";
 
 let worker = null;
 let messageHandler = null;
+let workerGeneration = 0;
+
+const boundMessageHandlers = new WeakMap();
 
 function createWorkerInstance() {
   return new Worker(new URL("./llama_worker/llama.mjs", import.meta.url));
@@ -9,18 +12,33 @@ function createWorkerInstance() {
 
 function bindMessageHandler(targetWorker) {
   if (!targetWorker || !messageHandler) return;
-  targetWorker.on("message", messageHandler);
+  if (boundMessageHandlers.has(targetWorker)) return;
+
+  const boundGeneration = workerGeneration;
+  const guardedHandler = (message) => {
+    if (targetWorker !== worker || boundGeneration !== workerGeneration) return;
+    messageHandler(message);
+  };
+
+  boundMessageHandlers.set(targetWorker, guardedHandler);
+  targetWorker.on("message", guardedHandler);
 }
 
 function unbindMessageHandler(targetWorker) {
   if (!targetWorker || !messageHandler) return;
-  targetWorker.off("message", messageHandler);
+
+  const guardedHandler = boundMessageHandlers.get(targetWorker);
+  if (!guardedHandler) return;
+
+  targetWorker.off("message", guardedHandler);
+  boundMessageHandlers.delete(targetWorker);
 }
 
 export function initWorkerBridge() {
   if (worker) return worker;
 
   worker = createWorkerInstance();
+  workerGeneration++;
   bindMessageHandler(worker);
   return worker;
 }
@@ -62,6 +80,7 @@ export async function terminateWorker() {
   const currentWorker = worker;
   unbindMessageHandler(currentWorker);
   worker = null;
+  workerGeneration++;
 
   await currentWorker.terminate();
 }
@@ -74,6 +93,7 @@ export function recreateWorker() {
   }
 
   worker = createWorkerInstance();
+  workerGeneration++;
   bindMessageHandler(worker);
   return worker;
 }

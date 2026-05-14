@@ -54,6 +54,18 @@ const VALID_SHUTDOWN_MODES = new Set([
     "drain-with-timeout"
 ]);
 
+const VALID_NATIVE_OPERATION_HARD_STOP_KEYS = new Set([
+    "enabled",
+    "resetModelTimeoutMs",
+    "shutdownTimeoutMs",
+    "resetSessionTimeoutMs",
+    "timeoutAction"
+]);
+
+const VALID_NATIVE_OPERATION_TIMEOUT_ACTIONS = new Set([
+    "mark-unhealthy"
+]);
+
 let initStarted = false;
 let initResolved = false;
 let initInProgress = false;
@@ -73,6 +85,7 @@ const sessionsResetting = new Set();
 const sessionResetWaiters = new Map();
 let runtimeResetting = false;
 let runtimeShuttingDown = false;
+let runtimeUnhealthy = null;
 let modelResetWaiter = null;
 let shutdownWaiter = null;
 
@@ -145,6 +158,144 @@ function assertAllowedKeys(value, allowedKeys, name) {
             throw new Error(`Unsupported ${name} option: ${key}`);
         }
     }
+}
+
+function assertNativeOperationTimeoutAction(value, name) {
+    if (!VALID_NATIVE_OPERATION_TIMEOUT_ACTIONS.has(value)) {
+        throw new Error(`Unsupported ${name}: ${value}`);
+    }
+}
+
+function resolveNativeOperationHardStopConfig() {
+    const raw = config.runtime.nativeOperationHardStop ?? {};
+    assertPlainObjectOrUndefined(raw, "runtime.nativeOperationHardStop");
+    assertAllowedKeys(
+        raw,
+        VALID_NATIVE_OPERATION_HARD_STOP_KEYS,
+        "runtime.nativeOperationHardStop"
+    );
+
+    const resolved = {
+        enabled: raw.enabled ?? true,
+        resetModelTimeoutMs: raw.resetModelTimeoutMs ?? 120000,
+        shutdownTimeoutMs: raw.shutdownTimeoutMs ?? 120000,
+        resetSessionTimeoutMs: raw.resetSessionTimeoutMs ?? 120000,
+        timeoutAction: raw.timeoutAction ?? "mark-unhealthy"
+    };
+
+    assertBoolean(resolved.enabled, "runtime.nativeOperationHardStop.enabled");
+    assertNonNegativeInteger(
+        resolved.resetModelTimeoutMs,
+        "runtime.nativeOperationHardStop.resetModelTimeoutMs"
+    );
+    assertNonNegativeInteger(
+        resolved.shutdownTimeoutMs,
+        "runtime.nativeOperationHardStop.shutdownTimeoutMs"
+    );
+    assertNonNegativeInteger(
+        resolved.resetSessionTimeoutMs,
+        "runtime.nativeOperationHardStop.resetSessionTimeoutMs"
+    );
+    assertNativeOperationTimeoutAction(
+        resolved.timeoutAction,
+        "runtime.nativeOperationHardStop.timeoutAction"
+    );
+
+    return resolved;
+}
+
+function createNativeOperationTimeoutError({ operation, sessionId = null, timeoutMs }) {
+    const sessionText = sessionId ? ` for session ${sessionId}` : "";
+    const err = new Error(
+        `Native operation timed out after ${timeoutMs}ms during ${operation}${sessionText}; ` +
+        `runtime is marked unhealthy and requires process restart`
+    );
+
+    err.phase = "native-operation-timeout";
+    err.operation = operation;
+    err.sessionId = sessionId;
+    err.timeoutMs = timeoutMs;
+
+    return err;
+}
+
+function createRuntimeUnhealthyError() {
+    const details = runtimeUnhealthy;
+    const err = new Error(
+        details?.message ??
+        "Runtime is unhealthy after native operation timeout; process restart required"
+    );
+
+    if (details) {
+        err.phase = details.phase;
+        err.operation = details.operation;
+        err.sessionId = details.sessionId;
+        err.timeoutMs = details.timeoutMs;
+    }
+
+    return err;
+}
+
+function assertRuntimeHealthy() {
+    if (runtimeUnhealthy) {
+        throw createRuntimeUnhealthyError();
+    }
+}
+
+function markRuntimeUnhealthy({ operation, sessionId = null, timeoutMs }) {
+    if (!runtimeUnhealthy) {
+        const err = createNativeOperationTimeoutError({ operation, sessionId, timeoutMs });
+        runtimeUnhealthy = {
+            phase: err.phase,
+            operation,
+            sessionId,
+            timeoutMs,
+            message: err.message,
+            at: Date.now()
+        };
+    }
+
+    return createRuntimeUnhealthyError();
+}
+
+function isSessionResetWaiterActive(waiter) {
+    return waiter && waiter.timedOut !== true;
+}
+
+function assertNoActiveSessionResetInProgress(operationName) {
+    for (const waiter of sessionResetWaiters.values()) {
+        if (isSessionResetWaiterActive(waiter)) {
+            throw new Error(`${operationName} cannot start while a session reset is in progress`);
+        }
+    }
+}
+
+async function waitForNativeOperationBoundary(promise, timeoutMs, label, hardStopConfig) {
+    const resolvedHardStopConfig = hardStopConfig ?? resolveNativeOperationHardStopConfig();
+
+    if (!resolvedHardStopConfig.enabled || timeoutMs <= 0) {
+        await promise;
+        return { timedOut: false };
+    }
+
+    let timer;
+
+    const boundaryPromise = promise.then(
+        () => ({ timedOut: false }),
+        (err) => {
+            throw err;
+        }
+    );
+
+    const timeoutPromise = new Promise((resolve) => {
+        timer = setTimeout(() => {
+            resolve({ timedOut: true, label, timeoutMs });
+        }, timeoutMs);
+    });
+
+    return Promise.race([boundaryPromise, timeoutPromise]).finally(() => {
+        clearTimeout(timer);
+    });
 }
 
 function normalizeBoolean(value, fallback, name) {
@@ -531,7 +682,10 @@ onWorkerMessage((msg) => {
             const waiter = sessionResetWaiters.get(msg.sessionId);
             if (waiter) {
                 sessionResetWaiters.delete(msg.sessionId);
-                waiter.resolve();
+
+                if (!waiter.timedOut) {
+                    waiter.resolve();
+                }
             }
         }
         return;
@@ -616,7 +770,10 @@ onWorkerMessage((msg) => {
 
             const waiter = sessionResetWaiters.get(msg.sessionId);
             sessionResetWaiters.delete(msg.sessionId);
-            waiter.reject(err);
+
+            if (!waiter.timedOut) {
+                waiter.reject(err);
+            }
             return;
         }
 
@@ -632,6 +789,8 @@ onWorkerMessage((msg) => {
 });
 
 export async function initModel(options = {}) {
+    assertRuntimeHealthy();
+
     if (runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
@@ -682,6 +841,8 @@ export async function initModel(options = {}) {
 }
 
 function assertPromptAdmissionAllowed(sessionId) {
+    assertRuntimeHealthy();
+
     if (runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
@@ -696,9 +857,7 @@ function assertPromptAdmissionAllowed(sessionId) {
 }
 
 function assertNoSessionResetInProgress(operationName) {
-    if (sessionResetWaiters.size > 0) {
-        throw new Error(`${operationName} cannot start while a session reset is in progress`);
-    }
+    assertNoActiveSessionResetInProgress(operationName);
 }
 
 function notifyRequestCancellationRequested(req, reason = "Prompt canceled") {
@@ -773,6 +932,8 @@ export function cancelPrompt(promptId) {
 }
 
 export async function resetSession(sessionId = "default") {
+    assertRuntimeHealthy();
+
     if (runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
@@ -781,7 +942,13 @@ export async function resetSession(sessionId = "default") {
         throw new Error("Runtime is shutting down");
     }
 
+    const hardStopConfig = resolveNativeOperationHardStopConfig();
+
     const existing = sessionResetWaiters.get(sessionId);
+    if (existing?.timedOut) {
+        throw new Error(`Session is resetting: ${sessionId}`);
+    }
+
     if (existing) {
         return existing.promise;
     }
@@ -790,16 +957,21 @@ export async function resetSession(sessionId = "default") {
 
     let resolveReset;
     let rejectReset;
-    const promise = new Promise((resolve, reject) => {
+    const workerBoundary = new Promise((resolve, reject) => {
         resolveReset = resolve;
         rejectReset = reject;
     });
 
-    sessionResetWaiters.set(sessionId, {
-        promise,
+    workerBoundary.catch(() => {});
+
+    const waiter = {
+        promise: workerBoundary,
         resolve: resolveReset,
-        reject: rejectReset
-    });
+        reject: rejectReset,
+        timedOut: false
+    };
+
+    sessionResetWaiters.set(sessionId, waiter);
 
     const canceled = scheduler.cancelBySession(sessionId);
     notifyRequestsCancellationRequested(canceled, `Session reset: ${sessionId}`);
@@ -823,10 +995,25 @@ export async function resetSession(sessionId = "default") {
         sessionId
     });
 
-    return promise;
+    const result = await waitForNativeOperationBoundary(
+        workerBoundary,
+        hardStopConfig.resetSessionTimeoutMs,
+        `resetSession(${sessionId})`,
+        hardStopConfig
+    );
+
+    if (result.timedOut) {
+        waiter.timedOut = true;
+        throw new Error(
+            `Session reset timed out after ${hardStopConfig.resetSessionTimeoutMs}ms: ${sessionId}; ` +
+            `session remains blocked until reset completes or process restart recovers it`
+        );
+    }
 }
 
 export async function resetModel() {
+    assertRuntimeHealthy();
+
     if (runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
@@ -835,6 +1022,7 @@ export async function resetModel() {
         throw new Error("Runtime is shutting down");
     }
 
+    const hardStopConfig = resolveNativeOperationHardStopConfig();
     assertNoSessionResetInProgress("Model reset");
 
     runtimeResetting = true;
@@ -864,6 +1052,8 @@ export async function resetModel() {
         rejectReset = reject;
     });
 
+    waitForWorkerReset.catch(() => {});
+
     modelResetWaiter = {
         resolve: resolveReset,
         reject: rejectReset
@@ -874,7 +1064,24 @@ export async function resetModel() {
             type: "reset_model"
         });
 
-        await waitForWorkerReset;
+        const result = await waitForNativeOperationBoundary(
+            waitForWorkerReset,
+            hardStopConfig.resetModelTimeoutMs,
+            "resetModel",
+            hardStopConfig
+        );
+
+        if (result.timedOut) {
+            const err = markRuntimeUnhealthy({
+                operation: "resetModel",
+                timeoutMs: hardStopConfig.resetModelTimeoutMs
+            });
+            throw err;
+        }
+
+        sessionsResetting.clear();
+        sessionResetWaiters.clear();
+
         await terminateWorker();
         recreateWorker();
 
@@ -937,12 +1144,16 @@ function cancelRequestsForShutdown(reason) {
 }
 
 async function finalizeWorkerShutdown() {
+    const hardStopConfig = resolveNativeOperationHardStopConfig();
+
     let resolveShutdown;
     let rejectShutdown;
     const waitForShutdown = new Promise((resolve, reject) => {
         resolveShutdown = resolve;
         rejectShutdown = reject;
     });
+
+    waitForShutdown.catch(() => {});
 
     shutdownWaiter = {
         resolve: resolveShutdown,
@@ -954,7 +1165,24 @@ async function finalizeWorkerShutdown() {
             type: "shutdown"
         });
 
-        await waitForShutdown;
+        const result = await waitForNativeOperationBoundary(
+            waitForShutdown,
+            hardStopConfig.shutdownTimeoutMs,
+            "shutdown",
+            hardStopConfig
+        );
+
+        if (result.timedOut) {
+            const err = markRuntimeUnhealthy({
+                operation: "shutdown",
+                timeoutMs: hardStopConfig.shutdownTimeoutMs
+            });
+            throw err;
+        }
+
+        sessionsResetting.clear();
+        sessionResetWaiters.clear();
+
         await terminateWorker();
     } finally {
         shutdownWaiter = null;
@@ -1004,6 +1232,8 @@ async function shutdownDrainWithTimeout(timeoutMs) {
 
 export async function shutdownRuntime(options = {}) {
     const { mode, timeoutMs } = validateShutdownOptions(options);
+    resolveNativeOperationHardStopConfig();
+    assertRuntimeHealthy();
 
     if (runtimeResetting) {
         throw new Error("Runtime is resetting");
