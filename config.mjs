@@ -78,6 +78,14 @@ export const config = {
                 allowBatchReduction: true,
                 allowContextAutoFallback: true
             }
+        },
+
+        nativeOperationHardStop: {
+            enabled: true,
+            resetModelTimeoutMs: 120000,
+            shutdownTimeoutMs: 120000,
+            resetSessionTimeoutMs: 120000,
+            timeoutAction: "mark-unhealthy"
         }
     },
 
