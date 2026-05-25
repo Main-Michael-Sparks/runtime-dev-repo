@@ -1,0 +1,307 @@
+# Runtime Dev Dev Notes 08 — Init Then Reset Without Prior Prompt Test v1
+
+**Date:** 2026-05-25  
+**Branch:** `real-init-then-reset-without-prior-prompt-v1`  
+**Status:** Test-first investigation completed. No runtime code changes required based on deterministic smoke and Michael-local real-runtime smoke results.
+
+---
+
+## Purpose
+
+This branch preserves a focused investigation for a previously noted lifecycle caveat:
+
+```text
+initModel() -> resetModel() -> prompt()
+```
+
+The concern was whether `resetModel()` after an explicit model initialization, but before any prompt/session/context had ever been created, could leave the runtime in a bad lifecycle state before the next prompt.
+
+This branch intentionally treats the issue as a **test-first potential bug investigation**, not as a feature branch or cleanup pass.
+
+---
+
+## Background
+
+During the native operation timeout policy work, a branch-specific real-runtime test shape showed suspicious behavior around:
+
+```text
+initModel()
+resetModel()
+prompt()
+```
+
+without an intervening prompt before reset. At the same time, the existing lifecycle regression passed post-reset prompt checks for idle and active reset paths.
+
+Therefore, the caveat was preserved as a possible lifecycle edge, not a confirmed runtime defect.
+
+The comparison that matters is:
+
+```text
+Suspicious path:
+initModel()
+resetModel()
+prompt()
+
+Control path:
+initModel()
+prompt()
+resetModel()
+prompt()
+```
+
+---
+
+## Branch Scope
+
+Added focused smoke coverage for the caveat.
+
+This branch does **not** intentionally change runtime behavior.
+
+No changes were made to:
+
+```text
+config.mjs
+configOverride.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+inference.mjs
+llama_worker/llama.mjs
+normalizer.mjs
+observer.mjs
+request.mjs
+retryProfiles.mjs
+scheduler.mjs
+streamController.mjs
+workerBridge.mjs
+```
+
+---
+
+## Files Added
+
+```text
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+docs/dev-notes.08
+```
+
+No existing source files were modified.
+
+---
+
+## Smoke Test Summary
+
+New test file:
+
+```text
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+The smoke uses isolated child processes so each scenario starts with fresh module/runtime state.
+
+### Deterministic / mock modes
+
+```text
+mock-init-reset-prompt
+mock-control-init-prompt-reset-prompt
+mock-init-reset-prompt-after-config-override
+```
+
+These modes use a deterministic fake `node-llama-cpp` module and verify parent/worker lifecycle state without needing the real native runtime.
+
+The mock coverage checks that:
+
+- `initModel() -> resetModel() -> prompt()` completes;
+- `resetModel()` disposes the initialized model stack before the post-reset prompt path;
+- the control path `initModel() -> prompt() -> resetModel() -> prompt()` still completes;
+- config override initialization followed by reset and prompt still completes;
+- no prompt begins before reset disposal completes.
+
+### Real-runtime modes
+
+Required real modes:
+
+```text
+real-init-reset-prompt
+real-init-prompt-reset-prompt-control
+```
+
+Optional real mode:
+
+```text
+real-init-reset-prompt-after-config-override
+```
+
+The optional config override real mode runs only when:
+
+```bash
+REAL_CONFIG_OVERRIDE_SMOKE=1 SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+---
+
+## Sandbox Validation
+
+The test-first candidate passed syntax and deterministic/runtime-adjacent checks in the sandbox.
+
+Commands run from the exact extracted candidate tree:
+
+```bash
+node --check ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+All passed.
+
+Artifact guard was also run against the test-first candidate and passed. It confirmed that the candidate only added the focused smoke test relative to the formatted source base and did not include forbidden artifact metadata such as `.git`, `node_modules`, `__MACOSX`, or `.DS_Store`.
+
+---
+
+## Michael-Local Real Runtime Validation
+
+Command run by Michael:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+Required real mode result:
+
+```text
+real-init-reset-prompt: PASS
+```
+
+Observed milestones:
+
+```text
+[OK] real initModel resolved
+[OK] real resetModel resolved without prior prompt
+[OK] real post-init-reset prompt result: 1. 100
+[OK] real shutdown resolved
+```
+
+Required control mode result:
+
+```text
+real-init-prompt-reset-prompt-control: PASS
+```
+
+Observed milestones:
+
+```text
+[OK] real control initModel resolved
+[OK] real control before-reset prompt result: ...
+[OK] real control resetModel resolved
+[OK] real control after-reset prompt result: ...
+[OK] real control shutdown resolved
+```
+
+Both real child modes exited with code `0`.
+
+Known warnings observed during real runtime testing:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+These warnings were already known from prior real-runtime smoke testing and did not fail the branch smoke.
+
+---
+
+## Result / Conclusion
+
+The original caveat is considered **cleared for the default/base path** by focused real-runtime coverage.
+
+The suspicious sequence:
+
+```text
+initModel() -> resetModel() -> prompt()
+```
+
+passed on Michael's real model/runtime setup.
+
+The control sequence:
+
+```text
+initModel() -> prompt() -> resetModel() -> prompt()
+```
+
+also passed.
+
+No runtime code patch is recommended from the evidence gathered in this branch.
+
+---
+
+## Important Caveats
+
+### 1. This branch clears the focused default path, not every possible reset/profile variant
+
+The required real modes passed. The optional real config-override mode was included but was not part of the required reported run.
+
+If future work changes effective config handling, retry profiles, or reset re-init behavior, the optional config-override mode may be useful as an additional regression check.
+
+### 2. Prompt content is not semantically asserted
+
+The real model prompt outputs are intentionally not judged for semantic quality. The test only verifies lifecycle completion, stream/done settlement, and post-reset prompt viability.
+
+### 3. No hard-kill behavior was added
+
+This branch does not alter the native operation timeout policy. It does not terminate active worker threads before native cooperative boundary settlement.
+
+True hard-kill containment remains a separate future design direction, likely requiring a child-process native execution boundary.
+
+---
+
+## Explicit Non-Changes
+
+This branch did not:
+
+```text
+change prompt/output semantics
+change queue-based concurrency
+change runtime.maxInFlight behavior
+change parent-side request lifecycle ownership
+change parent-side stream shaping
+change config override validation
+change retry/profile planning
+change worker operation serialization
+change native timeout/unhealthy behavior
+add child_process containment
+perform lifecycle modularization
+perform cleanup or optimization
+```
+
+---
+
+## Recommended Branch Status
+
+Recommended status:
+
+```text
+COMPLETE / TEST-ONLY CAVEAT-CLOSURE BRANCH
+```
+
+Recommended merge interpretation:
+
+```text
+Safe to merge as focused regression coverage and documentation, assuming final package/GitHub verification passes.
+```
+
+---
+
+## Suggested Follow-Up
+
+No immediate runtime bugfix branch is required for this caveat.
+
+Reasonable future work remains separate:
+
+```text
+runtime lifecycle modularization
+child-process-native-execution-boundary-v1
+tool calling support
+expanded hardware probing
+cleanup pass
+optimization pass
+```
