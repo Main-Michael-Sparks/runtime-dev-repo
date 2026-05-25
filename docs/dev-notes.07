@@ -1,0 +1,447 @@
+# Runtime Dev Dev Notes 07 — Worker Operation Serialization v1
+
+**Date:** 2026-05-18
+**Branch:** `worker-operation-serialization-v1`
+**Status:** Implemented/staged in candidate working tree; sandbox syntax, targeted smoke, and mock/current-contract regression subset passed. Michael-local real-runtime lifecycle checks remain required before merge readiness.
+
+---
+
+## Purpose
+
+This branch makes worker-side lifecycle operation ordering explicit and deterministic for native lifecycle/disposal commands.
+
+The branch is intentionally narrow. It serializes worker lifecycle commands that can dispose shared session/context/model state, without globally serializing prompt generation or changing parent-side scheduling semantics.
+
+Serialized worker command paths:
+
+```text
+reset_session
+reset_model
+shutdown
+```
+
+Not serialized globally:
+
+```text
+prompt / session.prompt()
+normal context creation through prompt handling
+cancel
+parent scheduler dispatch
+stream shaping
+```
+
+This preserves the existing architecture boundaries:
+
+- queue-based concurrency remains parent-side;
+- worker remains the native model execution boundary;
+- parent runtime owns request lifecycle;
+- parent-side stream shaping is unchanged;
+- prompt/output semantics are not intentionally changed;
+- native operation timeout policy remains parent-side;
+- no worker-thread hard-kill behavior is added.
+
+---
+
+## Problem Addressed
+
+The worker message handler is asynchronous:
+
+```js
+parentPort.on("message", async (msg) => {
+    // ...
+});
+```
+
+Before this branch, close-arriving lifecycle commands could enter separate async disposal paths directly. Even though the parent normally gates public lifecycle operations, direct worker command ordering was still implicit rather than deterministic.
+
+Concrete risk covered by the branch smoke:
+
+```text
+reset_session and reset_model can overlap disposal of the same session/context without a worker-side lifecycle ordering boundary.
+```
+
+The new targeted smoke test demonstrated the original unpatched source could dispose the same context twice in a close-arrival `reset_session` + `reset_model` sequence.
+
+---
+
+## Implementation Summary
+
+`llama_worker/llama.mjs` now has a small lifecycle operation chain:
+
+```js
+let workerOperationChain = Promise.resolve();
+
+function enqueueWorkerOperation(label, fn) {
+    const run = workerOperationChain.then(fn, fn);
+    workerOperationChain = run.catch(() => {});
+    return run;
+}
+```
+
+The chain is used only for worker lifecycle commands:
+
+```text
+shutdown
+reset_session
+reset_model
+```
+
+Important behavior:
+
+- `shutdown` is enqueued and posts `shutdown_done` only after `shutdownWorker()` completes.
+- `reset_session` is enqueued and posts `reset_done` only after `resetSession(sessionId)` completes.
+- `reset_model` is enqueued and posts `model_reset_done` only after `resetModel()` completes.
+- The chain continues after a lifecycle operation error because the stored chain is reset through `run.catch(() => {})`.
+- The original outer worker error handler still posts errors using the existing worker error message shape.
+
+A helper was added to preserve the existing native-command readiness checks:
+
+```js
+function assertWorkerReadyForNativeCommand() {
+    if (resetting || shuttingDown) {
+        throw new Error("Model is resetting");
+    }
+
+    if (!ready || !model) {
+        throw new Error("Worker not ready");
+    }
+}
+```
+
+This helper is called:
+
+- inside the serialized `reset_session` operation;
+- inside the serialized `reset_model` operation;
+- immediately before prompt handling.
+
+---
+
+## Important Review Correction
+
+An early staged shape performed the readiness/reset-state assertion for `reset_session` and `reset_model` before enqueueing the lifecycle operation.
+
+That was corrected.
+
+Reason:
+
+If a later lifecycle command arrived while a prior `shutdown` operation was already running, a pre-enqueue assertion could reject immediately instead of waiting behind the active lifecycle operation. That weakened deterministic ordering.
+
+Final shape:
+
+```text
+reset_session readiness check -> inside serialized operation
+reset_model readiness check   -> inside serialized operation
+prompt readiness check        -> before prompt handling
+cancel                        -> outside serializer
+shutdown                      -> serialized directly
+```
+
+A targeted smoke mode was added to cover this:
+
+```text
+mock-shutdown-and-reset-model-ordered
+```
+
+It verifies that a `reset_model` command posted during active shutdown disposal emits its expected error only after `shutdown_done` is observed.
+
+---
+
+## Files Modified / Added
+
+Modified:
+
+```text
+llama_worker/llama.mjs
+```
+
+Added:
+
+```text
+tests/smokeTestWorkerOperationSerialization.mjs
+docs/dev-notes.07
+```
+
+No intentional changes to:
+
+```text
+config.mjs
+configOverride.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+inference.mjs
+normalizer.mjs
+observer.mjs
+request.mjs
+retryProfiles.mjs
+scheduler.mjs
+streamController.mjs
+workerBridge.mjs
+```
+
+---
+
+## Targeted Smoke Test
+
+Added:
+
+```text
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+The default mock modes use a temporary runtime fixture and a fake `node-llama-cpp` package so they can run in the sandbox without a real native model.
+
+Optional real-worker modes use the actual local `llama_worker/llama.mjs`, real `node-llama-cpp`, and the local configured model path. They are branch-scoped direct-worker smokes for the serializer boundary, not replacements for full parent lifecycle regression.
+
+Covered mock modes:
+
+```text
+mock-reset-session-and-reset-model-ordered
+mock-serializer-continues-after-lifecycle-error
+mock-shutdown-and-reset-model-ordered
+mock-cancel-bypasses-lifecycle-queue
+```
+
+Covered optional real-worker modes:
+
+```text
+real-direct-reset-session-and-reset-model-ordered
+real-direct-shutdown-and-reset-model-ordered
+real-orchestrator
+```
+
+Key mock coverage:
+
+- `reset_session` and `reset_model` are ordered deterministically.
+- The same context is disposed once across serialized `reset_session` / `reset_model` overlap.
+- The lifecycle operation chain continues after a lifecycle disposal error.
+- `shutdown` and `reset_model` ordering is deterministic when `reset_model` arrives during shutdown disposal.
+- `cancel` can still reach an active prompt while lifecycle disposal is running.
+
+The smoke test intentionally keeps prompt execution outside the lifecycle serializer.
+
+Real-worker coverage:
+
+- initializes the actual worker against the local model setup;
+- creates a real session through a direct worker prompt;
+- posts `reset_session` and `reset_model` back-to-back and verifies `reset_done` precedes `model_reset_done`;
+- posts `shutdown` and `reset_model` back-to-back and verifies the expected `reset_model` error is emitted after `shutdown_done`;
+- uses direct worker commands to exercise the worker serializer itself rather than only the parent public API, because the parent intentionally prevents some lifecycle overlaps.
+
+---
+
+## Sandbox Checks Run
+
+Syntax / patch checks:
+
+```bash
+node --check ./config.mjs
+node --check ./inference.mjs
+node --check ./workerBridge.mjs
+node --check ./scheduler.mjs
+node --check ./request.mjs
+node --check ./llama_worker/llama.mjs
+node --check ./tests/smokeTestWorkerOperationSerialization.mjs
+git diff --check -- llama_worker/llama.mjs tests/smokeTestWorkerOperationSerialization.mjs docs/dev-notes.07
+```
+
+Targeted branch smoke:
+
+```bash
+node ./tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Real-worker branch smoke command for Michael-local validation:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Alternative mock + real run:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Sandbox current-contract regression subset:
+
+```bash
+node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+node ./tests/smokeTestContextCreationCancelBoundary.mjs
+node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+All listed sandbox checks passed at staging time.
+
+The real-worker mode was syntax-checked and attempted in sandbox only to confirm environment behavior. It failed as expected because this sandbox does not have `node-llama-cpp` installed, with the worker error reporting that the package could not be found.
+
+### Real-smoke diagnostic correction
+
+After Michael's first local `SMOKE_MODE=real-orchestrator` run, the direct real-worker harness was reviewed for additional smoke-test errors. One harness issue was found:
+
+```text
+initRealWorker() waited only for the matching ready message.
+It did not also treat a matching worker protocol error as an immediate init failure.
+```
+
+That meant a real worker init/load failure posted as a normal worker `error` message could be ignored until the ready wait timed out, producing a misleading generic timeout. The smoke test now:
+
+- waits for either matching `ready` or matching init `error`;
+- fails immediately with the worker init error message if init fails;
+- includes recent worker protocol messages in timeout/early-exit failures;
+- treats worker exit before the expected message as a clear failure while waiting.
+
+This is a smoke-test diagnostics fix only. It does not change runtime source behavior.
+
+---
+
+## Michael-Local / Real Runtime Validation
+
+This sandbox does not provide the real native `node-llama-cpp` runtime/model environment, so full real-runtime validation was completed on Michael's local machine.
+
+Michael-local checks passed:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerOperationSerialization.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+node ./tests/smokeTestContextCreationRetry.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Notable local real-runtime outcomes:
+
+- worker-operation serialization real direct-worker modes passed;
+- lifecycle regression passed end-to-end;
+- native operation timeout policy real orchestrator passed;
+- context creation retry passed, including real fallback mode;
+- context creation cancel-boundary real orchestrator passed;
+- worker-native cancellation boundary real orchestrator passed after the real active-prompt timing robustness correction;
+- drain shutdown smoke passed with real runtime modes enabled;
+- hardware-aware/degraded init retry smoke passed.
+
+Known non-failing local warnings observed across real runs:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+These warnings did not fail the smoke tests.
+
+---
+
+## Behavior Preserved
+
+This branch should not change:
+
+- public prompt API behavior;
+- stream/final-result semantics;
+- parent queue scheduling;
+- `runtime.maxInFlight` behavior;
+- prompt/context retry behavior;
+- init retry/profile planning;
+- config override validation;
+- native operation hard-stop timeout policy;
+- worker generation guarding;
+- model identity/path policy.
+
+---
+
+## Caveats / Review Notes
+
+1. The serializer is intentionally lifecycle-only.
+
+   It does not globally serialize prompts or native prompt execution. This avoids accidental throughput and `runtime.maxInFlight` behavior changes.
+
+2. Parent-side lifecycle ownership remains the main public protection.
+
+   The parent still gates public reset/shutdown/init/prompt flow. The worker serializer is a deterministic native/lifecycle ordering boundary, not a replacement for parent lifecycle policy.
+
+3. `cancel` intentionally bypasses the lifecycle queue.
+
+   This preserves fast cancellation and avoids deadlocking an active prompt behind lifecycle disposal.
+
+4. Worker-thread hard kill remains out of scope.
+
+   Do not reintroduce unsafe worker-thread termination before cooperative native boundary settlement. True hard-kill containment remains a future child-process/native execution boundary topic.
+
+5. The separate real-runtime investigation remains separate.
+
+   The earlier suspicious shape:
+
+   ```text
+   initModel() -> resetModel() -> prompt()
+   ```
+
+   without an intervening prompt is not addressed by this branch unless later evidence proves it is the same defect.
+
+---
+
+## Future Work Not Included
+
+Keep separate:
+
+```text
+real-init-then-reset-without-prior-prompt-v1
+child-process-native-execution-boundary-v1
+runtime lifecycle modularization
+cleanup pass
+optimization pass
+tool calling support
+multimodal / embedding support
+expanded hardware probing
+model path override redesign
+```
+
+---
+
+## Branch Completion Notes
+
+Before merge readiness, ensure:
+
+1. staged files are copied completely;
+2. targeted smoke and regression subset still pass from the final package/extracted candidate;
+3. artifact guard passes if a ZIP is produced;
+4. GitHub branch contents match the final candidate after upload/push;
+5. Michael-local real-runtime lifecycle checks pass or any limitation is documented explicitly.
+
+---
+
+## Addendum — Worker Native Cancellation Real-Smoke Timing Robustness
+
+During Michael-local real-runtime regression after the branch serializer and real-smoke diagnostic fixes, this command exposed a test timing issue:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+```
+
+The first real cancel-active-prompt mode passed, but the real reset-session active-prompt mode failed with:
+
+```text
+[FAIL] real session-reset canceled prompt did not reject
+```
+
+Review conclusion:
+
+- This did not directly indicate a runtime serializer failure.
+- In `resetSession()`, the parent rejects the active request immediately if it is still pending/running in the scheduler.
+- The failure shape is consistent with a fast local model completing the streamed prompt after the first chunk and before the test issued `resetSession()`.
+- The previous real-mode default delay waited 1000ms after the first streamed chunk before issuing cancel/reset/shutdown, which can be too long for some local models.
+
+Test-only correction:
+
+- `tests/smokeTestWorkerNativeCancellationBoundary.mjs` now uses a shorter default `REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS` fallback of `1` ms for real active-prompt modes.
+- The environment variable remains available for manual tuning.
+- The test header now documents the short default and why it exists.
+
+Scope:
+
+- Runtime source behavior is unchanged.
+- Worker-operation serialization behavior is unchanged.
+- This is a real-smoke robustness correction so branch/regression tests exercise active prompt cancellation/reset/shutdown before a fast local model naturally completes.
