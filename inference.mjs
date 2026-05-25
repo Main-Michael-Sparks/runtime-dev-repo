@@ -1,4 +1,8 @@
 import { config } from "./config.mjs";
+import {
+    createNativeOperationTimeoutError,
+    resolveNativeOperationHardStopConfig
+} from "./nativeOperationPolicy.mjs";
 import { isPlainObject } from "./configOverride.mjs";
 import { probeHardware } from "./hardwareProbe.mjs";
 import {
@@ -52,18 +56,6 @@ const VALID_SHUTDOWN_MODES = new Set([
     "abort",
     "drain",
     "drain-with-timeout"
-]);
-
-const VALID_NATIVE_OPERATION_HARD_STOP_KEYS = new Set([
-    "enabled",
-    "resetModelTimeoutMs",
-    "shutdownTimeoutMs",
-    "resetSessionTimeoutMs",
-    "timeoutAction"
-]);
-
-const VALID_NATIVE_OPERATION_TIMEOUT_ACTIONS = new Set([
-    "mark-unhealthy"
 ]);
 
 let initStarted = false;
@@ -160,65 +152,6 @@ function assertAllowedKeys(value, allowedKeys, name) {
     }
 }
 
-function assertNativeOperationTimeoutAction(value, name) {
-    if (!VALID_NATIVE_OPERATION_TIMEOUT_ACTIONS.has(value)) {
-        throw new Error(`Unsupported ${name}: ${value}`);
-    }
-}
-
-function resolveNativeOperationHardStopConfig() {
-    const raw = config.runtime.nativeOperationHardStop ?? {};
-    assertPlainObjectOrUndefined(raw, "runtime.nativeOperationHardStop");
-    assertAllowedKeys(
-        raw,
-        VALID_NATIVE_OPERATION_HARD_STOP_KEYS,
-        "runtime.nativeOperationHardStop"
-    );
-
-    const resolved = {
-        enabled: raw.enabled ?? true,
-        resetModelTimeoutMs: raw.resetModelTimeoutMs ?? 120000,
-        shutdownTimeoutMs: raw.shutdownTimeoutMs ?? 120000,
-        resetSessionTimeoutMs: raw.resetSessionTimeoutMs ?? 120000,
-        timeoutAction: raw.timeoutAction ?? "mark-unhealthy"
-    };
-
-    assertBoolean(resolved.enabled, "runtime.nativeOperationHardStop.enabled");
-    assertNonNegativeInteger(
-        resolved.resetModelTimeoutMs,
-        "runtime.nativeOperationHardStop.resetModelTimeoutMs"
-    );
-    assertNonNegativeInteger(
-        resolved.shutdownTimeoutMs,
-        "runtime.nativeOperationHardStop.shutdownTimeoutMs"
-    );
-    assertNonNegativeInteger(
-        resolved.resetSessionTimeoutMs,
-        "runtime.nativeOperationHardStop.resetSessionTimeoutMs"
-    );
-    assertNativeOperationTimeoutAction(
-        resolved.timeoutAction,
-        "runtime.nativeOperationHardStop.timeoutAction"
-    );
-
-    return resolved;
-}
-
-function createNativeOperationTimeoutError({ operation, sessionId = null, timeoutMs }) {
-    const sessionText = sessionId ? ` for session ${sessionId}` : "";
-    const err = new Error(
-        `Native operation timed out after ${timeoutMs}ms during ${operation}${sessionText}; ` +
-        `runtime is marked unhealthy and requires process restart`
-    );
-
-    err.phase = "native-operation-timeout";
-    err.operation = operation;
-    err.sessionId = sessionId;
-    err.timeoutMs = timeoutMs;
-
-    return err;
-}
-
 function createRuntimeUnhealthyError() {
     const details = runtimeUnhealthy;
     const err = new Error(
@@ -271,7 +204,7 @@ function assertNoActiveSessionResetInProgress(operationName) {
 }
 
 async function waitForNativeOperationBoundary(promise, timeoutMs, label, hardStopConfig) {
-    const resolvedHardStopConfig = hardStopConfig ?? resolveNativeOperationHardStopConfig();
+    const resolvedHardStopConfig = hardStopConfig ?? resolveNativeOperationHardStopConfig(config);
 
     if (!resolvedHardStopConfig.enabled || timeoutMs <= 0) {
         await promise;
@@ -942,7 +875,7 @@ export async function resetSession(sessionId = "default") {
         throw new Error("Runtime is shutting down");
     }
 
-    const hardStopConfig = resolveNativeOperationHardStopConfig();
+    const hardStopConfig = resolveNativeOperationHardStopConfig(config);
 
     const existing = sessionResetWaiters.get(sessionId);
     if (existing?.timedOut) {
@@ -1022,7 +955,7 @@ export async function resetModel() {
         throw new Error("Runtime is shutting down");
     }
 
-    const hardStopConfig = resolveNativeOperationHardStopConfig();
+    const hardStopConfig = resolveNativeOperationHardStopConfig(config);
     assertNoSessionResetInProgress("Model reset");
 
     runtimeResetting = true;
@@ -1144,7 +1077,7 @@ function cancelRequestsForShutdown(reason) {
 }
 
 async function finalizeWorkerShutdown() {
-    const hardStopConfig = resolveNativeOperationHardStopConfig();
+    const hardStopConfig = resolveNativeOperationHardStopConfig(config);
 
     let resolveShutdown;
     let rejectShutdown;
@@ -1232,7 +1165,7 @@ async function shutdownDrainWithTimeout(timeoutMs) {
 
 export async function shutdownRuntime(options = {}) {
     const { mode, timeoutMs } = validateShutdownOptions(options);
-    resolveNativeOperationHardStopConfig();
+    resolveNativeOperationHardStopConfig(config);
     assertRuntimeHealthy();
 
     if (runtimeResetting) {

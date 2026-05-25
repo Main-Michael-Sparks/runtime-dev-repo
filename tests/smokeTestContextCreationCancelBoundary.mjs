@@ -38,6 +38,7 @@ const RUNTIME_FILES = [
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
     "inference.mjs",
+    "nativeOperationPolicy.mjs",
     "normalizer.mjs",
     "observer.mjs",
     "request.mjs",
