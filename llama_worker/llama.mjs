@@ -25,6 +25,24 @@ let nextActiveRequestSequence = 0;
 const sessions = new Map();
 const activeRequests = new Map();
 
+let workerOperationChain = Promise.resolve();
+
+function enqueueWorkerOperation(label, fn) {
+    const run = workerOperationChain.then(fn, fn);
+    workerOperationChain = run.catch(() => {});
+    return run;
+}
+
+function assertWorkerReadyForNativeCommand() {
+    if (resetting || shuttingDown) {
+        throw new Error("Model is resetting");
+    }
+
+    if (!ready || !model) {
+        throw new Error("Worker not ready");
+    }
+}
+
 function setActiveInitConfig(msg) {
     if (initPromise || model || ready) return;
 
@@ -678,35 +696,36 @@ parentPort.on("message", async (msg) => {
         }
 
         if (msg.type === "shutdown") {
-            await shutdownWorker();
-            parentPort.postMessage({ type: "shutdown_done" });
+            await enqueueWorkerOperation("shutdown", async () => {
+                await shutdownWorker();
+                parentPort.postMessage({ type: "shutdown_done" });
+            });
             return;
         }
 
-        if (resetting || shuttingDown) {
-            throw new Error("Model is resetting");
-        }
-
-        if (!ready || !model) {
-            throw new Error("Worker not ready");
-        }
-
         if (msg.type === "reset_session") {
-            await resetSession(msg.sessionId);
-            parentPort.postMessage({
-                type: "reset_done",
-                sessionId: msg.sessionId
+            await enqueueWorkerOperation("reset_session", async () => {
+                assertWorkerReadyForNativeCommand();
+                await resetSession(msg.sessionId);
+                parentPort.postMessage({
+                    type: "reset_done",
+                    sessionId: msg.sessionId
+                });
             });
             return;
         }
 
         if (msg.type === "reset_model") {
-            await resetModel();
-            parentPort.postMessage({ type: "model_reset_done" });
+            await enqueueWorkerOperation("reset_model", async () => {
+                assertWorkerReadyForNativeCommand();
+                await resetModel();
+                parentPort.postMessage({ type: "model_reset_done" });
+            });
             return;
         }
 
         if (msg.type === "prompt") {
+            assertWorkerReadyForNativeCommand();
             await handlePromptMessage(msg);
         }
     } catch (err) {

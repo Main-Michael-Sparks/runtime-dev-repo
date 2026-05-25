@@ -31,7 +31,7 @@
 //   REAL_READY_TIMEOUT_MS=120000
 //   REAL_PROMPT_DEADLINE_MS=300000
 //   REAL_SHUTDOWN_DEADLINE_MS=240000
-//   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1000
+//   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1
 //   REAL_NATIVE_BOUNDARY_DEADLINE_MS=240000
 //   REAL_FIRST_CHUNK_TIMEOUT_MS=120000
 //   REAL_SMOKE_CONTEXT_SIZE=2048
@@ -43,6 +43,7 @@
 // - Real-runtime modes import the repository runtime directly and require a working local model setup.
 // - Real-runtime modes cannot inspect worker internals directly; they prove native-boundary behavior by
 //   requiring cancel/reset/shutdown to complete and then, where applicable, requiring the same session to work again.
+// - The default active-prompt delay is intentionally short so fast local models do not finish before reset/shutdown is issued.
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -1077,7 +1078,7 @@ async function modeRealCancelActivePromptNativeBoundary() {
 
     const { initModel, prompt, cancelPrompt, shutdownRuntime } = await importRealRuntime("real-cancel-active-prompt-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
@@ -1114,7 +1115,7 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
 
     const { initModel, prompt, resetSession, shutdownRuntime } = await importRealRuntime("real-reset-session-active-prompt-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
@@ -1154,7 +1155,7 @@ async function modeRealShutdownAbortNativeBoundary() {
 
     const { initModel, prompt, shutdownRuntime } = await importRealRuntime("real-shutdown-abort-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1000);
+    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
