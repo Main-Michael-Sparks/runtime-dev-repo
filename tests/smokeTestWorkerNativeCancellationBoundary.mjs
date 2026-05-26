@@ -67,6 +67,7 @@ const RUNTIME_FILES = [
     "inference.mjs",
     "nativeOperationPolicy.mjs",
     "runtimeRequestSettlement.mjs",
+    "runtimeLifecycleState.mjs",
     "normalizer.mjs",
     "observer.mjs",
     "request.mjs",

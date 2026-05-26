@@ -1,0 +1,273 @@
+# Dev Notes 11 — runtime-lifecycle-modularization-v1 runtime lifecycle state container
+
+## Branch
+
+`runtime-lifecycle-modularization-v1-runtime-lifecycle-state-container`
+
+## Status
+
+First lifecycle-state-container slice staged and sandbox/mock verified.
+
+This branch intentionally makes parent runtime lifecycle coordination state explicit without extracting init, reset, shutdown, native-boundary, worker-router, scheduler, workerBridge, or request-settlement behavior into new coordinators.
+
+## Source base
+
+Started from the current `modularization` branch source mirrored by:
+
+```text
+runtime-dev-repo-modularization.zip
+```
+
+The source base already included:
+
+```text
+nativeOperationPolicy.mjs
+docs/dev-notes.09
+runtimeRequestSettlement.mjs
+docs/dev-notes.10
+```
+
+Observed source ZIP SHA-256 during prep:
+
+```text
+bcedac845914fae443f7ff02d5ed7c5c94bce160a04a6fcbb9ecffb86c792f10
+```
+
+## Purpose
+
+Continue lifecycle modularization conservatively by moving parent-runtime lifecycle coordination state out of raw `inference.mjs` module-scope variable declarations into a small explicit state container.
+
+The goal is to prepare later coordinator extractions while preserving current runtime behavior.
+
+## Implementation summary
+
+Added:
+
+```text
+runtimeLifecycleState.mjs
+```
+
+The new module exports:
+
+```js
+export function createRuntimeLifecycleState() { ... }
+```
+
+The state container owns only parent lifecycle coordination state:
+
+```text
+initStarted
+initResolved
+initInProgress
+initCyclePromise
+readyPromise
+resolveReady
+rejectReady
+activeInitAttemptId
+activeInitPlan
+lastSuccessfulInitPlan
+lastSuccessfulEffectiveConfig
+lastSuccessfulProbe
+lastFailedExplicitInit
+nextInitAttemptId
+sessionsResetting
+sessionResetWaiters
+runtimeResetting
+runtimeShuttingDown
+runtimeUnhealthy
+modelResetWaiter
+shutdownWaiter
+```
+
+It also owns small state-local helpers:
+
+```js
+resetReadyBarrier()
+resetInitBarrier()
+nextAttemptId()
+```
+
+`inference.mjs` now imports and instantiates it:
+
+```js
+import { createRuntimeLifecycleState } from "./runtimeLifecycleState.mjs";
+
+const lifecycle = createRuntimeLifecycleState();
+```
+
+Former direct module-scope lifecycle variables in `inference.mjs` now read/write through `lifecycle.*` properties.
+
+## What intentionally stayed in `inference.mjs`
+
+The following behavior-bearing code remains in `inference.mjs`:
+
+```text
+initModel()
+ensureModelReady()
+runInitCycle()
+attemptInitOnce()
+createInitPlan()
+createFixedInitPlanFromLastSuccess()
+worker message routing
+runtime unhealthy helpers
+native operation boundary waiting
+resetSession()
+resetModel()
+shutdownRuntime()
+shutdown mode orchestration
+cancelPrompt()
+cancellation loops
+scheduler creation/ownership
+request settlement dependency wiring
+public API exports
+```
+
+Reason:
+
+- this branch is a state-container seam only;
+- lifecycle behavior extraction remains high-risk and should be handled in later narrow coordinator branches;
+- scheduler and workerBridge ownership are architecture boundaries and were not moved.
+
+## Behavior preservation notes
+
+No intentional changes to:
+
+```text
+public API shape
+error text
+prompt/output semantics
+request settlement order
+cancellation ordering
+scheduler queue/in-flight ownership
+worker lifecycle/replacement behavior
+worker operation serialization
+configOverride validation
+retry/profile planning
+hardware probing behavior
+native operation timeout/unhealthy policy
+shutdown mode semantics
+model path/model identity policy
+```
+
+Important preserved details:
+
+```text
+resetInitBarrier() still leaves scheduler readiness handling explicit in inference.mjs
+readyPromise / resolveReady / rejectReady barrier semantics are preserved
+initCyclePromise still represents the full init cycle
+activeInitAttemptId stale ready/error guards remain in the worker message router
+failed explicit custom/profile init still blocks unsafe silent default prompt auto-init
+last successful effective config/probe records still drive resetModel() re-init behavior
+session reset timeout semantics remain unchanged
+modelResetWaiter and shutdownWaiter clear in the same routing/finally paths as before
+```
+
+## Test fixture propagation
+
+Several smoke tests create temporary mock runtime trees using fixed `RUNTIME_FILES` lists. Because `inference.mjs` now imports `runtimeLifecycleState.mjs`, those fixture lists were updated to include the new module.
+
+Updated fixture lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions or intended behavior were changed.
+
+## Files changed
+
+Added:
+
+```text
+runtimeLifecycleState.mjs
+docs/dev-notes.11
+```
+
+Modified:
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Validation performed
+
+Syntax check:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Sandbox/mock smoke tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Real-runtime lifecycle checks were not run in the sandbox.
+
+## Review notes
+
+This branch follows the modularization amendment by introducing the lifecycle state container after the request-settlement helper slice.
+
+The state container deliberately uses a plain factory/object style rather than a class hierarchy. This keeps the change mechanical and consistent with the existing function-oriented module style.
+
+The branch does not yet make `inference.mjs` much smaller. That is intentional. The value is that later coordinator branches can receive an explicit lifecycle object instead of relying on broad module-scope closure state.
+
+## Caveats
+
+- This branch touches many lifecycle state use sites in `inference.mjs`; the change is mechanical but broad.
+- Local real-runtime verification is still recommended before merge consideration.
+- Fixture propagation remains a recurring risk for every new module imported by `inference.mjs`.
+- Prior transient real-runtime shutdown/native-boundary timeout caveats remain visible and were not addressed here.
+- This branch does not extract native-boundary behavior, init behavior, reset behavior, shutdown behavior, or worker routing.
+
+## Future modularization candidates
+
+The next likely modularization slice, pending review and verification of this branch result, is:
+
+```text
+runtime-lifecycle-modularization-v1-native-boundary-coordinator
+```
+
+Other candidates remain deferred:
+
+```text
+session reset coordinator
+shutdown coordinator
+init coordinator
+model reset coordinator
+worker protocol router
+final cleanup
+```

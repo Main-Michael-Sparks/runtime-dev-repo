@@ -7,6 +7,7 @@ import {
     settleCompletedRequest,
     settleFailedRequest
 } from "./runtimeRequestSettlement.mjs";
+import { createRuntimeLifecycleState } from "./runtimeLifecycleState.mjs";
 import { isPlainObject } from "./configOverride.mjs";
 import { probeHardware } from "./hardwareProbe.mjs";
 import {
@@ -62,37 +63,7 @@ const VALID_SHUTDOWN_MODES = new Set([
     "drain-with-timeout"
 ]);
 
-let initStarted = false;
-let initResolved = false;
-let initInProgress = false;
-let initCyclePromise = null;
-let resolveReady;
-let rejectReady;
-
-let activeInitAttemptId = null;
-let activeInitPlan = null;
-let lastSuccessfulInitPlan = null;
-let lastSuccessfulEffectiveConfig = null;
-let lastSuccessfulProbe = null;
-let lastFailedExplicitInit = null;
-let nextInitAttemptId = 0;
-
-const sessionsResetting = new Set();
-const sessionResetWaiters = new Map();
-let runtimeResetting = false;
-let runtimeShuttingDown = false;
-let runtimeUnhealthy = null;
-let modelResetWaiter = null;
-let shutdownWaiter = null;
-
-function createReadyPromise() {
-    return new Promise((resolve, reject) => {
-        resolveReady = resolve;
-        rejectReady = reject;
-    });
-}
-
-let readyPromise = createReadyPromise();
+const lifecycle = createRuntimeLifecycleState();
 
 const scheduler = createScheduler({
     maxInFlight: config.runtime.maxInFlight,
@@ -157,7 +128,7 @@ function assertAllowedKeys(value, allowedKeys, name) {
 }
 
 function createRuntimeUnhealthyError() {
-    const details = runtimeUnhealthy;
+    const details = lifecycle.runtimeUnhealthy;
     const err = new Error(
         details?.message ??
         "Runtime is unhealthy after native operation timeout; process restart required"
@@ -174,15 +145,15 @@ function createRuntimeUnhealthyError() {
 }
 
 function assertRuntimeHealthy() {
-    if (runtimeUnhealthy) {
+    if (lifecycle.runtimeUnhealthy) {
         throw createRuntimeUnhealthyError();
     }
 }
 
 function markRuntimeUnhealthy({ operation, sessionId = null, timeoutMs }) {
-    if (!runtimeUnhealthy) {
+    if (!lifecycle.runtimeUnhealthy) {
         const err = createNativeOperationTimeoutError({ operation, sessionId, timeoutMs });
-        runtimeUnhealthy = {
+        lifecycle.runtimeUnhealthy = {
             phase: err.phase,
             operation,
             sessionId,
@@ -200,7 +171,7 @@ function isSessionResetWaiterActive(waiter) {
 }
 
 function assertNoActiveSessionResetInProgress(operationName) {
-    for (const waiter of sessionResetWaiters.values()) {
+    for (const waiter of lifecycle.sessionResetWaiters.values()) {
         if (isSessionResetWaiterActive(waiter)) {
             throw new Error(`${operationName} cannot start while a session reset is in progress`);
         }
@@ -295,8 +266,7 @@ function hasCustomProfileOptions(options = {}) {
 }
 
 function nextAttemptId() {
-    nextInitAttemptId += 1;
-    return nextInitAttemptId;
+    return lifecycle.nextAttemptId();
 }
 
 function resolveInitOptions(options = {}) {
@@ -347,11 +317,8 @@ function resolveInitOptions(options = {}) {
 }
 
 function resetInitBarrier() {
-    initStarted = false;
-    initResolved = false;
-    activeInitAttemptId = null;
+    lifecycle.resetInitBarrier();
     scheduler.setReady(false);
-    readyPromise = createReadyPromise();
 }
 
 function shouldProbeForHardwareAwareInit(initOptions) {
@@ -411,22 +378,22 @@ async function createInitPlan(initOptions) {
 }
 
 function createFixedInitPlanFromLastSuccess() {
-    if (!lastSuccessfulInitPlan || !lastSuccessfulEffectiveConfig) {
+    if (!lifecycle.lastSuccessfulInitPlan || !lifecycle.lastSuccessfulEffectiveConfig) {
         return null;
     }
 
-    const profileName = lastSuccessfulInitPlan.profileName ?? "last-successful";
+    const profileName = lifecycle.lastSuccessfulInitPlan.profileName ?? "last-successful";
     const profile = {
         name: profileName,
         reason: "Last successful effective config",
-        effectiveConfig: lastSuccessfulEffectiveConfig
+        effectiveConfig: lifecycle.lastSuccessfulEffectiveConfig
     };
 
     const attemptPlan = buildInitAttemptPlan({
         strategy: "same-config-cold-worker",
         profiles: [profile],
         attempts: 1,
-        readyTimeoutMs: lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
+        readyTimeoutMs: lifecycle.lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
         retryDelayMs: 0,
         nextAttemptId
     });
@@ -435,12 +402,12 @@ function createFixedInitPlanFromLastSuccess() {
         enabled: true,
         strategy: "same-config-cold-worker",
         attempts: 1,
-        readyTimeoutMs: lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
+        readyTimeoutMs: lifecycle.lastSuccessfulInitPlan.readyTimeoutMs ?? 0,
         retryDelayMs: 0,
         configOverride: undefined,
-        hardwareAware: lastSuccessfulInitPlan.hardwareAware ?? {},
+        hardwareAware: lifecycle.lastSuccessfulInitPlan.hardwareAware ?? {},
         hasCustomProfileOptions: true,
-        probe: lastSuccessfulProbe,
+        probe: lifecycle.lastSuccessfulProbe,
         profiles: [profile],
         attemptPlan
     };
@@ -448,8 +415,8 @@ function createFixedInitPlanFromLastSuccess() {
 
 async function attemptInitOnce(attempt) {
     resetInitBarrier();
-    initStarted = true;
-    activeInitAttemptId = attempt.initAttemptId;
+    lifecycle.initStarted = true;
+    lifecycle.activeInitAttemptId = attempt.initAttemptId;
 
     sendToWorker({
         type: "init",
@@ -457,12 +424,12 @@ async function attemptInitOnce(attempt) {
         profileName: attempt.profileName,
         configSnapshot: createWorkerConfigSnapshot(
             attempt.effectiveConfig,
-            activeInitPlan?.probe ?? null
+            lifecycle.activeInitPlan?.probe ?? null
         )
     });
 
     return withTimeout(
-        readyPromise,
+        lifecycle.readyPromise,
         attempt.readyTimeoutMs,
         "Model initialization"
     );
@@ -487,7 +454,7 @@ async function runInitCycle(initPlan) {
     let lastError = null;
     const attemptedProfiles = [];
 
-    activeInitPlan = initPlan;
+    lifecycle.activeInitPlan = initPlan;
 
     for (let index = 0; index < initPlan.attemptPlan.length; index++) {
         const attempt = initPlan.attemptPlan[index];
@@ -496,7 +463,7 @@ async function runInitCycle(initPlan) {
         try {
             await attemptInitOnce(attempt);
 
-            lastSuccessfulInitPlan = {
+            lifecycle.lastSuccessfulInitPlan = {
                 strategy: initPlan.strategy,
                 profileName: attempt.profileName,
                 effectiveConfig: attempt.effectiveConfig,
@@ -506,15 +473,15 @@ async function runInitCycle(initPlan) {
                 attemptedProfiles: [...attemptedProfiles],
                 probe: initPlan.probe ?? null
             };
-            lastSuccessfulEffectiveConfig = attempt.effectiveConfig;
-            lastSuccessfulProbe = initPlan.probe ?? null;
-            lastFailedExplicitInit = null;
-            activeInitAttemptId = null;
-            activeInitPlan = null;
+            lifecycle.lastSuccessfulEffectiveConfig = attempt.effectiveConfig;
+            lifecycle.lastSuccessfulProbe = initPlan.probe ?? null;
+            lifecycle.lastFailedExplicitInit = null;
+            lifecycle.activeInitAttemptId = null;
+            lifecycle.activeInitPlan = null;
             return;
         } catch (err) {
             lastError = err;
-            activeInitAttemptId = null;
+            lifecycle.activeInitAttemptId = null;
 
             try {
                 await terminateWorker();
@@ -535,45 +502,45 @@ async function runInitCycle(initPlan) {
     }
 
     resetInitBarrier();
-    activeInitPlan = null;
+    lifecycle.activeInitPlan = null;
 
     throw buildFinalInitError(initPlan, attemptedProfiles, lastError);
 }
 
 async function startInitCycle(initPlan) {
-    initInProgress = true;
-    initCyclePromise = runInitCycle(initPlan);
+    lifecycle.initInProgress = true;
+    lifecycle.initCyclePromise = runInitCycle(initPlan);
 
     try {
-        return await initCyclePromise;
+        return await lifecycle.initCyclePromise;
     } finally {
-        initInProgress = false;
-        initCyclePromise = null;
+        lifecycle.initInProgress = false;
+        lifecycle.initCyclePromise = null;
     }
 }
 
 async function ensureModelReady() {
-    if (initResolved) return;
+    if (lifecycle.initResolved) return;
 
-    if (initInProgress) {
-        return initCyclePromise ?? readyPromise;
+    if (lifecycle.initInProgress) {
+        return lifecycle.initCyclePromise ?? lifecycle.readyPromise;
     }
 
-    if (initStarted) {
-        return readyPromise;
+    if (lifecycle.initStarted) {
+        return lifecycle.readyPromise;
     }
 
-    if (lastFailedExplicitInit && !lastSuccessfulInitPlan) {
+    if (lifecycle.lastFailedExplicitInit && !lifecycle.lastSuccessfulInitPlan) {
         throw new Error(
             `Model is not initialized after failed explicit init. ` +
             `Call initModel() with corrected options before prompting. ` +
-            `Last failure: ${lastFailedExplicitInit.error?.message ?? String(lastFailedExplicitInit.error)}`
+            `Last failure: ${lifecycle.lastFailedExplicitInit.error?.message ?? String(lifecycle.lastFailedExplicitInit.error)}`
         );
     }
 
-    initInProgress = true;
-    initCyclePromise = (async () => {
-        const initPlan = lastSuccessfulInitPlan
+    lifecycle.initInProgress = true;
+    lifecycle.initCyclePromise = (async () => {
+        const initPlan = lifecycle.lastSuccessfulInitPlan
             ? createFixedInitPlanFromLastSuccess()
             : await createInitPlan(resolveInitOptions());
 
@@ -581,10 +548,10 @@ async function ensureModelReady() {
     })();
 
     try {
-        return await initCyclePromise;
+        return await lifecycle.initCyclePromise;
     } finally {
-        initInProgress = false;
-        initCyclePromise = null;
+        lifecycle.initInProgress = false;
+        lifecycle.initCyclePromise = null;
     }
 }
 
@@ -604,21 +571,21 @@ function toErrorObject(raw) {
 
 onWorkerMessage((msg) => {
     if (msg.type === "ready") {
-        if (msg.initAttemptId !== activeInitAttemptId) return;
+        if (msg.initAttemptId !== lifecycle.activeInitAttemptId) return;
 
-        initResolved = true;
+        lifecycle.initResolved = true;
         scheduler.setReady(true);
-        resolveReady();
+        lifecycle.resolveReady();
         return;
     }
 
     if (msg.type === "reset_done") {
         if (msg.sessionId) {
-            sessionsResetting.delete(msg.sessionId);
+            lifecycle.sessionsResetting.delete(msg.sessionId);
 
-            const waiter = sessionResetWaiters.get(msg.sessionId);
+            const waiter = lifecycle.sessionResetWaiters.get(msg.sessionId);
             if (waiter) {
-                sessionResetWaiters.delete(msg.sessionId);
+                lifecycle.sessionResetWaiters.delete(msg.sessionId);
 
                 if (!waiter.timedOut) {
                     waiter.resolve();
@@ -629,8 +596,8 @@ onWorkerMessage((msg) => {
     }
 
     if (msg.type === "model_reset_done") {
-        const waiter = modelResetWaiter;
-        modelResetWaiter = null;
+        const waiter = lifecycle.modelResetWaiter;
+        lifecycle.modelResetWaiter = null;
 
         if (waiter) {
             waiter.resolve();
@@ -639,8 +606,8 @@ onWorkerMessage((msg) => {
     }
 
     if (msg.type === "shutdown_done") {
-        const waiter = shutdownWaiter;
-        shutdownWaiter = null;
+        const waiter = lifecycle.shutdownWaiter;
+        lifecycle.shutdownWaiter = null;
 
         if (waiter) {
             waiter.resolve();
@@ -674,35 +641,35 @@ onWorkerMessage((msg) => {
         const err = toErrorObject(msg.error);
 
         if (msg.initAttemptId !== undefined && msg.initAttemptId !== null) {
-            if (msg.initAttemptId !== activeInitAttemptId) return;
-            rejectReady(err);
+            if (msg.initAttemptId !== lifecycle.activeInitAttemptId) return;
+            lifecycle.rejectReady(err);
             return;
         }
 
-        if ((msg.id === undefined || msg.id === null) && runtimeResetting && modelResetWaiter) {
-            const waiter = modelResetWaiter;
-            modelResetWaiter = null;
+        if ((msg.id === undefined || msg.id === null) && lifecycle.runtimeResetting && lifecycle.modelResetWaiter) {
+            const waiter = lifecycle.modelResetWaiter;
+            lifecycle.modelResetWaiter = null;
             waiter.reject(err);
             return;
         }
 
-        if ((msg.id === undefined || msg.id === null) && runtimeShuttingDown && shutdownWaiter) {
-            const waiter = shutdownWaiter;
-            shutdownWaiter = null;
+        if ((msg.id === undefined || msg.id === null) && lifecycle.runtimeShuttingDown && lifecycle.shutdownWaiter) {
+            const waiter = lifecycle.shutdownWaiter;
+            lifecycle.shutdownWaiter = null;
             waiter.reject(err);
             return;
         }
 
-        if ((msg.id === undefined || msg.id === null) && !initResolved && !msg.sessionId) {
-            rejectReady(err);
+        if ((msg.id === undefined || msg.id === null) && !lifecycle.initResolved && !msg.sessionId) {
+            lifecycle.rejectReady(err);
             return;
         }
 
-        if ((msg.id === undefined || msg.id === null) && msg.sessionId && sessionResetWaiters.has(msg.sessionId)) {
-            sessionsResetting.delete(msg.sessionId);
+        if ((msg.id === undefined || msg.id === null) && msg.sessionId && lifecycle.sessionResetWaiters.has(msg.sessionId)) {
+            lifecycle.sessionsResetting.delete(msg.sessionId);
 
-            const waiter = sessionResetWaiters.get(msg.sessionId);
-            sessionResetWaiters.delete(msg.sessionId);
+            const waiter = lifecycle.sessionResetWaiters.get(msg.sessionId);
+            lifecycle.sessionResetWaiters.delete(msg.sessionId);
 
             if (!waiter.timedOut) {
                 waiter.reject(err);
@@ -724,23 +691,23 @@ onWorkerMessage((msg) => {
 export async function initModel(options = {}) {
     assertRuntimeHealthy();
 
-    if (runtimeShuttingDown) {
+    if (lifecycle.runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
 
-    if (runtimeResetting) {
+    if (lifecycle.runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
 
-    if (initResolved) {
+    if (lifecycle.initResolved) {
         if (hasMeaningfulInitOptions(options)) {
             throw new Error("Model already initialized; resetModel() required before changing init config");
         }
 
-        return readyPromise;
+        return lifecycle.readyPromise;
     }
 
-    if (initStarted || initInProgress) {
+    if (lifecycle.initStarted || lifecycle.initInProgress) {
         throw new Error("Model initialization already in progress");
     }
 
@@ -748,17 +715,17 @@ export async function initModel(options = {}) {
     const initOptions = resolveInitOptions(options);
     let initPlan = null;
 
-    initInProgress = true;
-    initCyclePromise = (async () => {
+    lifecycle.initInProgress = true;
+    lifecycle.initCyclePromise = (async () => {
         initPlan = await createInitPlan(initOptions);
         return runInitCycle(initPlan);
     })();
 
     try {
-        return await initCyclePromise;
+        return await lifecycle.initCyclePromise;
     } catch (err) {
         if (rawHadCustomProfileOptions || initOptions.hasCustomProfileOptions) {
-            lastFailedExplicitInit = {
+            lifecycle.lastFailedExplicitInit = {
                 hadMeaningfulOptions: true,
                 strategy: initOptions.strategy,
                 attemptedProfiles: err.attemptedProfiles ?? initPlan?.attemptPlan?.map((attempt) => attempt.profileName) ?? [],
@@ -768,23 +735,23 @@ export async function initModel(options = {}) {
 
         throw err;
     } finally {
-        initInProgress = false;
-        initCyclePromise = null;
+        lifecycle.initInProgress = false;
+        lifecycle.initCyclePromise = null;
     }
 }
 
 function assertPromptAdmissionAllowed(sessionId) {
     assertRuntimeHealthy();
 
-    if (runtimeResetting) {
+    if (lifecycle.runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
 
-    if (runtimeShuttingDown) {
+    if (lifecycle.runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
 
-    if (sessionsResetting.has(sessionId)) {
+    if (lifecycle.sessionsResetting.has(sessionId)) {
         throw new Error(`Session is resetting: ${sessionId}`);
     }
 }
@@ -863,17 +830,17 @@ export function cancelPrompt(promptId) {
 export async function resetSession(sessionId = "default") {
     assertRuntimeHealthy();
 
-    if (runtimeResetting) {
+    if (lifecycle.runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
 
-    if (runtimeShuttingDown) {
+    if (lifecycle.runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
 
     const hardStopConfig = resolveNativeOperationHardStopConfig(config);
 
-    const existing = sessionResetWaiters.get(sessionId);
+    const existing = lifecycle.sessionResetWaiters.get(sessionId);
     if (existing?.timedOut) {
         throw new Error(`Session is resetting: ${sessionId}`);
     }
@@ -882,7 +849,7 @@ export async function resetSession(sessionId = "default") {
         return existing.promise;
     }
 
-    sessionsResetting.add(sessionId);
+    lifecycle.sessionsResetting.add(sessionId);
 
     let resolveReset;
     let rejectReset;
@@ -900,7 +867,7 @@ export async function resetSession(sessionId = "default") {
         timedOut: false
     };
 
-    sessionResetWaiters.set(sessionId, waiter);
+    lifecycle.sessionResetWaiters.set(sessionId, waiter);
 
     const canceled = scheduler.cancelBySession(sessionId);
     notifyRequestsCancellationRequested(canceled, `Session reset: ${sessionId}`);
@@ -943,18 +910,18 @@ export async function resetSession(sessionId = "default") {
 export async function resetModel() {
     assertRuntimeHealthy();
 
-    if (runtimeResetting) {
+    if (lifecycle.runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
 
-    if (runtimeShuttingDown) {
+    if (lifecycle.runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
 
     const hardStopConfig = resolveNativeOperationHardStopConfig(config);
     assertNoSessionResetInProgress("Model reset");
 
-    runtimeResetting = true;
+    lifecycle.runtimeResetting = true;
     scheduler.setReady(false);
 
     const canceled = scheduler.cancelAll();
@@ -983,7 +950,7 @@ export async function resetModel() {
 
     waitForWorkerReset.catch(() => {});
 
-    modelResetWaiter = {
+    lifecycle.modelResetWaiter = {
         resolve: resolveReset,
         reject: rejectReset
     };
@@ -1008,8 +975,8 @@ export async function resetModel() {
             throw err;
         }
 
-        sessionsResetting.clear();
-        sessionResetWaiters.clear();
+        lifecycle.sessionsResetting.clear();
+        lifecycle.sessionResetWaiters.clear();
 
         await terminateWorker();
         recreateWorker();
@@ -1017,8 +984,8 @@ export async function resetModel() {
         const initPlan = createFixedInitPlanFromLastSuccess() ?? await createInitPlan(resolveInitOptions());
         await startInitCycle(initPlan);
     } finally {
-        runtimeResetting = false;
-        modelResetWaiter = null;
+        lifecycle.runtimeResetting = false;
+        lifecycle.modelResetWaiter = null;
     }
 }
 
@@ -1048,7 +1015,7 @@ function validateShutdownOptions(options = {}) {
 }
 
 function isInitActive() {
-    return initInProgress || (initStarted && !initResolved);
+    return lifecycle.initInProgress || (lifecycle.initStarted && !lifecycle.initResolved);
 }
 
 function cancelRequestsForShutdown(reason) {
@@ -1084,7 +1051,7 @@ async function finalizeWorkerShutdown() {
 
     waitForShutdown.catch(() => {});
 
-    shutdownWaiter = {
+    lifecycle.shutdownWaiter = {
         resolve: resolveShutdown,
         reject: rejectShutdown
     };
@@ -1109,24 +1076,24 @@ async function finalizeWorkerShutdown() {
             throw err;
         }
 
-        sessionsResetting.clear();
-        sessionResetWaiters.clear();
+        lifecycle.sessionsResetting.clear();
+        lifecycle.sessionResetWaiters.clear();
 
         await terminateWorker();
     } finally {
-        shutdownWaiter = null;
+        lifecycle.shutdownWaiter = null;
     }
 }
 
 async function shutdownAbort() {
-    runtimeShuttingDown = true;
+    lifecycle.runtimeShuttingDown = true;
     scheduler.setReady(false);
     cancelRequestsForShutdown("Runtime shutdown");
     await finalizeWorkerShutdown();
 }
 
 async function shutdownDrain() {
-    runtimeShuttingDown = true;
+    lifecycle.runtimeShuttingDown = true;
     await scheduler.waitForIdle();
     await finalizeWorkerShutdown();
 }
@@ -1147,7 +1114,7 @@ function waitForSchedulerIdleOrTimeout(timeoutMs) {
 }
 
 async function shutdownDrainWithTimeout(timeoutMs) {
-    runtimeShuttingDown = true;
+    lifecycle.runtimeShuttingDown = true;
 
     const finishedBeforeTimeout = await waitForSchedulerIdleOrTimeout(timeoutMs);
 
@@ -1164,11 +1131,11 @@ export async function shutdownRuntime(options = {}) {
     resolveNativeOperationHardStopConfig(config);
     assertRuntimeHealthy();
 
-    if (runtimeResetting) {
+    if (lifecycle.runtimeResetting) {
         throw new Error("Runtime is resetting");
     }
 
-    if (runtimeShuttingDown) {
+    if (lifecycle.runtimeShuttingDown) {
         throw new Error("Runtime is shutting down");
     }
 
