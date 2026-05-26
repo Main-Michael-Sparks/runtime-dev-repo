@@ -1,0 +1,327 @@
+# Dev Notes 10 — runtime-lifecycle-modularization-v1 request settlement helper
+
+## Branch
+
+`runtime-lifecycle-modularization-v1-request-settlement-helper`
+
+## Status
+
+First request-settlement helper slice staged, sandbox/mock verified, packaged, and locally real-runtime verified with one non-reproduced shutdown-timeout caveat.
+
+This branch intentionally extracts only mechanically safe parent-side request completion/error settlement helpers. It does not move cancellation loops, lifecycle state, reset/shutdown coordination, init coordination, scheduler ownership, worker behavior, or public API behavior.
+
+## Source base
+
+Started from the current `modularization` branch source mirrored by:
+
+```text
+runtime-dev-repo-modularization.zip
+```
+
+The source base already included the first clean modularization slice:
+
+```text
+nativeOperationPolicy.mjs
+docs/dev-notes.09
+```
+
+## Purpose
+
+Continue lifecycle modularization conservatively by extracting request completion/error settlement primitives from `inference.mjs` into a small parent-side helper module.
+
+The goal is to improve separation of concerns without changing runtime behavior.
+
+## Implementation summary
+
+Added:
+
+```text
+runtimeRequestSettlement.mjs
+```
+
+The new module owns only parent-side request settlement primitives:
+
+```js
+export function resolvePromptResult(req, msg) { ... }
+export function closeRequestCancelChannel(req) { ... }
+export function settleCompletedRequest(req, msg, deps) { ... }
+export function settleFailedRequest(req, err, deps) { ... }
+```
+
+`inference.mjs` now imports:
+
+```js
+import {
+    settleCompletedRequest,
+    settleFailedRequest
+} from "./runtimeRequestSettlement.mjs";
+```
+
+The worker `done` message path still owns scheduler completion in `inference.mjs`:
+
+```js
+const req = scheduler.complete(msg.id);
+if (!req) return;
+
+settleCompletedRequest(req, msg, {
+    closeStream,
+    traceDone,
+    traceDelete
+});
+```
+
+The worker request-level `error` path still owns lifecycle/init/session special-case routing and scheduler failure in `inference.mjs`:
+
+```js
+const req = scheduler.fail(msg.id);
+if (!req) return;
+
+settleFailedRequest(req, err, {
+    errorStream,
+    traceError,
+    traceDelete
+});
+```
+
+## What intentionally stayed in `inference.mjs`
+
+The following behavior-bearing paths remain inline:
+
+```text
+notifyRequestCancellationRequested()
+notifyRequestsCancellationRequested()
+cancelPrompt()
+resetSession() cancellation loop
+resetModel() cancellation loop
+cancelRequestsForShutdown()
+shutdown mode orchestration
+init/ready lifecycle routing
+session/model/shutdown waiter routing
+scheduler.complete/fail/cancel/cancelAll/cancelBySession ownership
+```
+
+Reason:
+
+- cancellation paths involve scheduler state, parent cancel-port notification, worker cancel messages, stream cancellation, trace mutation, and `done` rejection;
+- those paths have subtle ordering differences;
+- moving them should be a separate reviewed slice after this first helper extraction is stable.
+
+## Behavior preservation notes
+
+No intentional changes to:
+
+```text
+initModel()
+ensureModelReady()
+prompt()
+cancelPrompt()
+resetSession()
+resetModel()
+shutdownRuntime()
+scheduler behavior
+worker lifecycle/replacement
+worker operation serialization
+config override validation
+retry/profile planning
+stream shaping
+prompt/output semantics
+model identity/path policy
+native operation timeout/unhealthy policy
+```
+
+The helper does not:
+
+```text
+import inference.mjs
+own scheduler state
+send worker messages
+own lifecycle state
+change public API exports
+change worker files
+change config files
+```
+
+The exact prompt result fallback was preserved:
+
+```text
+streaming request: use req.finalText when non-empty; otherwise msg.res ?? req.finalText
+non-streaming request: use msg.res ?? req.finalText
+```
+
+The exact completed-request settlement order was preserved:
+
+```text
+closeStream(req)
+closeRequestCancelChannel(req)
+traceDone(req)
+req.resolveDone(resultText)
+traceDelete(req.id)
+```
+
+The exact failed-request settlement order was preserved:
+
+```text
+closeRequestCancelChannel(req)
+traceError(req, err)
+errorStream(req, err)
+req.rejectDone(err)
+traceDelete(req.id)
+```
+
+No `closeRequestCancelChannel()` call was added to cancellation paths in this branch.
+
+## Test fixture propagation
+
+Several smoke tests create temporary mock runtime trees using fixed `RUNTIME_FILES` lists. Because `inference.mjs` now imports `runtimeRequestSettlement.mjs`, those fixture lists were updated to include the new module.
+
+Updated fixture lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions or intended behavior were changed.
+
+## Files changed
+
+Added:
+
+```text
+runtimeRequestSettlement.mjs
+docs/dev-notes.10
+```
+
+Modified:
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Validation performed
+
+Syntax check:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Targeted sandbox/mock smoke tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Broader sandbox/mock regression additions:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Real-runtime lifecycle checks were not run in the sandbox. Michael then ran the packaged candidate ZIP locally as a standalone extracted implementation.
+
+Local real-runtime verification from the packaged candidate ZIP:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+node ./tests/smokeTestContextCreationRetry.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Local result summary:
+
+```text
+PASS after rerun / accepted caveat
+```
+
+Important detail:
+
+- One full real-runtime `smokeTestContextCreationCancelBoundary.mjs` run initially hit a native shutdown timeout after `real-fresh-session-reset-context-boundary` had already rejected the request as expected.
+- The failing child mode was rerun by itself and passed.
+- The full `REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs` file was rerun and passed all mock modes and all real modes.
+- The transient timeout was not reproduced.
+- No code patch was made for this caveat because the failure point was shutdown cleanup/native boundary behavior, outside this branch's request done/error helper extraction.
+
+Final local verification interpretation:
+
+```text
+Sandbox/mock verification: PASS
+Artifact/package verification: PASS
+Local real-runtime verification: PASS with caveat
+Candidate-specific regression evidence from the transient shutdown timeout: low
+```
+
+## Review notes
+
+This branch follows the modularization plan amendment by extracting only the first safe done/error settlement slice.
+
+The cancellation settlement paths were reviewed but intentionally left inline for this branch. A later branch may consider extracting cancellation helpers only after building another path-by-path matrix and preserving all worker-cancel, stream, trace, and `done` rejection ordering.
+
+## Caveats
+
+- This branch does not reduce the complexity of lifecycle state, init retry, reset coordination, shutdown coordination, or worker routing beyond the request done/error settlement slice.
+- Fixture propagation remains a recurring risk for every new module imported by `inference.mjs`.
+- A transient real-runtime shutdown timeout occurred once during local verification of `smokeTestContextCreationCancelBoundary.mjs` after the reset-context-boundary request had rejected correctly. The failing child mode and then the full file passed on rerun. This branch records the caveat but does not patch shutdown/native-boundary behavior because that surface is outside this request-settlement helper extraction.
+- The prior intermittent real-runtime shutdown timeout during `retry-timeout-recovery` remains a known caveat from the previous branch and was not addressed here.
+
+## Future modularization candidates
+
+The next likely modularization slice, pending review of this branch result, remains:
+
+```text
+runtime-lifecycle-modularization-v1-runtime-lifecycle-state-container
+```
+
+Other candidates remain deferred:
+
+```text
+native boundary/unhealthy coordinator
+session reset coordinator
+shutdown coordinator
+init coordinator
+model reset coordinator
+worker protocol router
+final cleanup
+```

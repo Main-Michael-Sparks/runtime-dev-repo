@@ -3,6 +3,10 @@ import {
     createNativeOperationTimeoutError,
     resolveNativeOperationHardStopConfig
 } from "./nativeOperationPolicy.mjs";
+import {
+    settleCompletedRequest,
+    settleFailedRequest
+} from "./runtimeRequestSettlement.mjs";
 import { isPlainObject } from "./configOverride.mjs";
 import { probeHardware } from "./hardwareProbe.mjs";
 import {
@@ -658,15 +662,11 @@ onWorkerMessage((msg) => {
         const req = scheduler.complete(msg.id);
         if (!req) return;
 
-        const resultText = req.streamEnabled
-            ? (req.finalText !== "" ? req.finalText : (msg.res ?? req.finalText))
-            : (msg.res ?? req.finalText);
-
-        closeStream(req);
-        closeRequestCancelChannel(req);
-        traceDone(req);
-        req.resolveDone(resultText);
-        traceDelete(req.id);
+        settleCompletedRequest(req, msg, {
+            closeStream,
+            traceDone,
+            traceDelete
+        });
         return;
     }
 
@@ -713,11 +713,11 @@ onWorkerMessage((msg) => {
         const req = scheduler.fail(msg.id);
         if (!req) return;
 
-        closeRequestCancelChannel(req);
-        traceError(req, err);
-        errorStream(req, err);
-        req.rejectDone(err);
-        traceDelete(req.id);
+        settleFailedRequest(req, err, {
+            errorStream,
+            traceError,
+            traceDelete
+        });
     }
 });
 
@@ -812,10 +812,6 @@ function notifyRequestsCancellationRequested(requests, reason) {
     for (const req of requests) {
         notifyRequestCancellationRequested(req, reason);
     }
-}
-
-function closeRequestCancelChannel(req) {
-    req?.closeCancelChannel?.();
 }
 
 export async function prompt(text, options = {}) {
