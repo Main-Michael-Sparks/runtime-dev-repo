@@ -36,6 +36,7 @@ const RUNTIME_FILES = [
     "hardwareProbe.mjs",
     "inference.mjs",
     "nativeOperationPolicy.mjs",
+    "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
     "runtimeLifecycleState.mjs",
     "normalizer.mjs",

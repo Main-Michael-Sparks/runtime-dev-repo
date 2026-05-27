@@ -1,0 +1,410 @@
+# Dev Notes 12 — runtime-lifecycle-modularization-v1 native boundary coordinator
+
+## Branch
+
+`runtime-lifecycle-modularization-v1-native-boundary-coordinator`
+
+## Status
+
+Native-boundary coordinator slice staged and sandbox/mock verified.
+
+This branch intentionally extracts only the parent-side native boundary / runtime-unhealthy helper cluster from `inference.mjs` into a small coordinator module.
+
+It does not extract reset/session/shutdown coordinators, init coordinator behavior, worker protocol routing, scheduler ownership, request settlement, worker lifecycle ownership, or worker-local behavior.
+
+## Source base
+
+Started from the active formatted source truth:
+
+```text
+runtime-dev-repo-modularization.zip
+```
+
+Observed active source ZIP SHA-256 during prep:
+
+```text
+3bd341c6f9e01a3423b90f93de336639c2d2eb771612bd14a8d312837bead43d
+```
+
+The source base already included the prior modularization slices:
+
+```text
+nativeOperationPolicy.mjs
+docs/dev-notes.09
+runtimeRequestSettlement.mjs
+docs/dev-notes.10
+runtimeLifecycleState.mjs
+docs/dev-notes.11
+```
+
+## Purpose
+
+Continue lifecycle modularization conservatively by moving native-boundary/runtime-unhealthy helper behavior into an explicit parent-side coordinator module.
+
+The goal is to reduce lifecycle/native-boundary complexity in `inference.mjs` while preserving behavior and preparing safer future extraction of session reset, shutdown, model reset, and init coordinators.
+
+This branch complements the existing pure policy module:
+
+```text
+nativeOperationPolicy.mjs
+```
+
+`nativeOperationPolicy.mjs` remains responsible for native hard-stop config validation/resolution and native operation timeout error construction.
+
+The new coordinator owns only parent-runtime native-boundary helper behavior that depends on explicit lifecycle state or a caller-provided native hard-stop policy config.
+
+## Implementation summary
+
+Added:
+
+```text
+nativeBoundaryCoordinator.mjs
+```
+
+The new module exports:
+
+```js
+export function createRuntimeUnhealthyError(lifecycle) { ... }
+export function assertRuntimeHealthy(lifecycle) { ... }
+export function markRuntimeUnhealthy(lifecycle, { operation, sessionId = null, timeoutMs }) { ... }
+export async function waitForNativeOperationBoundary(promise, timeoutMs, label, hardStopConfig) { ... }
+```
+
+`nativeBoundaryCoordinator.mjs` imports only:
+
+```js
+import { createNativeOperationTimeoutError } from "./nativeOperationPolicy.mjs";
+```
+
+`inference.mjs` now imports:
+
+```js
+import { resolveNativeOperationHardStopConfig } from "./nativeOperationPolicy.mjs";
+import {
+    assertRuntimeHealthy,
+    markRuntimeUnhealthy,
+    waitForNativeOperationBoundary
+} from "./nativeBoundaryCoordinator.mjs";
+```
+
+Former local calls were mechanically rewired to pass the explicit lifecycle state object:
+
+```text
+assertRuntimeHealthy() -> assertRuntimeHealthy(lifecycle)
+markRuntimeUnhealthy({...}) -> markRuntimeUnhealthy(lifecycle, {...})
+```
+
+`waitForNativeOperationBoundary()` kept the current explicit callsite shape:
+
+```text
+waitForNativeOperationBoundary(boundaryPromise, timeoutMs, label, hardStopConfig)
+```
+
+All current callsites already pass `hardStopConfig` explicitly. The helper does not hide config resolution and does not import the base config singleton.
+
+## What intentionally stayed in `inference.mjs`
+
+The following behavior-bearing code remains in `inference.mjs`:
+
+```text
+initModel()
+ensureModelReady()
+runInitCycle()
+attemptInitOnce()
+createInitPlan()
+createFixedInitPlanFromLastSuccess()
+worker message routing
+resetSession()
+resetModel()
+finalizeWorkerShutdown()
+shutdownRuntime()
+shutdownAbort()
+shutdownDrain()
+shutdownDrainWithTimeout()
+waiter creation/cleanup
+scheduler creation/ownership
+request cancellation/settlement loops
+worker terminate/recreate flow
+request settlement dependency wiring
+public API exports
+```
+
+Reason:
+
+- this branch is a native-boundary helper seam only;
+- reset/session/shutdown/init coordinator extraction remains higher-risk and should be handled in later narrow branches;
+- scheduler, workerBridge, request settlement, and worker-local execution remain separate architecture boundaries and were not moved.
+
+## Behavior preservation notes
+
+No intentional changes to:
+
+```text
+public API shape
+error text
+prompt/output semantics
+request settlement order
+cancellation ordering
+scheduler queue/in-flight ownership
+worker lifecycle/replacement behavior
+worker operation serialization
+configOverride validation
+retry/profile planning
+hardware probing behavior
+native operation hard-stop policy
+shutdown mode semantics
+model path/model identity policy
+```
+
+Important preserved native-boundary details:
+
+```text
+runtime unhealthy state is still stored on lifecycle.runtimeUnhealthy
+first native timeout still wins and later markRuntimeUnhealthy() calls do not overwrite the stored details
+createRuntimeUnhealthyError() still reconstructs an Error from lifecycle.runtimeUnhealthy
+stored unhealthy details still include phase, operation, sessionId, timeoutMs, message, and at
+returned unhealthy Error still copies phase, operation, sessionId, and timeoutMs, but not at
+native timeout errors still come from createNativeOperationTimeoutError()
+waitForNativeOperationBoundary() still does not mark runtime unhealthy by itself
+waitForNativeOperationBoundary() still does not cancel, terminate, recreate, or send worker messages
+waitForNativeOperationBoundary() still returns { timedOut: false } on success and { timedOut: true, label, timeoutMs } on timeout
+original boundary rejection still propagates if it wins the race
+```
+
+Important preserved caller-owned timeout distinctions:
+
+```text
+resetSession() timeout does not mark global runtime unhealthy
+resetSession() timeout leaves the session waiter timed out and the session blocked until completion/restart
+resetModel() timeout marks global runtime unhealthy with operation "resetModel"
+shutdown timeout marks global runtime unhealthy with operation "shutdown"
+```
+
+Important preserved validation-order detail:
+
+```text
+shutdownRuntime() still resolves native hard-stop config before assertRuntimeHealthy(lifecycle)
+```
+
+This is preserved by keeping hard-stop config resolution in `inference.mjs` callsites rather than hiding config resolution inside the coordinator.
+
+## Test fixture propagation
+
+Several smoke tests create temporary mock runtime trees using fixed `RUNTIME_FILES` lists. Because `inference.mjs` now imports `nativeBoundaryCoordinator.mjs`, those fixture lists were updated.
+
+Updated fixture lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Each fixture list now includes the current modularization helper set needed by `inference.mjs`:
+
+```text
+nativeOperationPolicy.mjs
+nativeBoundaryCoordinator.mjs
+runtimeRequestSettlement.mjs
+runtimeLifecycleState.mjs
+```
+
+No test assertions were intentionally changed.
+
+## Files added
+
+```text
+nativeBoundaryCoordinator.mjs
+docs/dev-notes.12
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No intentional changes to:
+
+```text
+nativeOperationPolicy.mjs
+runtimeRequestSettlement.mjs
+runtimeLifecycleState.mjs
+scheduler.mjs
+workerBridge.mjs
+llama_worker/llama.mjs
+config.mjs
+configOverride.mjs
+retryProfiles.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+streamController.mjs
+request.mjs
+observer.mjs
+normalizer.mjs
+```
+
+## Review notes
+
+The staged set was reviewed against the original active ZIP.
+
+Expected changed set before adding this dev note:
+
+```text
+Added:
+nativeBoundaryCoordinator.mjs
+
+Modified:
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+After adding this dev note, the candidate-only added files should be:
+
+```text
+nativeBoundaryCoordinator.mjs
+docs/dev-notes.12
+```
+
+No removed files are expected.
+
+## Validation run during staging
+
+Initial source review checks before implementation:
+
+```text
+node --check across all .mjs files: PASS
+repo_fingerprint.py snapshot: PASS
+impact_map.py for inference/native-policy/lifecycle-state: PASS, 0 parse errors
+```
+
+Syntax after staging:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Targeted native-boundary-heavy mock/sandbox tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Adjacent lifecycle/regression mock/sandbox tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+## Caveats preserved
+
+Preserve awareness of prior non-blocking real-runtime caveats from the lifecycle state container handoff:
+
+```text
+one earlier context-creation cancel-boundary run hit a shutdown native timeout after the cancel assertion succeeded, later baseline/branch comparisons passed
+one earlier init/reset orchestrator run produced an empty after-reset prompt assertion, immediate rerun passed
+```
+
+This branch does not attempt to patch those caveats because neither has been proven candidate-specific.
+
+If either reappears during real-runtime verification, compare against the clean source/base and isolate the failing child mode before patching.
+
+## Recommended next verification steps
+
+Before candidate/final status:
+
+```text
+1. Run the broader mock/sandbox baseline after docs/dev-notes.12 is present.
+2. Package candidate ZIP/patch from reviewed staged files.
+3. Reopen generated package and inspect contents.
+4. Run artifact guard / package verification.
+5. Verify final patch applies cleanly to clean source base.
+6. Verify patched clean source matches final ZIP exactly.
+7. Request Michael-side real-runtime verification before merge consideration.
+8. Verify GitHub branch contents after upload/push if requested.
+```
+
+Recommended broader mock/sandbox baseline:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+## Recommended Michael-side local real-runtime smoke tests
+
+Before merge consideration, run the real/mixed local verification on the machine with the actual model/runtime available. Recommended commands:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerOperationSerialization.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+If any intermittent native/runtime caveat appears, compare the same failing child mode against the clean source base before treating it as candidate-specific.
+
+## Recommended next branch after this branch is finalized
+
+Tentative next branch after merge/freeze should be re-evaluated against current source and Michael's priorities.
+
+Likely candidates from the amended modularization plan:
+
+```text
+runtime-lifecycle-modularization-v1-session-reset-coordinator
+runtime-lifecycle-modularization-v1-shutdown-coordinator
+```
+
+Do not start the next branch until this branch is merged or explicitly frozen.
+
+The next branch should start with a new plan/spec and source review. It should not silently bundle cleanup, optimization, worker behavior changes, or unrelated lifecycle coordinator extractions.
