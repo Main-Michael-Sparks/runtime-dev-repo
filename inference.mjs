@@ -6,6 +6,7 @@ import {
     waitForNativeOperationBoundary
 } from "./nativeBoundaryCoordinator.mjs";
 import { resetSessionCoordinator } from "./runtimeSessionResetCoordinator.mjs";
+import { shutdownRuntimeCoordinator } from "./runtimeShutdownCoordinator.mjs";
 import {
     settleCompletedRequest,
     settleFailedRequest
@@ -58,12 +59,6 @@ const VALID_HARDWARE_AWARE_KEYS = new Set([
     "allowCpuModelLoadFallback",
     "allowBatchReduction",
     "allowContextAutoFallback"
-]);
-
-const VALID_SHUTDOWN_MODES = new Set([
-    "abort",
-    "drain",
-    "drain-with-timeout"
 ]);
 
 const lifecycle = createRuntimeLifecycleState();
@@ -861,176 +856,21 @@ export async function resetModel() {
     }
 }
 
-function validateShutdownOptions(options = {}) {
-    assertPlainObjectOrUndefined(options, "shutdown options");
-
-    const {
-        mode = "abort",
-        timeoutMs
-    } = options;
-
-    if (!VALID_SHUTDOWN_MODES.has(mode)) {
-        throw new Error(`Unsupported shutdown mode: ${mode}`);
-    }
-
-    if (mode === "drain-with-timeout") {
-        if (timeoutMs === undefined) {
-            throw new Error("timeoutMs is required for drain-with-timeout shutdown");
-        }
-
-        assertPositiveInteger(timeoutMs, "timeoutMs");
-    } else if (timeoutMs !== undefined) {
-        throw new Error("timeoutMs is only supported for drain-with-timeout shutdown");
-    }
-
-    return { mode, timeoutMs };
-}
-
-function isInitActive() {
-    return lifecycle.initInProgress || (lifecycle.initStarted && !lifecycle.initResolved);
-}
-
-function cancelRequestsForShutdown(reason) {
-    const canceled = scheduler.cancelAll();
-    notifyRequestsCancellationRequested(canceled, reason);
-
-    for (const req of canceled) {
-        sendToWorker({
-            type: "cancel",
-            id: req.id,
-            sessionId: req.sessionId,
-            reason
-        });
-
-        cancelStream(req);
-        traceCanceled(req);
-        req.rejectDone(new Error(reason));
-        traceDelete(req.id);
-    }
-
-    return canceled;
-}
-
-async function finalizeWorkerShutdown() {
-    const hardStopConfig = resolveNativeOperationHardStopConfig(config);
-
-    let resolveShutdown;
-    let rejectShutdown;
-    const waitForShutdown = new Promise((resolve, reject) => {
-        resolveShutdown = resolve;
-        rejectShutdown = reject;
-    });
-
-    waitForShutdown.catch(() => {});
-
-    lifecycle.shutdownWaiter = {
-        resolve: resolveShutdown,
-        reject: rejectShutdown
-    };
-
-    try {
-        sendToWorker({
-            type: "shutdown"
-        });
-
-        const result = await waitForNativeOperationBoundary(
-            waitForShutdown,
-            hardStopConfig.shutdownTimeoutMs,
-            "shutdown",
-            hardStopConfig
-        );
-
-        if (result.timedOut) {
-            const err = markRuntimeUnhealthy(lifecycle, {
-                operation: "shutdown",
-                timeoutMs: hardStopConfig.shutdownTimeoutMs
-            });
-            throw err;
-        }
-
-        lifecycle.sessionsResetting.clear();
-        lifecycle.sessionResetWaiters.clear();
-
-        await terminateWorker();
-    } finally {
-        lifecycle.shutdownWaiter = null;
-    }
-}
-
-async function shutdownAbort() {
-    lifecycle.runtimeShuttingDown = true;
-    scheduler.setReady(false);
-    cancelRequestsForShutdown("Runtime shutdown");
-    await finalizeWorkerShutdown();
-}
-
-async function shutdownDrain() {
-    lifecycle.runtimeShuttingDown = true;
-    await scheduler.waitForIdle();
-    await finalizeWorkerShutdown();
-}
-
-function waitForSchedulerIdleOrTimeout(timeoutMs) {
-    let timer;
-
-    const idlePromise = scheduler.waitForIdle().then(() => true);
-    const timeoutPromise = new Promise((resolve) => {
-        timer = setTimeout(() => {
-            resolve(false);
-        }, timeoutMs);
-    });
-
-    return Promise.race([idlePromise, timeoutPromise]).finally(() => {
-        clearTimeout(timer);
-    });
-}
-
-async function shutdownDrainWithTimeout(timeoutMs) {
-    lifecycle.runtimeShuttingDown = true;
-
-    const finishedBeforeTimeout = await waitForSchedulerIdleOrTimeout(timeoutMs);
-
-    if (!finishedBeforeTimeout) {
-        scheduler.setReady(false);
-        cancelRequestsForShutdown("Runtime shutdown timeout");
-    }
-
-    await finalizeWorkerShutdown();
-}
-
 export async function shutdownRuntime(options = {}) {
-    const { mode, timeoutMs } = validateShutdownOptions(options);
-    resolveNativeOperationHardStopConfig(config);
-    assertRuntimeHealthy(lifecycle);
-
-    if (lifecycle.runtimeResetting) {
-        throw new Error("Runtime is resetting");
-    }
-
-    if (lifecycle.runtimeShuttingDown) {
-        throw new Error("Runtime is shutting down");
-    }
-
-    if (isInitActive()) {
-        throw new Error("Model initialization is in progress");
-    }
-
-    assertNoSessionResetInProgress("Runtime shutdown");
-
-    if (mode === "abort") {
-        await shutdownAbort();
-        return;
-    }
-
-    if (mode === "drain") {
-        await shutdownDrain();
-        return;
-    }
-
-    if (mode === "drain-with-timeout") {
-        await shutdownDrainWithTimeout(timeoutMs);
-        return;
-    }
-
-    throw new Error(`Shutdown mode is not implemented yet: ${mode}`);
+    return shutdownRuntimeCoordinator({
+        config,
+        lifecycle,
+        scheduler,
+        sendToWorker,
+        terminateWorker,
+        resolveNativeOperationHardStopConfig,
+        assertRuntimeHealthy,
+        markRuntimeUnhealthy,
+        waitForNativeOperationBoundary,
+        assertNoSessionResetInProgress,
+        notifyRequestsCancellationRequested,
+        cancelStream,
+        traceCanceled,
+        traceDelete
+    }, options);
 }

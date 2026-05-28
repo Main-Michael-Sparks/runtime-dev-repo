@@ -70,6 +70,7 @@ const RUNTIME_FILES = [
     "runtimeRequestSettlement.mjs",
     "runtimeLifecycleState.mjs",
     "runtimeSessionResetCoordinator.mjs",
+    "runtimeShutdownCoordinator.mjs",
     "normalizer.mjs",
     "observer.mjs",
     "request.mjs",
