@@ -42,6 +42,7 @@ const RUNTIME_FILES = [
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
     "runtimeLifecycleState.mjs",
+    "runtimeSessionResetCoordinator.mjs",
     "normalizer.mjs",
     "observer.mjs",
     "request.mjs",
