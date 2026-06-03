@@ -7,6 +7,7 @@ import {
 } from "./nativeBoundaryCoordinator.mjs";
 import { resetSessionCoordinator } from "./runtimeSessionResetCoordinator.mjs";
 import { shutdownRuntimeCoordinator } from "./runtimeShutdownCoordinator.mjs";
+import { resetModelCoordinator } from "./runtimeModelResetCoordinator.mjs";
 import {
     settleCompletedRequest,
     settleFailedRequest
@@ -317,84 +318,25 @@ export async function resetSession(sessionId = "default") {
 }
 
 export async function resetModel() {
-    assertRuntimeHealthy(lifecycle);
-
-    if (lifecycle.runtimeResetting) {
-        throw new Error("Runtime is resetting");
-    }
-
-    if (lifecycle.runtimeShuttingDown) {
-        throw new Error("Runtime is shutting down");
-    }
-
-    const hardStopConfig = resolveNativeOperationHardStopConfig(config);
-    assertNoSessionResetInProgress("Model reset");
-
-    lifecycle.runtimeResetting = true;
-    scheduler.setReady(false);
-
-    const canceled = scheduler.cancelAll();
-    notifyRequestsCancellationRequested(canceled, "Model reset");
-
-    for (const req of canceled) {
-        sendToWorker({
-            type: "cancel",
-            id: req.id,
-            sessionId: req.sessionId,
-            reason: "Model reset"
-        });
-
-        cancelStream(req);
-        traceCanceled(req);
-        req.rejectDone(new Error("Model reset"));
-        traceDelete(req.id);
-    }
-
-    let resolveReset;
-    let rejectReset;
-    const waitForWorkerReset = new Promise((resolve, reject) => {
-        resolveReset = resolve;
-        rejectReset = reject;
+    return resetModelCoordinator({
+        config,
+        lifecycle,
+        scheduler,
+        sendToWorker,
+        terminateWorker,
+        recreateWorker,
+        resolveNativeOperationHardStopConfig,
+        assertRuntimeHealthy,
+        markRuntimeUnhealthy,
+        waitForNativeOperationBoundary,
+        assertNoSessionResetInProgress,
+        notifyRequestsCancellationRequested,
+        cancelStream,
+        traceCanceled,
+        traceDelete,
+        reinitializeModelAfterReset,
+        createInitCoordinatorContext
     });
-
-    waitForWorkerReset.catch(() => {});
-
-    lifecycle.modelResetWaiter = {
-        resolve: resolveReset,
-        reject: rejectReset
-    };
-
-    try {
-        sendToWorker({
-            type: "reset_model"
-        });
-
-        const result = await waitForNativeOperationBoundary(
-            waitForWorkerReset,
-            hardStopConfig.resetModelTimeoutMs,
-            "resetModel",
-            hardStopConfig
-        );
-
-        if (result.timedOut) {
-            const err = markRuntimeUnhealthy(lifecycle, {
-                operation: "resetModel",
-                timeoutMs: hardStopConfig.resetModelTimeoutMs
-            });
-            throw err;
-        }
-
-        lifecycle.sessionsResetting.clear();
-        lifecycle.sessionResetWaiters.clear();
-
-        await terminateWorker();
-        recreateWorker();
-
-        await reinitializeModelAfterReset(createInitCoordinatorContext());
-    } finally {
-        lifecycle.runtimeResetting = false;
-        lifecycle.modelResetWaiter = null;
-    }
 }
 
 export async function shutdownRuntime(options = {}) {

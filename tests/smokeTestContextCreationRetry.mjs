@@ -53,6 +53,7 @@ const RUNTIME_FILES = [
     "runtimeSessionResetCoordinator.mjs",
     "runtimeShutdownCoordinator.mjs",
     "runtimeInitCoordinator.mjs",
+    "runtimeModelResetCoordinator.mjs",
     "normalizer.mjs",
     "observer.mjs",
     "request.mjs",
