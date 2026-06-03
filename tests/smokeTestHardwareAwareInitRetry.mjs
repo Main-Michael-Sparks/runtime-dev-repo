@@ -19,7 +19,7 @@
 // Notes:
 // - Runtime modes intentionally spawn isolated child processes so each mode gets
 //   a fresh module/runtime state.
-// - The pure modes do not import inference.mjs and should not start the worker.
+// - The pure modes do not import runtime.mjs and should not start the worker.
 // - Runtime modes require your local model/node-llama-cpp environment to be valid.
 // - Shutdown remains last within any child mode that uses it.
 
@@ -361,7 +361,7 @@ async function modePureHardwareProbe() {
 async function modeRuntimeInvalidOptions() {
     logSection("runtime invalid options reject before model init");
 
-    const { initModel, shutdownRuntime } = await import("../inference.mjs");
+    const { initModel, shutdownRuntime } = await import("../runtime.mjs");
 
     await expectReject(
         "disallowed runtime configOverride",
@@ -398,7 +398,7 @@ async function modeRuntimeOverridePromptReset() {
         prompt,
         resetModel,
         shutdownRuntime
-    } = await import("../inference.mjs");
+    } = await import("../runtime.mjs");
 
     await initModel({
         enabled: true,
@@ -454,7 +454,7 @@ async function modeRuntimeOverridePromptReset() {
 async function modeRuntimeHardwareAwarePrompt() {
     logSection("runtime hardware-aware strategy with prompt");
 
-    const { initModel, prompt, shutdownRuntime } = await import("../inference.mjs");
+    const { initModel, prompt, shutdownRuntime } = await import("../runtime.mjs");
 
     await initModel({
         enabled: true,
@@ -500,7 +500,7 @@ async function modeRuntimeHardwareAwarePrompt() {
 async function modeRuntimeTimeoutBlocksAutoInit() {
     logSection("runtime failed explicit custom init blocks silent default auto-init");
 
-    const { initModel, prompt, shutdownRuntime } = await import("../inference.mjs");
+    const { initModel, prompt, shutdownRuntime } = await import("../runtime.mjs");
 
     await expectReject(
         "forced custom/profile init timeout",

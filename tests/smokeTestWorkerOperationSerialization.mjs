@@ -42,7 +42,7 @@ const RUNTIME_FILES = [
     "configOverride.mjs",
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
-    "inference.mjs",
+    "runtime.mjs",
     "nativeOperationPolicy.mjs",
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",

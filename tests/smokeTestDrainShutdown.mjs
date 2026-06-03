@@ -50,7 +50,7 @@ const RUNTIME_FILES = [
   "configOverride.mjs",
   "contextRetryProfiles.mjs",
   "hardwareProbe.mjs",
-  "inference.mjs",
+  "runtime.mjs",
   "nativeOperationPolicy.mjs",
   "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
@@ -353,8 +353,8 @@ async function withMockRuntime(fn, env = {}) {
   }
 
   try {
-    const inferenceUrl = pathToFileURL(path.join(tmpRoot, "inference.mjs")).href;
-    const runtime = await import(`${inferenceUrl}?mode=${MODE}&t=${Date.now()}`);
+    const runtimeUrl = pathToFileURL(path.join(tmpRoot, "runtime.mjs")).href;
+    const runtime = await import(`${runtimeUrl}?mode=${MODE}&t=${Date.now()}`);
     await fn(runtime);
   } finally {
     for (const key of Object.keys(env)) {
@@ -585,8 +585,8 @@ async function modeShutdownDuringActiveInitRejects() {
 }
 
 async function importRealRuntime(label) {
-  const inferenceUrl = pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href;
-  return import(`${inferenceUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
+  const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+  return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
 }
 
 async function modeRealDrainIdle() {

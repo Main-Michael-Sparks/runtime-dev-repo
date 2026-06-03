@@ -113,7 +113,7 @@ async function runChild(mode) {
 async function modeInvalidOptionsCurrentContract() {
   logSection("current init option validation");
 
-  const { initModel, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, shutdownRuntime } = await import("../runtime.mjs");
 
   await expectReject(
     "unsupported init retry strategy",
@@ -155,7 +155,7 @@ async function modeInvalidOptionsCurrentContract() {
 async function modeDuplicateExplicitInit() {
   logSection("duplicate explicit init rejection");
 
-  const { initModel, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, shutdownRuntime } = await import("../runtime.mjs");
 
   const firstInit = initModel({
     attempts: 1,
@@ -178,7 +178,7 @@ async function modeDuplicateExplicitInit() {
 async function modePromptAutoInit() {
   logSection("prompt auto-init via ensureModelReady");
 
-  const { prompt, shutdownRuntime } = await import("../inference.mjs");
+  const { prompt, shutdownRuntime } = await import("../runtime.mjs");
 
   const req = await prompt("Say hello briefly.");
   const result = await readPromptResult(req, { logChunks: false });
@@ -196,7 +196,7 @@ async function modePromptAutoInit() {
 async function modeRetryTimeoutRecovery() {
   logSection("default init ready-timeout failure then explicit recovery");
 
-  const { initModel, prompt, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, prompt, shutdownRuntime } = await import("../runtime.mjs");
 
   await expectReject(
     "forced default init timeout",
@@ -237,7 +237,7 @@ async function modeLifecycleRegression() {
     resetSession,
     resetModel,
     shutdownRuntime,
-  } = await import("../inference.mjs");
+  } = await import("../runtime.mjs");
 
   const { getTrace, getAllTraces } = await import("../observer.mjs");
 

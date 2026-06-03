@@ -44,7 +44,7 @@ const RUNTIME_FILES = [
   "configOverride.mjs",
   "contextRetryProfiles.mjs",
   "hardwareProbe.mjs",
-  "inference.mjs",
+  "runtime.mjs",
   "normalizer.mjs",
   "observer.mjs",
   "request.mjs",
@@ -177,7 +177,7 @@ async function createRuntimeFixture({
 }
 
 async function importRuntimeFromRoot(rootDir, label) {
-  const href = `${pathToFileURL(path.join(rootDir, "inference.mjs")).href}?isolation=${label}-${Date.now()}`;
+  const href = `${pathToFileURL(path.join(rootDir, "runtime.mjs")).href}?isolation=${label}-${Date.now()}`;
   return import(href);
 }
 

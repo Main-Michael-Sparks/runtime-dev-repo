@@ -37,7 +37,7 @@ const RUNTIME_FILES = [
     "configOverride.mjs",
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
-    "inference.mjs",
+    "runtime.mjs",
     "nativeOperationPolicy.mjs",
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
@@ -418,8 +418,8 @@ async function withMockRuntime(fn, env = {}) {
     }
 
     try {
-        const inferenceUrl = pathToFileURL(path.join(tmpRoot, "inference.mjs")).href;
-        const runtime = await import(`${inferenceUrl}?mode=${MODE}&t=${Date.now()}`);
+        const runtimeUrl = pathToFileURL(path.join(tmpRoot, "runtime.mjs")).href;
+        const runtime = await import(`${runtimeUrl}?mode=${MODE}&t=${Date.now()}`);
         await fn(runtime, eventLogPath);
     } finally {
         for (const key of Object.keys(mergedEnv)) {
@@ -759,7 +759,7 @@ async function realInit(runtime) {
 async function modeRealFreshSessionCancelContextBoundary() {
     logSection("real fresh-session cancel context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
     await realInit(runtime);
 
     const sessionId = `real-cancel-${Date.now()}`;
@@ -795,7 +795,7 @@ async function modeRealFreshSessionCancelContextBoundary() {
 async function modeRealFreshSessionResetContextBoundary() {
     logSection("real fresh-session reset context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
     await realInit(runtime);
 
     const sessionId = `real-reset-${Date.now()}`;
@@ -836,7 +836,7 @@ async function modeRealFreshSessionResetContextBoundary() {
 async function modeRealFreshSessionShutdownContextBoundary() {
     logSection("real fresh-session shutdown context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href);
+    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
     await realInit(runtime);
 
     const sessionId = `real-shutdown-${Date.now()}`;

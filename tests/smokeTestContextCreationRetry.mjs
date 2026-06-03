@@ -45,7 +45,7 @@ const RUNTIME_FILES = [
     "configOverride.mjs",
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
-    "inference.mjs",
+    "runtime.mjs",
     "nativeOperationPolicy.mjs",
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
@@ -413,7 +413,7 @@ async function modeRealRuntimeContextRetryFallback() {
         initModel,
         prompt,
         shutdownRuntime
-    } = await import("../inference.mjs");
+    } = await import("../runtime.mjs");
 
     try {
         await initModel({
@@ -537,7 +537,7 @@ async function modeMockContextRetrySuccess() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=retry-success-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=retry-success-${Date.now()}`
         );
 
         const req = await prompt("context retry success", { stream: false });
@@ -575,7 +575,7 @@ async function modeMockContextRetryFailure() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=retry-failure-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=retry-failure-${Date.now()}`
         );
 
         const req = await prompt("context retry failure", { stream: false });
@@ -617,7 +617,7 @@ async function modeMockCleanupFailureAbort() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=cleanup-failure-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=cleanup-failure-${Date.now()}`
         );
 
         const req = await prompt("context cleanup failure", { stream: false });

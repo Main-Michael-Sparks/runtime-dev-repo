@@ -1,3 +1,24 @@
+export function notifyRequestCancellationRequested(req, reason = "Prompt canceled") {
+    if (!req?.parentCancelPort || req.status !== "running") return;
+
+    try {
+        req.parentCancelPort.postMessage({
+            type: "cancel",
+            id: req.id,
+            sessionId: req.sessionId,
+            reason
+        });
+    } catch {
+        // no-op: port may already be closed during cleanup
+    }
+}
+
+export function notifyRequestsCancellationRequested(requests, reason) {
+    for (const req of requests) {
+        notifyRequestCancellationRequested(req, reason);
+    }
+}
+
 export function resolvePromptResult(req, msg) {
     return req.streamEnabled
         ? (req.finalText !== "" ? req.finalText : (msg.res ?? req.finalText))

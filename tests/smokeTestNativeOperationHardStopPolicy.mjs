@@ -34,7 +34,7 @@ const RUNTIME_FILES = [
     "configOverride.mjs",
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
-    "inference.mjs",
+    "runtime.mjs",
     "nativeOperationPolicy.mjs",
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
@@ -432,9 +432,9 @@ async function withMockRuntime(fn, env = {}) {
 
     try {
         const cacheBust = `${MODE}&t=${Date.now()}`;
-        const inferenceUrl = pathToFileURL(path.join(tmpRoot, "inference.mjs")).href;
+        const runtimeUrl = pathToFileURL(path.join(tmpRoot, "runtime.mjs")).href;
         const configUrl = pathToFileURL(path.join(tmpRoot, "config.mjs")).href;
-        const runtime = await import(`${inferenceUrl}?mode=${cacheBust}`);
+        const runtime = await import(`${runtimeUrl}?mode=${cacheBust}`);
         const { config } = await import(configUrl);
         await fn(runtime, eventLogPath, config);
     } finally {
@@ -733,7 +733,7 @@ async function loadRealRuntime(configMutator = null) {
         configMutator(config);
     }
 
-    const runtime = await import(`../inference.mjs?mode=${MODE}&t=${Date.now()}`);
+    const runtime = await import(`../runtime.mjs?mode=${MODE}&t=${Date.now()}`);
 
     return { runtime, config };
 }

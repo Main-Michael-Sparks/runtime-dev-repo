@@ -1,0 +1,183 @@
+# Runtime Dev Notes 18 — Final Cleanup / Runtime Entrypoint Rename
+
+Branch/work item: `runtime-lifecycle-modularization-v1-final-cleanup`
+
+## Purpose
+
+This branch performs the narrow final cleanup pass after the lifecycle modularization sequence through `workerProtocolRouter.mjs`.
+
+The branch intentionally preserves runtime behavior while making the current parent runtime entrypoint name accurate after the modularization work.
+
+## Source base
+
+Source base used for this branch:
+
+```text
+runtime-dev-repo-modularization.zip
+```
+
+That source already included the completed modularization sequence through:
+
+```text
+workerProtocolRouter.mjs / docs/dev-notes.17
+```
+
+## Files added
+
+```text
+runtime.mjs
+docs/dev-notes.18
+```
+
+## Files removed
+
+```text
+inference.mjs
+```
+
+## Files modified
+
+```text
+runtimeRequestSettlement.mjs
+active smoke tests that import/copy the public runtime entrypoint
+legacy smoke tests that import/copy the public runtime entrypoint
+```
+
+## Entrypoint rename
+
+`inference.mjs` was renamed to:
+
+```text
+runtime.mjs
+```
+
+Reason:
+
+```text
+The file is no longer just an inference implementation file. After the lifecycle modularization branches, it is the public Runtime Dev composition root and API entrypoint.
+```
+
+No compatibility shim was kept. Executable tests and fixture-copy lists were updated to import/copy `runtime.mjs` directly.
+
+Historical references to `inference.mjs` in earlier `docs/dev-notes.01` through `docs/dev-notes.17` remain historical records of the branch sequence at the time those notes were written. This note records the rename so the transition is explicit rather than lost.
+
+## Request-settlement cleanup
+
+The parent-side cancellation-notification helpers were moved from the entrypoint file into:
+
+```text
+runtimeRequestSettlement.mjs
+```
+
+Moved helpers:
+
+```text
+notifyRequestCancellationRequested(req, reason)
+notifyRequestsCancellationRequested(requests, reason)
+```
+
+This keeps request settlement / cancellation notification primitives together with:
+
+```text
+resolvePromptResult(req, msg)
+closeRequestCancelChannel(req)
+settleCompletedRequest(req, msg, deps)
+settleFailedRequest(req, err, deps)
+```
+
+Behavior intended to remain unchanged:
+
+```text
+only running requests receive parent cancel-port notifications
+notification payload shape remains unchanged
+notification failures remain swallowed because the port may already be closed
+cancellation loops in reset/session/shutdown coordinators remain coordinator-owned
+cancelPrompt remains a fast parent-side path
+```
+
+## Redundant alias cleanup
+
+The redundant local `assertNoSessionResetInProgress()` pass-through alias was removed from the entrypoint file.
+
+The coordinator dependency injection now passes:
+
+```js
+assertNoSessionResetInProgress: assertNoActiveSessionResetInProgress
+```
+
+This keeps coordinator-facing dependency names unchanged while removing one unnecessary local wrapper.
+
+## Folder layout decision
+
+No physical folder restructuring was done in this branch.
+
+Reason:
+
+```text
+Moving files into folders affects worker-relative imports, worker/model path assumptions, fixture-copy smoke tests, and many root-relative test imports. That should be handled in a dedicated layout branch if desired.
+```
+
+## Explicit non-goals
+
+This branch does not change:
+
+```text
+worker protocol messages
+workerBridge ownership or generation guard behavior
+scheduler behavior
+request settlement ordering
+stream shaping
+init/reset/session/shutdown coordinator semantics
+configOverride surface
+model path or model identity behavior
+prompt/output semantics
+worker-local/native execution behavior
+folder structure
+```
+
+## Verification plan
+
+Minimum verification for this branch:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+grep -R "inference\.mjs" -n --include='*.mjs' .
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Expected grep result:
+
+```text
+No executable `.mjs` references to `inference.mjs`.
+```
+
+## Real-runtime recommendation
+
+Because this branch renames the public runtime entrypoint and touches active test imports, Michael-side real-runtime checks are recommended before merge readiness even though the code changes are intended to be behavior-preserving.
+
+Suggested checks:
+
+```bash
+node ./tests/smokeTestLifecycleRegression.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+## Future work not included
+
+Possible future branch:
+
+```text
+runtime-layout-folder-structure-v1
+```
+
+That branch may review whether modules should move under a folder such as `runtime/`, but it should be scoped separately from this final cleanup branch.

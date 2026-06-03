@@ -39,7 +39,7 @@ const RUNTIME_FILES = [
     "configOverride.mjs",
     "contextRetryProfiles.mjs",
     "hardwareProbe.mjs",
-    "inference.mjs",
+    "runtime.mjs",
     "nativeOperationPolicy.mjs",
     "nativeBoundaryCoordinator.mjs",
     "runtimeRequestSettlement.mjs",
@@ -372,7 +372,7 @@ export async function getLlama() {
 
 async function importFixtureRuntime(tmpRoot, eventLogPath, label) {
     process.env.MOCK_EVENT_LOG = eventLogPath;
-    const url = pathToFileURL(path.join(tmpRoot, "inference.mjs"));
+    const url = pathToFileURL(path.join(tmpRoot, "runtime.mjs"));
     return import(`${url.href}?${encodeURIComponent(label)}=${Date.now()}`);
 }
 
@@ -537,7 +537,7 @@ async function modeMockInitResetPromptAfterConfigOverride() {
 }
 
 async function runRealInitResetPrompt({ configOverride = null } = {}) {
-    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../inference.mjs");
+    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../runtime.mjs");
 
     const initOptions = {
         attempts: 2,
@@ -576,7 +576,7 @@ async function modeRealInitResetPrompt() {
 async function modeRealInitPromptResetPromptControl() {
     logSection("real control initModel -> prompt -> resetModel -> prompt");
 
-    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../inference.mjs");
+    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../runtime.mjs");
 
     await withDeadline(
         initModel({
