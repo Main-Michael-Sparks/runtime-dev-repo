@@ -239,7 +239,7 @@ async function modeLifecycleRegression() {
     shutdownRuntime,
   } = await import("../runtime.mjs");
 
-  const { getTrace, getAllTraces } = await import("../observer.mjs");
+  const { getTrace, getAllTraces } = await import("../runtime/observability/observer.mjs");
 
   await initModel({
     attempts: 2,

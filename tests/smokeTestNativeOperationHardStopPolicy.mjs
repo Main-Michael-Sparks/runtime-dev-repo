@@ -30,26 +30,26 @@ const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
 const RUNTIME_FILES = [
-    "config.mjs",
-    "configOverride.mjs",
-    "contextRetryProfiles.mjs",
-    "hardwareProbe.mjs",
+    "runtime/config/config.mjs",
+    "runtime/config/configOverride.mjs",
+    "runtime/config/contextRetryProfiles.mjs",
+    "runtime/config/hardwareProbe.mjs",
     "runtime.mjs",
-    "nativeOperationPolicy.mjs",
-    "nativeBoundaryCoordinator.mjs",
-    "runtimeRequestSettlement.mjs",
-    "runtimeLifecycleState.mjs",
-    "runtimeSessionResetCoordinator.mjs",
-    "runtimeShutdownCoordinator.mjs",
-    "runtimeInitCoordinator.mjs",
-    "runtimeModelResetCoordinator.mjs",
-    "workerProtocolRouter.mjs",
-    "normalizer.mjs",
-    "observer.mjs",
-    "request.mjs",
-    "retryProfiles.mjs",
-    "scheduler.mjs",
-    "streamController.mjs",
+    "runtime/lifecycle/nativeOperationPolicy.mjs",
+    "runtime/lifecycle/nativeBoundaryCoordinator.mjs",
+    "runtime/request/runtimeRequestSettlement.mjs",
+    "runtime/lifecycle/runtimeLifecycleState.mjs",
+    "runtime/lifecycle/runtimeSessionResetCoordinator.mjs",
+    "runtime/lifecycle/runtimeShutdownCoordinator.mjs",
+    "runtime/lifecycle/runtimeInitCoordinator.mjs",
+    "runtime/lifecycle/runtimeModelResetCoordinator.mjs",
+    "runtime/lifecycle/workerProtocolRouter.mjs",
+    "runtime/stream/normalizer.mjs",
+    "runtime/observability/observer.mjs",
+    "runtime/request/request.mjs",
+    "runtime/config/retryProfiles.mjs",
+    "runtime/request/scheduler.mjs",
+    "runtime/stream/streamController.mjs",
     "workerBridge.mjs",
     "llama_worker/llama.mjs"
 ];
@@ -254,7 +254,7 @@ async function copyRuntimeFixture() {
         await cp(src, dest);
     }
 
-    const configPath = path.join(tmpRoot, "config.mjs");
+    const configPath = path.join(tmpRoot, "runtime/config/config.mjs");
     let configText = await readFile(configPath, "utf8");
     configText = configText
         .replace(/maxInFlight:\s*\d+,/, "maxInFlight: Number(process.env.MOCK_MAX_IN_FLIGHT ?? 1),")
@@ -433,7 +433,7 @@ async function withMockRuntime(fn, env = {}) {
     try {
         const cacheBust = `${MODE}&t=${Date.now()}`;
         const runtimeUrl = pathToFileURL(path.join(tmpRoot, "runtime.mjs")).href;
-        const configUrl = pathToFileURL(path.join(tmpRoot, "config.mjs")).href;
+        const configUrl = pathToFileURL(path.join(tmpRoot, "runtime/config/config.mjs")).href;
         const runtime = await import(`${runtimeUrl}?mode=${cacheBust}`);
         const { config } = await import(configUrl);
         await fn(runtime, eventLogPath, config);
@@ -727,7 +727,7 @@ async function modeInvalidHardStopConfigRejectsBeforeSideEffects() {
 }
 
 async function loadRealRuntime(configMutator = null) {
-    const { config } = await import("../config.mjs");
+    const { config } = await import("../runtime/config/config.mjs");
 
     if (configMutator) {
         configMutator(config);

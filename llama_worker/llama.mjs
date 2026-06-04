@@ -2,9 +2,9 @@ import { parentPort, receiveMessageOnPort } from "worker_threads";
 import { getLlama, LlamaChatSession } from "node-llama-cpp";
 import path from "path";
 import { fileURLToPath } from "url";
-import { config } from "../config.mjs";
-import { deepFreeze } from "../configOverride.mjs";
-import { buildContextRetryProfiles } from "../contextRetryProfiles.mjs";
+import { config } from "../runtime/config/config.mjs";
+import { deepFreeze } from "../runtime/config/configOverride.mjs";
+import { buildContextRetryProfiles } from "../runtime/config/contextRetryProfiles.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const modelPath = path.resolve(

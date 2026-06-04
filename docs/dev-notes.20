@@ -1,0 +1,87 @@
+# Dev Notes 20 — Runtime Layout Config/Profile Helper Unit
+
+This note records the follow-up config/profile helper layout unit for `runtime-layout-folder-structure-v1`.
+
+## Purpose
+
+Move config and retry/profile helper modules under `runtime/config/` after the parent runtime internals had already been moved under `runtime/` subfolders.
+
+This change is layout-only. It does not redesign config override validation, retry/profile planning, context retry behavior, hardware probing, runtime scheduling, worker lifecycle, prompt/output semantics, model identity/path behavior, or worker protocol messages.
+
+## Public entrypoint and worker boundary
+
+`runtime.mjs` remains the canonical public runtime entrypoint at the repo root.
+
+These path-sensitive files remain at the repo root:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/llama.mjs
+```
+
+`workerBridge.mjs` still constructs the worker from `./llama_worker/llama.mjs`.
+
+`llama_worker/llama.mjs` still resolves `modelPath` from the worker file location and `config.modelLoad.baseModel`. The import path for config changed, but model path semantics did not.
+
+## Moved config/profile helper modules
+
+```text
+config.mjs               -> runtime/config/config.mjs
+configOverride.mjs       -> runtime/config/configOverride.mjs
+contextRetryProfiles.mjs -> runtime/config/contextRetryProfiles.mjs
+hardwareProbe.mjs        -> runtime/config/hardwareProbe.mjs
+retryProfiles.mjs        -> runtime/config/retryProfiles.mjs
+```
+
+## Import propagation
+
+Imports were updated in:
+
+```text
+runtime.mjs
+llama_worker/llama.mjs
+runtime/lifecycle/nativeOperationPolicy.mjs
+runtime/lifecycle/runtimeInitCoordinator.mjs
+runtime/config/retryProfiles.mjs
+tests/* direct helper imports
+tests/* fixture-copy RUNTIME_FILES lists
+tests/* temporary config patch paths
+```
+
+## Behavior boundaries preserved
+
+This unit preserves:
+
+```text
+config as the primary tuning surface
+validated configOverride surface
+modelLoad.baseModel non-overrideability
+worker as native/model execution boundary
+parent runtime ownership of request lifecycle
+retry/profile planning behavior
+context retry behavior
+hardware probe behavior
+workerBridge generation guard behavior
+init/reset/shutdown behavior
+prompt/output semantics
+```
+
+## Verification focus
+
+Because this unit touches config imports used by both parent and worker code, verification should include the full mock/sandbox smoke set:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+grep -R "inference\.mjs" -n --include='*.mjs' .
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Before upload or merge-readiness, Michael-side real-runtime checks should still be run from the final candidate directory because both parent and worker import paths changed.

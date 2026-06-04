@@ -135,11 +135,11 @@ async function runChild(mode) {
 async function modePureConfigOverride() {
     logSection("pure configOverride validation and patching");
 
-    const { config } = await import("../config.mjs");
+    const { config } = await import("../runtime/config/config.mjs");
     const {
         applyConfigOverride,
         validateConfigOverride
-    } = await import("../configOverride.mjs");
+    } = await import("../runtime/config/configOverride.mjs");
 
     const effective = applyConfigOverride(config, {
         modelLoad: {
@@ -198,11 +198,11 @@ async function modePureConfigOverride() {
 async function modePureProfiles() {
     logSection("pure retry profile planning");
 
-    const { config } = await import("../config.mjs");
+    const { config } = await import("../runtime/config/config.mjs");
     const {
         buildInitProfiles,
         buildInitAttemptPlan
-    } = await import("../retryProfiles.mjs");
+    } = await import("../runtime/config/retryProfiles.mjs");
 
     const baseProfiles = buildInitProfiles({
         baseConfig: config,
@@ -343,7 +343,7 @@ async function modePureProfiles() {
 async function modePureHardwareProbe() {
     logSection("pure hardware probe shape");
 
-    const { probeHardware } = await import("../hardwareProbe.mjs");
+    const { probeHardware } = await import("../runtime/config/hardwareProbe.mjs");
     const probe = await probeHardware({ gpu: true });
 
     assert(typeof probe.platform === "string", "probe.platform is string");
