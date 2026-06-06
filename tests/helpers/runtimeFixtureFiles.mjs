@@ -20,7 +20,11 @@ export const RUNTIME_FIXTURE_FILES = [
     "runtime/request/scheduler.mjs",
     "runtime/stream/streamController.mjs",
     "workerBridge.mjs",
-    "llama_worker/llama.mjs"
+    "llama_worker/llama.mjs",
+    "llama_worker/state/workerState.mjs",
+    "llama_worker/serialization/workerOperationQueue.mjs",
+    "llama_worker/errors/promptAbort.mjs",
+    "llama_worker/messages/outboundMessages.mjs"
 ];
 
 export const WORKER_ENTRYPOINT = "llama_worker/llama.mjs";

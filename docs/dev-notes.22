@@ -1,0 +1,255 @@
+# Dev Notes 22 — Worker Layout Option C State Core v1
+
+## Date
+
+2026-06-05
+
+## Branch
+
+```text
+worker-layout-option-c-state-core-v1
+```
+
+## Purpose
+
+This branch is the first production-code slice after the Worker Layout Option C preflight branch.
+
+It keeps `llama_worker/llama.mjs` as the stable worker entrypoint and composition root while extracting only the first owner/leaf pieces:
+
+- worker state initialization and model-path resolution;
+- worker lifecycle operation queue storage;
+- prompt-abort error construction;
+- worker outbound protocol message construction.
+
+## Source base
+
+Implementation was staged from the uploaded formatted mirror:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+/mnt/data/review_new_repo/runtime-dev-repo-modularization
+```
+
+Mirror SHA-256 recorded during planning:
+
+```text
+4b20e299e72c1064714f09e4b6f1ea1b73652ba3a16186eba4808b11a0775f67
+```
+
+The mirror included the completed preflight branch state:
+
+```text
+docs/dev-notes.21
+tests/helpers/runtimeFixtureFiles.mjs
+tests/helpers/copyRuntimeFixture.mjs
+tests/helpers/directWorkerHarness.mjs
+tests/tools/checkWorkerImportCycles.mjs
+tests/tools/checkRuntimeFixtureCoverage.mjs
+tests/smokeTestWorkerProtocolContract.mjs
+tests/smokeTestWorkerStreamOrdering.mjs
+tests/smokeTestWorkerModelPathImmutability.mjs
+```
+
+GitHub `modularization` was also cross-checked by tree/commit view before implementation. Direct clone was not available in the sandbox because DNS resolution failed.
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- cancellation extraction;
+- active-request registry extraction;
+- request-boundary extraction;
+- session/context extraction;
+- context retry extraction;
+- model/reset/shutdown lifecycle extraction;
+- prompt runner or chunk factory extraction;
+- worker protocol router extraction;
+- worker protocol redesign;
+- workerBridge movement;
+- parent runtime changes;
+- model path/model identity behavior changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction.
+
+## Files added
+
+```text
+llama_worker/state/workerState.mjs
+llama_worker/serialization/workerOperationQueue.mjs
+llama_worker/errors/promptAbort.mjs
+llama_worker/messages/outboundMessages.mjs
+docs/dev-notes.22
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### Worker state
+
+`llama_worker/state/workerState.mjs` now owns:
+
+- static worker model path resolution from `import.meta.url` and base config;
+- initialization of worker-local mutable slots:
+  - `model`;
+  - `ready`;
+  - `initPromise`;
+  - `resetting`;
+  - `shuttingDown`;
+  - `activeConfig`;
+  - `activeInitAttemptId`;
+  - `activeProfileName`;
+  - `nextActiveRequestSequence`;
+  - `sessions`;
+  - `activeRequests`;
+  - `workerOperationChain`.
+
+`llama_worker/llama.mjs` creates one `workerState` object and rewires existing reads/writes to that object.
+
+The model path remains derived from the base config at worker startup. It is still passed to `loadModel()` as `workerState.modelPath`; it is not derived from mutable `activeConfig` or `configSnapshot`.
+
+### Worker operation queue
+
+`llama_worker/serialization/workerOperationQueue.mjs` now owns the `workerOperationChain` mutation through `createWorkerOperationQueue(state)`.
+
+The queue logic remains mechanically equivalent:
+
+```js
+const run = state.workerOperationChain.then(fn, fn);
+state.workerOperationChain = run.catch(() => {});
+return run;
+```
+
+No lifecycle serialization behavior was changed.
+
+### Prompt abort error
+
+`llama_worker/errors/promptAbort.mjs` now owns `createPromptAbortError(message, meta = {})`.
+
+The helper preserves:
+
+- `err.name = "PromptAbortError"`;
+- `err.isPromptAbort = true`;
+- assignment of metadata fields onto the error object.
+
+### Outbound messages
+
+`llama_worker/messages/outboundMessages.mjs` now owns worker-to-parent message construction through `createOutboundMessages(parentPort)`.
+
+It provides helpers for:
+
+- `ready`;
+- `stream`;
+- `done`;
+- `reset_done`;
+- `model_reset_done`;
+- `shutdown_done`;
+- `error`.
+
+The helper preserves the existing protocol shape and keeps `llama_worker/llama.mjs` responsible for dispatch/routing decisions.
+
+## Propagation review
+
+- `tests/helpers/runtimeFixtureFiles.mjs` was updated to include the four new worker modules.
+- Active smoke tests with local `RUNTIME_FILES` arrays were updated to match the shared manifest.
+- `tests/legacy/smokeTestModelResetIdleIsolation.mjs` was not modified because it is legacy/reference material and is excluded by the active fixture coverage guard.
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`.
+- No module under `llama_worker/**` imports `llama_worker/llama.mjs` or `workerBridge.mjs`.
+- No root `inference.mjs` was introduced.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight tests
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+```
+
+Result: PASS.
+
+### Existing mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+## Real-runtime testing
+
+Not run in this sandbox.
+
+This branch touches worker state, worker operation serialization storage, prompt abort error construction, and prompt streaming message construction. Michael-side real-runtime testing is recommended before merge readiness unless explicitly waived.
+
+Recommended real-runtime gates:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+## Caveats / known risks
+
+- Sandbox/mock tests do not prove native/model behavior.
+- This branch intentionally rewires the worker's top-level mutable slots through a state object. The preflight tests passed, but real-runtime validation should still cover prompt streaming, cancellation, context creation, reset, and shutdown behavior.
+- The existing known intermittent real-runtime timeout caveat around lifecycle retry/reset/shutdown remains a carry-forward caveat; this branch does not address native resource timing.
+
+## Recommended next branch after acceptance
+
+```text
+worker-layout-option-c-disposal-primitives-v1
+```
+
+Suggested scope for the next branch:
+
+```text
+llama_worker/session/sessionDisposal.mjs
+llama_worker/context/contextOptions.mjs
+llama_worker/prompt/chunkFactory.mjs
+minimal llama_worker/llama.mjs rewiring only
+```
+
+Keep cancellation, context retry service, session service, lifecycle services, prompt runner, and router extraction out of that next branch unless the plan/spec is explicitly revised.

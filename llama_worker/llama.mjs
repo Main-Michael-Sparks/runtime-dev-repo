@@ -1,74 +1,53 @@
 import { parentPort, receiveMessageOnPort } from "worker_threads";
 import { getLlama, LlamaChatSession } from "node-llama-cpp";
-import path from "path";
-import { fileURLToPath } from "url";
 import { config } from "../runtime/config/config.mjs";
 import { deepFreeze } from "../runtime/config/configOverride.mjs";
 import { buildContextRetryProfiles } from "../runtime/config/contextRetryProfiles.mjs";
+import { resolveWorkerModelPath, createWorkerState } from "./state/workerState.mjs";
+import { createWorkerOperationQueue } from "./serialization/workerOperationQueue.mjs";
+import { createPromptAbortError } from "./errors/promptAbort.mjs";
+import { createOutboundMessages } from "./messages/outboundMessages.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const modelPath = path.resolve(
-    __dirname,
-    `${config.modelLoad.baseModel}`
-);
+const workerState = createWorkerState({
+    baseConfig: config,
+    modelPath: resolveWorkerModelPath(import.meta.url, config)
+});
 
-let model = null;
-let ready = false;
-let initPromise = null;
-let resetting = false;
-let shuttingDown = false;
-let activeConfig = config;
-let activeInitAttemptId = null;
-let activeProfileName = null;
-let nextActiveRequestSequence = 0;
-
-const sessions = new Map();
-const activeRequests = new Map();
-
-let workerOperationChain = Promise.resolve();
-
-function enqueueWorkerOperation(label, fn) {
-    const run = workerOperationChain.then(fn, fn);
-    workerOperationChain = run.catch(() => {});
-    return run;
-}
+const { enqueueWorkerOperation } = createWorkerOperationQueue(workerState);
+const {
+    postReady,
+    postStream,
+    postDone,
+    postResetDone,
+    postModelResetDone,
+    postShutdownDone,
+    postWorkerError
+} = createOutboundMessages(parentPort);
 
 function assertWorkerReadyForNativeCommand() {
-    if (resetting || shuttingDown) {
+    if (workerState.resetting || workerState.shuttingDown) {
         throw new Error("Model is resetting");
     }
 
-    if (!ready || !model) {
+    if (!workerState.ready || !workerState.model) {
         throw new Error("Worker not ready");
     }
 }
 
 function setActiveInitConfig(msg) {
-    if (initPromise || model || ready) return;
+    if (workerState.initPromise || workerState.model || workerState.ready) return;
 
-    activeConfig = msg.configSnapshot
+    workerState.activeConfig = msg.configSnapshot
         ? deepFreeze(msg.configSnapshot)
         : config;
-    activeInitAttemptId = msg.initAttemptId ?? null;
-    activeProfileName = msg.profileName ?? "base";
+    workerState.activeInitAttemptId = msg.initAttemptId ?? null;
+    workerState.activeProfileName = msg.profileName ?? "base";
 }
 
 function resetActiveInitConfig() {
-    activeConfig = config;
-    activeInitAttemptId = null;
-    activeProfileName = null;
-}
-
-function createPromptAbortError(message, meta = {}) {
-    const err = new Error(message);
-    err.name = "PromptAbortError";
-    err.isPromptAbort = true;
-
-    for (const [key, value] of Object.entries(meta)) {
-        err[key] = value;
-    }
-
-    return err;
+    workerState.activeConfig = config;
+    workerState.activeInitAttemptId = null;
+    workerState.activeProfileName = null;
 }
 
 function createActiveRequestRecord({ id, sessionId, cancelPort }) {
@@ -77,7 +56,7 @@ function createActiveRequestRecord({ id, sessionId, cancelPort }) {
     return {
         id,
         sessionId,
-        sequence: ++nextActiveRequestSequence,
+        sequence: ++workerState.nextActiveRequestSequence,
         controller: new AbortController(),
         contextController: null,
         cancelPort: cancelPort ?? null,
@@ -89,7 +68,7 @@ function createActiveRequestRecord({ id, sessionId, cancelPort }) {
 }
 
 function getActiveRequest(id) {
-    return activeRequests.get(id) ?? null;
+    return workerState.activeRequests.get(id) ?? null;
 }
 
 function isActiveRequestAborting(record) {
@@ -195,7 +174,7 @@ function abortActiveRequestById(id, reason) {
 function getActiveRequestRecords(filterFn = null) {
     const records = [];
 
-    for (const record of activeRequests.values()) {
+    for (const record of workerState.activeRequests.values()) {
         if (record.state === "done") continue;
         if (filterFn && !filterFn(record)) continue;
 
@@ -250,7 +229,7 @@ function hasActiveRequestForSession(sessionId) {
 }
 
 function findEvictableSessionId() {
-    for (const sessionId of sessions.keys()) {
+    for (const sessionId of workerState.sessions.keys()) {
         if (!hasActiveRequestForSession(sessionId)) {
             return sessionId;
         }
@@ -288,17 +267,17 @@ async function disposeSessionEntry(entry) {
 }
 
 async function disposeSessionById(sessionId) {
-    const entry = sessions.get(sessionId);
+    const entry = workerState.sessions.get(sessionId);
     if (!entry) return;
 
     await disposeSessionEntry(entry);
-    sessions.delete(sessionId);
+    workerState.sessions.delete(sessionId);
 }
 
 async function disposeAllSessions() {
     const cleanupErrors = [];
 
-    for (const [sessionId, entry] of sessions.entries()) {
+    for (const [sessionId, entry] of workerState.sessions.entries()) {
         try {
             await disposeSessionEntry(entry);
         } catch (err) {
@@ -306,7 +285,7 @@ async function disposeAllSessions() {
         }
     }
 
-    sessions.clear();
+    workerState.sessions.clear();
 
     if (cleanupErrors.length > 0) {
         throw cleanupErrors[0].err;
@@ -316,42 +295,41 @@ async function disposeAllSessions() {
 async function disposeModelStack() {
     await disposeAllSessions();
 
-    if (model?.disposed !== true && typeof model?.dispose === "function") {
-        await model.dispose();
+    if (workerState.model?.disposed !== true && typeof workerState.model?.dispose === "function") {
+        await workerState.model.dispose();
     }
 
-    model = null;
-    ready = false;
-    initPromise = null;
+    workerState.model = null;
+    workerState.ready = false;
+    workerState.initPromise = null;
     resetActiveInitConfig();
 }
 
 async function initModel() {
-    if (initPromise) return initPromise;
+    if (workerState.initPromise) return workerState.initPromise;
 
-    initPromise = (async () => {
+    workerState.initPromise = (async () => {
         const llama = await getLlama();
 
-        model = await llama.loadModel({
-            modelPath,
-            gpuLayers: activeConfig.modelLoad.gpuLayers,
-            useMmap: activeConfig.modelLoad.useMmap,
-            useMlock: activeConfig.modelLoad.useMlock,
-            ignoreMemorySafetyChecks: activeConfig.modelLoad.ignoreMemorySafetyChecks
+        workerState.model = await llama.loadModel({
+            modelPath: workerState.modelPath,
+            gpuLayers: workerState.activeConfig.modelLoad.gpuLayers,
+            useMmap: workerState.activeConfig.modelLoad.useMmap,
+            useMlock: workerState.activeConfig.modelLoad.useMlock,
+            ignoreMemorySafetyChecks: workerState.activeConfig.modelLoad.ignoreMemorySafetyChecks
         });
 
-        ready = true;
-        resetting = false;
-        shuttingDown = false;
+        workerState.ready = true;
+        workerState.resetting = false;
+        workerState.shuttingDown = false;
 
-        parentPort.postMessage({
-            type: "ready",
-            initAttemptId: activeInitAttemptId,
-            profileName: activeProfileName
+        postReady({
+            initAttemptId: workerState.activeInitAttemptId,
+            profileName: workerState.activeProfileName
         });
     })();
 
-    return initPromise;
+    return workerState.initPromise;
 }
 
 function toContextCreateOptions(contextConfig) {
@@ -371,7 +349,7 @@ function buildContextCreationObsoleteError(requestId) {
     const requestObsoleteError = buildRequestObsoleteError(requestId);
     if (requestObsoleteError) return requestObsoleteError;
 
-    if (resetting || shuttingDown || !ready || !model) {
+    if (workerState.resetting || workerState.shuttingDown || !workerState.ready || !workerState.model) {
         return new Error("Model is resetting");
     }
 
@@ -421,9 +399,9 @@ function buildContextCreationError({ sessionId, attemptedProfiles, lastError }) 
 
 async function createSessionContextWithRetry(sessionId, requestId = null) {
     const profiles = buildContextRetryProfiles({
-        baseContextConfig: activeConfig.context,
-        creationRetry: activeConfig.context.creationRetry,
-        hardwareProbe: activeConfig.hardwareProbe ?? null
+        baseContextConfig: workerState.activeConfig.context,
+        creationRetry: workerState.activeConfig.context.creationRetry,
+        hardwareProbe: workerState.activeConfig.hardwareProbe ?? null
     });
 
     const attemptedProfiles = [];
@@ -451,7 +429,7 @@ async function createSessionContextWithRetry(sessionId, requestId = null) {
             const obsoleteBeforeCreate = buildContextCreationObsoleteError(requestId);
             if (obsoleteBeforeCreate) throw obsoleteBeforeCreate;
 
-            context = await model.createContext({
+            context = await workerState.model.createContext({
                 ...toContextCreateOptions(profile.context),
                 createSignal: contextController.signal
             });
@@ -503,11 +481,11 @@ async function createSessionContextWithRetry(sessionId, requestId = null) {
 }
 
 async function getSession(sessionId, requestId = null) {
-    if (!model) throw new Error("Model not initialized");
+    if (!workerState.model) throw new Error("Model not initialized");
 
-    if (sessions.has(sessionId)) return sessions.get(sessionId);
+    if (workerState.sessions.has(sessionId)) return workerState.sessions.get(sessionId);
 
-    if (sessions.size >= activeConfig.sessions.maxCount) {
+    if (workerState.sessions.size >= workerState.activeConfig.sessions.maxCount) {
         const evictableSessionId = findEvictableSessionId();
 
         if (!evictableSessionId) {
@@ -518,7 +496,7 @@ async function getSession(sessionId, requestId = null) {
     }
 
     const wrapper = await createSessionContextWithRetry(sessionId, requestId);
-    sessions.set(sessionId, wrapper);
+    workerState.sessions.set(sessionId, wrapper);
 
     return wrapper;
 }
@@ -537,7 +515,7 @@ async function resetSession(sessionId) {
 }
 
 async function resetModel() {
-    resetting = true;
+    workerState.resetting = true;
 
     const records = abortActiveRequests(
         () => true,
@@ -552,7 +530,7 @@ async function resetModel() {
 }
 
 async function shutdownWorker() {
-    shuttingDown = true;
+    workerState.shuttingDown = true;
 
     const records = abortActiveRequests(
         () => true,
@@ -571,14 +549,14 @@ function toChunkFactory() {
 
     return function toChunk(t) {
         if (Array.isArray(t)) {
-            const chunk = model.detokenize(t, false, lastTokens);
+            const chunk = workerState.model.detokenize(t, false, lastTokens);
             lastTokens = [...lastTokens, ...t].slice(-8);
             return chunk;
         }
 
         if (typeof t === "number") {
             const tokens = [t];
-            const chunk = model.detokenize(tokens, false, lastTokens);
+            const chunk = workerState.model.detokenize(tokens, false, lastTokens);
             lastTokens = [...lastTokens, ...tokens].slice(-8);
             return chunk;
         }
@@ -607,11 +585,11 @@ async function runPromptTask(record, msg) {
     const toChunk = toChunkFactory();
 
     const result = await session.prompt(text, {
-        maxTokens: activeConfig.model.maxTokens,
-        temperature: activeConfig.model.temperature,
-        topK: activeConfig.model.topK,
-        topP: activeConfig.model.topP,
-        repeatPenalty: activeConfig.model.repeatPenalty,
+        maxTokens: workerState.activeConfig.model.maxTokens,
+        temperature: workerState.activeConfig.model.temperature,
+        topK: workerState.activeConfig.model.topK,
+        topP: workerState.activeConfig.model.topP,
+        repeatPenalty: workerState.activeConfig.model.repeatPenalty,
         signal: record.controller.signal,
         stopOnAbortSignal: false,
 
@@ -622,8 +600,7 @@ async function runPromptTask(record, msg) {
 
             const chunk = toChunk(t);
 
-            parentPort.postMessage({
-                type: "stream",
+            postStream({
                 id,
                 token: chunk
             });
@@ -633,8 +610,7 @@ async function runPromptTask(record, msg) {
     const obsoleteAfterPrompt = buildRequestObsoleteError(id);
     if (obsoleteAfterPrompt) throw obsoleteAfterPrompt;
 
-    parentPort.postMessage({
-        type: "done",
+    postDone({
         id,
         res: result
     });
@@ -648,7 +624,7 @@ async function handlePromptMessage(msg) {
     } = msg;
 
     const record = createActiveRequestRecord({ id, sessionId, cancelPort });
-    activeRequests.set(id, record);
+    workerState.activeRequests.set(id, record);
 
     record.promise = (async () => {
         try {
@@ -663,7 +639,7 @@ async function handlePromptMessage(msg) {
             throw err;
         } finally {
             record.state = "done";
-            activeRequests.delete(id);
+            workerState.activeRequests.delete(id);
 
             try {
                 record.cancelPort?.close();
@@ -698,7 +674,7 @@ parentPort.on("message", async (msg) => {
         if (msg.type === "shutdown") {
             await enqueueWorkerOperation("shutdown", async () => {
                 await shutdownWorker();
-                parentPort.postMessage({ type: "shutdown_done" });
+                postShutdownDone();
             });
             return;
         }
@@ -707,8 +683,7 @@ parentPort.on("message", async (msg) => {
             await enqueueWorkerOperation("reset_session", async () => {
                 assertWorkerReadyForNativeCommand();
                 await resetSession(msg.sessionId);
-                parentPort.postMessage({
-                    type: "reset_done",
+                postResetDone({
                     sessionId: msg.sessionId
                 });
             });
@@ -719,7 +694,7 @@ parentPort.on("message", async (msg) => {
             await enqueueWorkerOperation("reset_model", async () => {
                 assertWorkerReadyForNativeCommand();
                 await resetModel();
-                parentPort.postMessage({ type: "model_reset_done" });
+                postModelResetDone();
             });
             return;
         }
@@ -731,21 +706,16 @@ parentPort.on("message", async (msg) => {
     } catch (err) {
         const initErrorMeta = msg.type === "init" || msg.initAttemptId !== undefined
             ? {
-                  initAttemptId: msg.initAttemptId ?? activeInitAttemptId,
-                  profileName: msg.profileName ?? activeProfileName
+                  initAttemptId: msg.initAttemptId ?? workerState.activeInitAttemptId,
+                  profileName: msg.profileName ?? workerState.activeProfileName
               }
             : {};
 
-        parentPort.postMessage({
-            type: "error",
+        postWorkerError({
             id: msg.id,
-            ...initErrorMeta,
-            error: {
-                message: err.message,
-                stack: err.stack,
-                phase: "worker",
-                sessionId: msg.sessionId || null
-            }
+            initErrorMeta,
+            err,
+            sessionId: msg.sessionId || null
         });
     }
 });

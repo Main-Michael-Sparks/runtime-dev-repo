@@ -46,13 +46,13 @@ const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
 const RUNTIME_FILES = [
-  "runtime/config/config.mjs",
-  "runtime/config/configOverride.mjs",
-  "runtime/config/contextRetryProfiles.mjs",
-  "runtime/config/hardwareProbe.mjs",
-  "runtime.mjs",
-  "runtime/lifecycle/nativeOperationPolicy.mjs",
-  "runtime/lifecycle/nativeBoundaryCoordinator.mjs",
+    "runtime/config/config.mjs",
+    "runtime/config/configOverride.mjs",
+    "runtime/config/contextRetryProfiles.mjs",
+    "runtime/config/hardwareProbe.mjs",
+    "runtime.mjs",
+    "runtime/lifecycle/nativeOperationPolicy.mjs",
+    "runtime/lifecycle/nativeBoundaryCoordinator.mjs",
     "runtime/request/runtimeRequestSettlement.mjs",
     "runtime/lifecycle/runtimeLifecycleState.mjs",
     "runtime/lifecycle/runtimeSessionResetCoordinator.mjs",
@@ -60,14 +60,18 @@ const RUNTIME_FILES = [
     "runtime/lifecycle/runtimeInitCoordinator.mjs",
     "runtime/lifecycle/runtimeModelResetCoordinator.mjs",
     "runtime/lifecycle/workerProtocolRouter.mjs",
-  "runtime/stream/normalizer.mjs",
-  "runtime/observability/observer.mjs",
-  "runtime/request/request.mjs",
-  "runtime/config/retryProfiles.mjs",
-  "runtime/request/scheduler.mjs",
-  "runtime/stream/streamController.mjs",
-  "workerBridge.mjs",
-  "llama_worker/llama.mjs",
+    "runtime/stream/normalizer.mjs",
+    "runtime/observability/observer.mjs",
+    "runtime/request/request.mjs",
+    "runtime/config/retryProfiles.mjs",
+    "runtime/request/scheduler.mjs",
+    "runtime/stream/streamController.mjs",
+    "workerBridge.mjs",
+    "llama_worker/llama.mjs",
+    "llama_worker/state/workerState.mjs",
+    "llama_worker/serialization/workerOperationQueue.mjs",
+    "llama_worker/errors/promptAbort.mjs",
+    "llama_worker/messages/outboundMessages.mjs"
 ];
 
 function logSection(title) {
