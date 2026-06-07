@@ -1,0 +1,304 @@
+# Dev Notes 26 — Worker Layout Option C Lifecycle Services v1
+
+## Date
+
+2026-06-07
+
+## Branch
+
+```text
+worker-layout-option-c-lifecycle-services-v1
+```
+
+## Purpose
+
+This branch continues Worker Layout Option C by extracting worker lifecycle helpers from `llama_worker/llama.mjs` while keeping `llama_worker/llama.mjs` as the stable worker entrypoint and composition root.
+
+The extraction is intentionally narrow:
+
+- model lifecycle service;
+- reset lifecycle service;
+- shutdown lifecycle service.
+
+## Source base
+
+Implementation was staged from a refreshed working tree reconstructed from:
+
+```text
+GitHub modularization direct raw/source inspection
+/mnt/data/runtime-dev-repo-modularization.zip as a stale formatted mirror
+```
+
+Active source truth remains GitHub branch:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/modularization
+```
+
+The local formatted mirror was stale at the start of this branch: it stopped at `docs/dev-notes.24` and did not include the completed `worker-layout-option-c-context-session-v1` files. The staged branch therefore first preserved the completed context/session extraction shape before applying this lifecycle extraction.
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- prompt runner extraction;
+- worker protocol router extraction;
+- parent runtime changes;
+- worker protocol redesign;
+- model path/model identity behavior changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction;
+- child-process/native containment redesign.
+
+## Files added
+
+```text
+llama_worker/lifecycle/modelLifecycle.mjs
+llama_worker/lifecycle/resetLifecycle.mjs
+llama_worker/lifecycle/shutdownLifecycle.mjs
+docs/dev-notes.26
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### `llama_worker/lifecycle/modelLifecycle.mjs`
+
+Added `createModelLifecycle(...)`, which returns:
+
+```text
+assertWorkerReadyForNativeCommand()
+setActiveInitConfig(msg)
+resetActiveInitConfig()
+disposeModelStack({ operation })
+initModel()
+```
+
+Preserved behavior:
+
+- readiness assertion still throws `Model is resetting` for both resetting and shutdown states;
+- readiness assertion still throws `Worker not ready` when model/ready state is missing;
+- active init config is still ignored once init/model/ready already exists;
+- `configSnapshot` is still deep-frozen before becoming active config;
+- active init attempt/profile metadata is still carried into `postReady(...)`;
+- model loading still uses the resolved immutable `state.modelPath`;
+- model load options still come from `state.activeConfig.modelLoad`;
+- successful init still sets `ready = true`, `resetting = false`, and `shuttingDown = false`;
+- `disposeModelStack(...)` still disposes all sessions before model disposal;
+- model disposal still uses `resolveModelDisposalPolicy({ operation })` and `disposeModelWithPolicy(...)`;
+- model disposal still clears model/ready/initPromise and resets active init config.
+
+### `llama_worker/lifecycle/resetLifecycle.mjs`
+
+Added `createResetLifecycle(...)`, which returns:
+
+```text
+resetModel()
+```
+
+Preserved behavior:
+
+- reset still sets `state.resetting = true` before aborting active requests;
+- active requests are still aborted with `Model reset` prompt-abort errors;
+- reset still waits for active request boundaries before disposal;
+- reset still calls `disposeModelStack({ operation: "reset_model" })`.
+
+### `llama_worker/lifecycle/shutdownLifecycle.mjs`
+
+Added `createShutdownLifecycle(...)`, which returns:
+
+```text
+shutdownWorker()
+```
+
+Preserved behavior:
+
+- shutdown still sets `state.shuttingDown = true` before aborting active requests;
+- active requests are still aborted with `Runtime shutdown` prompt-abort errors;
+- shutdown still waits for active request boundaries before disposal;
+- shutdown still calls `disposeModelStack({ operation: "shutdown" })`.
+
+### `llama_worker/llama.mjs`
+
+`llama_worker/llama.mjs` now imports and wires:
+
+```js
+import { createModelLifecycle } from "./lifecycle/modelLifecycle.mjs";
+import { createResetLifecycle } from "./lifecycle/resetLifecycle.mjs";
+import { createShutdownLifecycle } from "./lifecycle/shutdownLifecycle.mjs";
+```
+
+Composition-root wiring now creates:
+
+```text
+modelLifecycle
+resetLifecycle
+shutdownLifecycle
+```
+
+Critical ownership preserved:
+
+- `llama_worker/llama.mjs` remains the worker entrypoint and composition root;
+- prompt runner remains inline;
+- worker protocol router remains inline;
+- active request final deletion and cancel-port close remain in `handlePromptMessage()` final cleanup;
+- reset/session/shutdown message serialization still uses `enqueueWorkerOperation(...)` at the same call sites;
+- reset and shutdown disposal operations remain distinct through operation-aware `disposeModelStack({ operation })` calls.
+
+## Propagation review
+
+Fixture propagation was updated in:
+
+```text
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+New fixture entries:
+
+```text
+llama_worker/lifecycle/modelLifecycle.mjs
+llama_worker/lifecycle/resetLifecycle.mjs
+llama_worker/lifecycle/shutdownLifecycle.mjs
+```
+
+Architecture propagation:
+
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`;
+- `llama_worker/llama.mjs` remains the worker entrypoint/composition root;
+- no worker-domain module imports `llama_worker/llama.mjs` or `workerBridge.mjs`;
+- parent runtime files were not changed.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static/helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight / policy checks
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result: PASS.
+
+### Mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+Operational note: one combined long-running command hit the sandbox command timeout during `smokeTestDrainShutdown.mjs`, then the remaining suites were rerun individually and passed. This was treated as a harness/runtime timeout, not a test failure.
+
+## Review notes
+
+Lifecycle extraction was deliberately staged after context/session extraction because the formatted mirror was stale. The staged `llama_worker/llama.mjs` preserves context/session service wiring from `worker-layout-option-c-context-session-v1` and only moves lifecycle helpers for this branch.
+
+Copy-completeness focus points checked:
+
+- `disposeModelStack()` moved into `modelLifecycle.mjs` and remains wired back into reset/shutdown lifecycle;
+- `initModel()` moved into `modelLifecycle.mjs` and remains called by the inline router on `init` messages;
+- `assertWorkerReadyForNativeCommand()` moved into `modelLifecycle.mjs` and remains called before reset/session/prompt operations;
+- reset/shutdown operation labels remain distinct;
+- prompt-runner final cleanup ownership was not moved.
+
+## Caveats / known risks
+
+```text
+Finding:
+  Lifecycle extraction moves init/dispose/reset/shutdown behavior that controls model readiness, operation-aware disposal, and active request boundary waits.
+Affected surface:
+  assertWorkerReadyForNativeCommand, setActiveInitConfig, resetActiveInitConfig, disposeModelStack, initModel, resetModel, shutdownWorker.
+Why it matters:
+  Small ordering drift could change ready/error metadata, collapse reset/shutdown disposal semantics, dispose while active requests are still settling, or lose active init config/profile metadata.
+Smallest safe correction:
+  Keep model lifecycle as a dependency-injected service, keep reset/shutdown lifecycle separate, preserve operation-aware disposeModelStack calls, and leave router/prompt cleanup ownership inline.
+What still needs verification:
+  Michael real-runtime lifecycle/context carry-forward gates before merge readiness.
+```
+
+```text
+Finding:
+  This branch was staged from a stale formatted mirror that lacked the completed context/session files.
+Affected surface:
+  Source-truth handling and patch interpretation.
+Why it matters:
+  A patch generated against the stale mirror would incorrectly include prior context/session extraction as if it belonged to this branch.
+Smallest safe correction:
+  Treat GitHub modularization as source truth; treat staged full files as candidate replacement files; compare lifecycle delta against direct GitHub/source state before applying.
+What still needs verification:
+  Direct GitHub source inspection after Michael uploads/applies the branch.
+```
+
+## Real-runtime gates recommended before merge readiness
+
+```bash
+SMOKE_MODE=real-fresh-session-cancel-context-boundary node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-cancel-new-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-reset-new-session-then-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-prompt-then-shutdown-control node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-no-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+Additional lifecycle-focused real-runtime suggestions:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+## Future work not included
+
+- prompt runner extraction;
+- worker protocol router extraction;
+- final worker-layout cleanup;
+- parent runtime changes;
+- child-process/native containment redesign.

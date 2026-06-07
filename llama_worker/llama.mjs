@@ -8,6 +8,9 @@ import { createWorkerOperationQueue } from "./serialization/workerOperationQueue
 import { createPromptAbortError } from "./errors/promptAbort.mjs";
 import { createOutboundMessages } from "./messages/outboundMessages.mjs";
 import { disposeModelWithPolicy, resolveModelDisposalPolicy } from "./lifecycle/modelDisposalPolicy.mjs";
+import { createModelLifecycle } from "./lifecycle/modelLifecycle.mjs";
+import { createResetLifecycle } from "./lifecycle/resetLifecycle.mjs";
+import { createShutdownLifecycle } from "./lifecycle/shutdownLifecycle.mjs";
 import {
     disposeSessionById,
     disposeAllSessions,
@@ -52,8 +55,7 @@ const {
     isPromptAbortError,
     buildRequestObsoleteError,
     isRequestObsolete,
-    abortActiveRequestById,
-    abortActiveRequests
+    abortActiveRequestById
 } = activeRequestRegistry;
 
 const requestBoundaries = createRequestBoundaries({
@@ -61,7 +63,6 @@ const requestBoundaries = createRequestBoundaries({
 });
 
 const {
-    waitForActiveRequestBoundaries,
     waitForPriorSessionRequestBoundaries
 } = requestBoundaries;
 
@@ -87,105 +88,39 @@ const {
     createPromptAbortError
 });
 
-function assertWorkerReadyForNativeCommand() {
-    if (workerState.resetting || workerState.shuttingDown) {
-        throw new Error("Model is resetting");
-    }
+const modelLifecycle = createModelLifecycle({
+    state: workerState,
+    baseConfig: config,
+    deepFreeze,
+    getLlama,
+    disposeAllSessions,
+    disposeModelWithPolicy,
+    resolveModelDisposalPolicy,
+    postReady
+});
 
-    if (!workerState.ready || !workerState.model) {
-        throw new Error("Worker not ready");
-    }
-}
+const {
+    assertWorkerReadyForNativeCommand,
+    setActiveInitConfig,
+    initModel,
+    disposeModelStack
+} = modelLifecycle;
 
-function setActiveInitConfig(msg) {
-    if (workerState.initPromise || workerState.model || workerState.ready) return;
+const { resetModel } = createResetLifecycle({
+    state: workerState,
+    requests: activeRequestRegistry,
+    boundaries: requestBoundaries,
+    createPromptAbortError,
+    disposeModelStack
+});
 
-    workerState.activeConfig = msg.configSnapshot
-        ? deepFreeze(msg.configSnapshot)
-        : config;
-    workerState.activeInitAttemptId = msg.initAttemptId ?? null;
-    workerState.activeProfileName = msg.profileName ?? "base";
-}
-
-function resetActiveInitConfig() {
-    workerState.activeConfig = config;
-    workerState.activeInitAttemptId = null;
-    workerState.activeProfileName = null;
-}
-
-async function disposeModelStack({ operation } = {}) {
-    await disposeAllSessions(workerState.sessions);
-
-    const modelDisposalPolicy = resolveModelDisposalPolicy({ operation });
-    const modelDisposalOutcome = await disposeModelWithPolicy({
-        model: workerState.model,
-        policy: modelDisposalPolicy
-    });
-
-    workerState.model = null;
-    workerState.ready = false;
-    workerState.initPromise = null;
-    resetActiveInitConfig();
-
-    return modelDisposalOutcome;
-}
-
-async function initModel() {
-    if (workerState.initPromise) return workerState.initPromise;
-
-    workerState.initPromise = (async () => {
-        const llama = await getLlama();
-
-        workerState.model = await llama.loadModel({
-            modelPath: workerState.modelPath,
-            gpuLayers: workerState.activeConfig.modelLoad.gpuLayers,
-            useMmap: workerState.activeConfig.modelLoad.useMmap,
-            useMlock: workerState.activeConfig.modelLoad.useMlock,
-            ignoreMemorySafetyChecks: workerState.activeConfig.modelLoad.ignoreMemorySafetyChecks
-        });
-
-        workerState.ready = true;
-        workerState.resetting = false;
-        workerState.shuttingDown = false;
-
-        postReady({
-            initAttemptId: workerState.activeInitAttemptId,
-            profileName: workerState.activeProfileName
-        });
-    })();
-
-    return workerState.initPromise;
-}
-
-async function resetModel() {
-    workerState.resetting = true;
-
-    const records = abortActiveRequests(
-        () => true,
-        (record) => createPromptAbortError("Model reset", {
-            requestId: record.id,
-            sessionId: record.sessionId
-        })
-    );
-
-    await waitForActiveRequestBoundaries(records);
-    await disposeModelStack({ operation: "reset_model" });
-}
-
-async function shutdownWorker() {
-    workerState.shuttingDown = true;
-
-    const records = abortActiveRequests(
-        () => true,
-        (record) => createPromptAbortError("Runtime shutdown", {
-            requestId: record.id,
-            sessionId: record.sessionId
-        })
-    );
-
-    await waitForActiveRequestBoundaries(records);
-    await disposeModelStack({ operation: "shutdown" });
-}
+const { shutdownWorker } = createShutdownLifecycle({
+    state: workerState,
+    requests: activeRequestRegistry,
+    boundaries: requestBoundaries,
+    createPromptAbortError,
+    disposeModelStack
+});
 
 async function runPromptTask(record, msg) {
     const {
