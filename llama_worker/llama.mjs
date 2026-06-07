@@ -21,6 +21,7 @@ import {
     buildContextCreationError
 } from "./context/contextOptions.mjs";
 import { createChunkFactory } from "./prompt/chunkFactory.mjs";
+import { createPromptRunner } from "./prompt/promptRunner.mjs";
 import { createContextRetryService } from "./context/contextRetryService.mjs";
 import { createSessionService } from "./session/sessionService.mjs";
 import { createActiveRequestRegistry } from "./cancellation/activeRequestRegistry.mjs";
@@ -49,22 +50,13 @@ const activeRequestRegistry = createActiveRequestRegistry({
 });
 
 const {
-    createActiveRequestRecord,
     getActiveRequest,
-    synchronizeExternalCancellation,
-    isPromptAbortError,
-    buildRequestObsoleteError,
-    isRequestObsolete,
     abortActiveRequestById
 } = activeRequestRegistry;
 
 const requestBoundaries = createRequestBoundaries({
     requests: activeRequestRegistry
 });
-
-const {
-    waitForPriorSessionRequestBoundaries
-} = requestBoundaries;
 
 const contextRetryService = createContextRetryService({
     state: workerState,
@@ -122,92 +114,17 @@ const { shutdownWorker } = createShutdownLifecycle({
     disposeModelStack
 });
 
-async function runPromptTask(record, msg) {
-    const {
-        id,
-        text,
-        sessionId = "default",
-        stream = true
-    } = msg;
-
-    await waitForPriorSessionRequestBoundaries(sessionId, id);
-    synchronizeExternalCancellation(record);
-
-    const obsoleteBeforeSession = buildRequestObsoleteError(id);
-    if (obsoleteBeforeSession) throw obsoleteBeforeSession;
-
-    const { session } = await getSession(sessionId, id);
-    synchronizeExternalCancellation(record);
-
-    const toChunk = createChunkFactory(workerState.model);
-
-    const result = await session.prompt(text, {
-        maxTokens: workerState.activeConfig.model.maxTokens,
-        temperature: workerState.activeConfig.model.temperature,
-        topK: workerState.activeConfig.model.topK,
-        topP: workerState.activeConfig.model.topP,
-        repeatPenalty: workerState.activeConfig.model.repeatPenalty,
-        signal: record.controller.signal,
-        stopOnAbortSignal: false,
-
-        onToken(t) {
-            synchronizeExternalCancellation(record);
-            if (isRequestObsolete(id)) return;
-            if (!stream) return;
-
-            const chunk = toChunk(t);
-
-            postStream({
-                id,
-                token: chunk
-            });
-        }
-    });
-
-    const obsoleteAfterPrompt = buildRequestObsoleteError(id);
-    if (obsoleteAfterPrompt) throw obsoleteAfterPrompt;
-
-    postDone({
-        id,
-        res: result
-    });
-}
-
-async function handlePromptMessage(msg) {
-    const {
-        id,
-        sessionId = "default",
-        cancelPort = null
-    } = msg;
-
-    const record = createActiveRequestRecord({ id, sessionId, cancelPort });
-    workerState.activeRequests.set(id, record);
-
-    record.promise = (async () => {
-        try {
-            await runPromptTask(record, msg);
-        } catch (err) {
-            record.error = err;
-
-            if (isPromptAbortError(record, err)) {
-                return;
-            }
-
-            throw err;
-        } finally {
-            record.state = "done";
-            workerState.activeRequests.delete(id);
-
-            try {
-                record.cancelPort?.close();
-            } catch {
-                // no-op: port may already be closed
-            }
-        }
-    })();
-
-    await record.promise;
-}
+const { handlePromptMessage } = createPromptRunner({
+    state: workerState,
+    requests: activeRequestRegistry,
+    boundaries: requestBoundaries,
+    sessionService: {
+        getSession
+    },
+    createChunkFactory,
+    postStream,
+    postDone
+});
 
 parentPort.on("message", async (msg) => {
     try {

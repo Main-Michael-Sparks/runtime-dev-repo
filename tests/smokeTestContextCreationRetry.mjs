@@ -74,6 +74,7 @@ const RUNTIME_FILES = [
     "llama_worker/context/contextOptions.mjs",
     "llama_worker/context/contextRetryService.mjs",
     "llama_worker/prompt/chunkFactory.mjs",
+    "llama_worker/prompt/promptRunner.mjs",
     "llama_worker/state/workerState.mjs",
     "llama_worker/serialization/workerOperationQueue.mjs",
     "llama_worker/errors/promptAbort.mjs",
