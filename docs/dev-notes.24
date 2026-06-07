@@ -1,0 +1,329 @@
+# Dev Notes 24 — Worker Layout Option C Cancellation Core v1
+
+## Date
+
+2026-06-07
+
+## Branch
+
+```text
+worker-layout-option-c-cancellation-core-v1
+```
+
+## Purpose
+
+This branch continues Worker Layout Option C by extracting worker cancellation-core leaf helpers from `llama_worker/llama.mjs` while keeping `llama_worker/llama.mjs` as the stable worker entrypoint and composition root.
+
+The extraction is intentionally narrow:
+
+- active request registry helpers;
+- request-boundary wait helpers.
+
+## Source base
+
+Implementation was staged from the formatted mirror:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+/mnt/data/cancellation_work/repo_unzip/runtime-dev-repo-modularization
+```
+
+Active source truth remains GitHub branch:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/modularization
+```
+
+Latest visible GitHub commit checked during preflight:
+
+```text
+2b21d74 — Add files via upload — Jun 7, 2026
+```
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- context retry service extraction;
+- session service extraction;
+- model/reset/shutdown lifecycle extraction;
+- prompt runner extraction;
+- worker protocol router extraction;
+- parent runtime changes;
+- worker protocol redesign;
+- model path/model identity behavior changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction.
+
+## Files added
+
+```text
+llama_worker/cancellation/activeRequestRegistry.mjs
+llama_worker/cancellation/requestBoundaries.mjs
+docs/dev-notes.24
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### Active request registry
+
+`llama_worker/cancellation/activeRequestRegistry.mjs` exports:
+
+```text
+createActiveRequestRegistry({ state, receiveMessageOnPort, createPromptAbortError })
+```
+
+The returned registry facade provides:
+
+```text
+createActiveRequestRecord({ id, sessionId, cancelPort })
+getActiveRequest(id)
+isActiveRequestAborting(record)
+readCancelPortMessage(record)
+synchronizeExternalCancellation(record, message)
+isPromptAbortError(record, err)
+buildRequestObsoleteError(requestId)
+isRequestObsolete(requestId)
+abortActiveRequest(record, reason)
+abortActiveRequestById(id, reason)
+getActiveRequestRecords(filterFn)
+abortActiveRequests(filterFn, reasonFactory)
+```
+
+Behavior preserved:
+
+- cancel ports are still unrefed during record creation;
+- request sequence increments still occur at record creation;
+- cancel-port polling still drains all pending packets and uses the latest cancel packet;
+- non-cancel packets are ignored;
+- cancellation still maps to `createPromptAbortError(...)` with existing request/session metadata;
+- `AbortError` is still treated as prompt abort only while the record is aborting;
+- `abortActiveRequest(...)` still marks records as `aborting` and aborts prompt/context controllers;
+- abort helpers do not delete records from `state.activeRequests`;
+- abort helpers do not close cancel ports.
+
+### Request boundaries
+
+`llama_worker/cancellation/requestBoundaries.mjs` exports:
+
+```text
+createRequestBoundaries({ requests })
+```
+
+The returned boundary facade provides:
+
+```text
+waitForActiveRequestBoundaries(records)
+waitForPriorSessionRequestBoundaries(sessionId, currentRequestId)
+hasActiveRequestForSession(sessionId)
+```
+
+Behavior preserved:
+
+- waits use `Promise.allSettled(...)`, not `Promise.all(...)`;
+- empty boundary waits still return `[]`;
+- same-session boundary waits compare active request sequence numbers;
+- current request id is excluded;
+- only prior same-session records are waited;
+- boundary helpers do not mutate request state.
+
+### Worker root wiring
+
+`llama_worker/llama.mjs` now imports and wires the two cancellation factories:
+
+```js
+import { createActiveRequestRegistry } from "./cancellation/activeRequestRegistry.mjs";
+import { createRequestBoundaries } from "./cancellation/requestBoundaries.mjs";
+```
+
+`llama_worker/llama.mjs` remains the only composition root. The cancellation modules do not import `llama_worker/llama.mjs`, `workerBridge.mjs`, or parent runtime modules.
+
+## Important invariants preserved
+
+### Active request deletion timing
+
+Deletion of active request records still occurs in `handlePromptMessage()` final cleanup:
+
+```js
+record.state = "done";
+workerState.activeRequests.delete(id);
+record.cancelPort?.close();
+```
+
+This branch intentionally does not move deletion or cancel-port closure into abort helpers.
+
+### Same-session boundary ordering
+
+Same-session prompt ordering still waits for prior same-session request boundaries before prompt/session work continues.
+
+### Reset/shutdown disposal distinction
+
+The prior model disposal policy invariant remains unchanged:
+
+```text
+resetModel      -> disposeModelStack({ operation: "reset_model" })
+shutdownWorker  -> disposeModelStack({ operation: "shutdown" })
+```
+
+## Propagation review
+
+- `tests/helpers/runtimeFixtureFiles.mjs` now includes the two new worker cancellation modules.
+- Direct smoke-test `RUNTIME_FILES` arrays now include the two new worker cancellation modules.
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`.
+- No module under `llama_worker/**` imports `llama_worker/llama.mjs` or `workerBridge.mjs`.
+- No parent runtime file was changed.
+- No worker protocol message shape was changed.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static/helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight / policy checks
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result: PASS.
+
+### Mock/sandbox cancellation-adjacent regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+Result: PASS.
+
+### Broader adjacent mock/reference checks
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+### Toolbox preflight
+
+```bash
+python3 toolbox_pipeline.py preflight /mnt/data/cancellation_work/repo_unzip/runtime-dev-repo-modularization \
+  --fixture tests/helpers/runtimeFixtureFiles.mjs \
+  --list-name RUNTIME_FIXTURE_FILES \
+  --fixture-recursive \
+  --fixture-fail-on-missing \
+  --changed-file-list /mnt/data/cancellation_work/changed-files.txt \
+  --fail-on-missing-changed \
+  --out-dir /mnt/data/cancellation_work/toolbox_preflight_out \
+  --json /mnt/data/cancellation_work/toolbox_preflight_report.json
+```
+
+Result: PASS.
+
+Toolbox steps:
+
+```text
+repo_fingerprint.snapshot: PASS
+codebase_blueprint.scan: PASS
+fixture_manifest_check: PASS
+impact_map: PASS
+```
+
+## Caveats / known risks
+
+```text
+Finding:
+This branch moves cancellation helpers out of the worker root but still leaves prompt, context/session, lifecycle, and router logic inline.
+Affected surface:
+llama_worker/llama.mjs request cancellation, boundary waits, and prompt final cleanup.
+Why it matters:
+Early request deletion or cancel-port closure would break same-session boundary waits and reset/shutdown cleanup ordering.
+Smallest safe correction:
+Keep active request deletion and cancel-port close in handlePromptMessage() final cleanup only.
+What still needs verification:
+Michael real-runtime cancellation/context-boundary gates before merge-readiness language.
+```
+
+```text
+Finding:
+Sandbox/mock tests passed, but they do not prove native/model behavior.
+Affected surface:
+worker cancellation, context creation cancellation, prompt streaming, reset/shutdown boundary timing.
+Why it matters:
+This branch touches cancellation surfaces that interact with real node-llama-cpp/native behavior.
+Smallest safe correction:
+Run the recommended real-runtime carry-forward gates locally before treating the branch as merge-ready.
+What still needs verification:
+real-runtime-tested by Michael.
+```
+
+## Recommended real-runtime gates
+
+```bash
+SMOKE_MODE=real-fresh-session-cancel-context-boundary node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-cancel-new-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-reset-new-session-then-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+Optional broader real-runtime carry-forward gates:
+
+```bash
+SMOKE_MODE=real-prompt-then-shutdown-control node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-no-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+## Future work not included
+
+Recommended next Worker Layout Option C branch after this one, if this branch passes review/real-runtime verification:
+
+```text
+worker-layout-option-c-context-session-v1
+```
+
+Expected future scope:
+
+- extract context retry service;
+- extract session service;
+- preserve context creation retry/cancel behavior;
+- preserve session eviction and max-session behavior;
+- preserve resetSession semantics.
+
+Do not combine that future branch into cancellation-core.
