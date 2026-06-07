@@ -57,6 +57,7 @@ const RUNTIME_FILES = [
     "runtime/stream/streamController.mjs",
     "workerBridge.mjs",
     "llama_worker/llama.mjs",
+    "llama_worker/lifecycle/modelDisposalPolicy.mjs",
     "llama_worker/state/workerState.mjs",
     "llama_worker/serialization/workerOperationQueue.mjs",
     "llama_worker/errors/promptAbort.mjs",

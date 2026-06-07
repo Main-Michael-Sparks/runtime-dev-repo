@@ -7,6 +7,7 @@ import { resolveWorkerModelPath, createWorkerState } from "./state/workerState.m
 import { createWorkerOperationQueue } from "./serialization/workerOperationQueue.mjs";
 import { createPromptAbortError } from "./errors/promptAbort.mjs";
 import { createOutboundMessages } from "./messages/outboundMessages.mjs";
+import { disposeModelWithPolicy, resolveModelDisposalPolicy } from "./lifecycle/modelDisposalPolicy.mjs";
 
 const workerState = createWorkerState({
     baseConfig: config,
@@ -292,17 +293,21 @@ async function disposeAllSessions() {
     }
 }
 
-async function disposeModelStack() {
+async function disposeModelStack({ operation } = {}) {
     await disposeAllSessions();
 
-    if (workerState.model?.disposed !== true && typeof workerState.model?.dispose === "function") {
-        await workerState.model.dispose();
-    }
+    const modelDisposalPolicy = resolveModelDisposalPolicy({ operation });
+    const modelDisposalOutcome = await disposeModelWithPolicy({
+        model: workerState.model,
+        policy: modelDisposalPolicy
+    });
 
     workerState.model = null;
     workerState.ready = false;
     workerState.initPromise = null;
     resetActiveInitConfig();
+
+    return modelDisposalOutcome;
 }
 
 async function initModel() {
@@ -526,7 +531,7 @@ async function resetModel() {
     );
 
     await waitForActiveRequestBoundaries(records);
-    await disposeModelStack();
+    await disposeModelStack({ operation: "reset_model" });
 }
 
 async function shutdownWorker() {
@@ -541,7 +546,7 @@ async function shutdownWorker() {
     );
 
     await waitForActiveRequestBoundaries(records);
-    await disposeModelStack();
+    await disposeModelStack({ operation: "shutdown" });
 }
 
 function toChunkFactory() {

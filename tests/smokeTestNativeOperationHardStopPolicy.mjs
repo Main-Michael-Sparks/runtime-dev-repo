@@ -52,6 +52,7 @@ const RUNTIME_FILES = [
     "runtime/stream/streamController.mjs",
     "workerBridge.mjs",
     "llama_worker/llama.mjs",
+    "llama_worker/lifecycle/modelDisposalPolicy.mjs",
     "llama_worker/state/workerState.mjs",
     "llama_worker/serialization/workerOperationQueue.mjs",
     "llama_worker/errors/promptAbort.mjs",
@@ -489,37 +490,37 @@ async function modeResetModelTimeoutMarksUnhealthyWithoutTerminatingWorker() {
     exitAfterIntentionalStuckWorker();
 }
 
-async function modeShutdownTimeoutMarksUnhealthyWithoutTerminatingWorker() {
-    logSection("shutdown timeout marks unhealthy without terminating worker");
+async function modeShutdownModelDisposeTimeoutAbandonsTerminalDispose() {
+    logSection("shutdown abandons non-settling terminal model dispose");
 
     await withMockRuntime(async ({ initModel, shutdownRuntime, prompt }, eventLogPath) => {
         await initModel();
 
-        await expectReject(
-            "shutdown stuck native boundary",
-            () => withDeadline(shutdownRuntime({ mode: "abort" }), 5000, "shutdown timeout detection"),
-            "Native operation timed out"
+        await withDeadline(
+            shutdownRuntime({ mode: "abort" }),
+            8000,
+            "shutdown bounded terminal model dispose"
         );
 
         await expectReject(
-            "prompt after shutdown native timeout",
-            () => prompt("should reject after stuck shutdown", { stream: false }),
-            "runtime is marked unhealthy"
+            "prompt after bounded terminal shutdown",
+            () => prompt("should reject after bounded shutdown", { stream: false }),
+            "Runtime is shutting down"
         );
 
         const events = await readEvents(eventLogPath);
-        assert(events.some((event) => event.type === "model.dispose.hang"), "shutdown model dispose should have hung");
-        assert.equal(events.filter((event) => event.type === "model.load").length, 1, "worker should not be replaced before shutdown boundary");
+        assert(events.some((event) => event.type === "model.dispose.hang"), "shutdown model dispose should have reached the hanging mock path");
+        assert.equal(events.filter((event) => event.type === "model.load").length, 1, "bounded terminal shutdown should not replace the worker before shutdown_done");
     }, {
-        MOCK_MODEL_DISPOSE_HANG: 1
+        MOCK_MODEL_DISPOSE_HANG: 1,
+        MOCK_SHUTDOWN_HARD_STOP_TIMEOUT_MS: 7000
     });
 
-    console.log("[OK] shutdown timeout marked runtime unhealthy without worker termination");
-    exitAfterIntentionalStuckWorker();
+    console.log("[OK] shutdown abandoned non-settling terminal model dispose and resolved");
 }
 
-async function modeDrainTimeoutThenShutdownTimeoutMarksUnhealthy() {
-    logSection("drain-with-timeout then shutdown timeout marks unhealthy");
+async function modeDrainTimeoutThenModelDisposeTimeoutAbandonsTerminalDispose() {
+    logSection("drain-with-timeout abandons non-settling terminal model dispose");
 
     await withMockRuntime(async ({ initModel, shutdownRuntime, prompt }, eventLogPath) => {
         await initModel();
@@ -531,25 +532,28 @@ async function modeDrainTimeoutThenShutdownTimeoutMarksUnhealthy() {
 
         await Promise.all([
             expectReject("drain timeout canceled request", () => readPromptResult(req), "Runtime shutdown timeout"),
-            expectReject(
-                "drain-with-timeout stuck shutdown boundary",
-                () => withDeadline(shutdownRuntime({ mode: "drain-with-timeout", timeoutMs: 30 }), 5000, "drain timeout native boundary"),
-                "Native operation timed out"
+            withDeadline(
+                shutdownRuntime({ mode: "drain-with-timeout", timeoutMs: 30 }),
+                8000,
+                "drain timeout bounded terminal model dispose"
             )
         ]);
 
         await expectReject(
-            "prompt after drain shutdown native timeout",
-            () => prompt("should reject after unhealthy drain timeout", { stream: false }),
-            "runtime is marked unhealthy"
+            "prompt after bounded drain shutdown",
+            () => prompt("should reject after bounded drain timeout", { stream: false }),
+            "Runtime is shutting down"
         );
+
+        const events = await readEvents(eventLogPath);
+        assert(events.some((event) => event.type === "model.dispose.hang"), "drain shutdown model dispose should have reached the hanging mock path");
     }, {
         MOCK_PROMPT_DELAY_MS: 500,
-        MOCK_MODEL_DISPOSE_HANG: 1
+        MOCK_MODEL_DISPOSE_HANG: 1,
+        MOCK_SHUTDOWN_HARD_STOP_TIMEOUT_MS: 7000
     });
 
-    console.log("[OK] drain-with-timeout marked runtime unhealthy after stuck shutdown boundary");
-    exitAfterIntentionalStuckWorker();
+    console.log("[OK] drain-with-timeout abandoned non-settling terminal model dispose and resolved");
 }
 
 async function modeResetSessionTimeoutRejectsAndKeepsSessionBlocked() {
@@ -860,8 +864,8 @@ async function realOrchestrator() {
 async function orchestrator() {
     const modes = [
         "mock-reset-model-timeout-marks-unhealthy-without-terminating-worker",
-        "mock-shutdown-timeout-marks-unhealthy-without-terminating-worker",
-        "mock-drain-timeout-then-shutdown-timeout-marks-unhealthy",
+        "mock-shutdown-model-dispose-timeout-abandons-terminal-dispose",
+        "mock-drain-timeout-then-model-dispose-timeout-abandons-terminal-dispose",
         "mock-reset-session-timeout-rejects-and-keeps-session-blocked",
         "mock-reset-session-timeout-clears-when-worker-eventually-completes",
         "mock-timeout-policy-disabled-waits-for-cooperative-boundary",
@@ -894,11 +898,11 @@ async function main() {
         case "mock-reset-model-timeout-marks-unhealthy-without-terminating-worker":
             await modeResetModelTimeoutMarksUnhealthyWithoutTerminatingWorker();
             break;
-        case "mock-shutdown-timeout-marks-unhealthy-without-terminating-worker":
-            await modeShutdownTimeoutMarksUnhealthyWithoutTerminatingWorker();
+        case "mock-shutdown-model-dispose-timeout-abandons-terminal-dispose":
+            await modeShutdownModelDisposeTimeoutAbandonsTerminalDispose();
             break;
-        case "mock-drain-timeout-then-shutdown-timeout-marks-unhealthy":
-            await modeDrainTimeoutThenShutdownTimeoutMarksUnhealthy();
+        case "mock-drain-timeout-then-model-dispose-timeout-abandons-terminal-dispose":
+            await modeDrainTimeoutThenModelDisposeTimeoutAbandonsTerminalDispose();
             break;
         case "mock-reset-session-timeout-rejects-and-keeps-session-blocked":
             await modeResetSessionTimeoutRejectsAndKeepsSessionBlocked();
