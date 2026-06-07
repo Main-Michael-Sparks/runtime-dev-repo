@@ -18,6 +18,8 @@ import {
     buildContextCreationError
 } from "./context/contextOptions.mjs";
 import { createChunkFactory } from "./prompt/chunkFactory.mjs";
+import { createContextRetryService } from "./context/contextRetryService.mjs";
+import { createSessionService } from "./session/sessionService.mjs";
 import { createActiveRequestRegistry } from "./cancellation/activeRequestRegistry.mjs";
 import { createRequestBoundaries } from "./cancellation/requestBoundaries.mjs";
 
@@ -54,12 +56,35 @@ const {
     abortActiveRequests
 } = activeRequestRegistry;
 
+const requestBoundaries = createRequestBoundaries({
+    requests: activeRequestRegistry
+});
+
 const {
     waitForActiveRequestBoundaries,
-    waitForPriorSessionRequestBoundaries,
-    hasActiveRequestForSession
-} = createRequestBoundaries({
-    requests: activeRequestRegistry
+    waitForPriorSessionRequestBoundaries
+} = requestBoundaries;
+
+const contextRetryService = createContextRetryService({
+    state: workerState,
+    LlamaChatSession,
+    buildContextRetryProfiles,
+    requests: activeRequestRegistry,
+    toContextCreateOptions,
+    buildContextCreationError,
+    disposePartialSessionArtifacts
+});
+
+const {
+    getSession,
+    resetSession
+} = createSessionService({
+    state: workerState,
+    boundaries: requestBoundaries,
+    contextRetryService,
+    disposeSessionById,
+    requests: activeRequestRegistry,
+    createPromptAbortError
 });
 
 function assertWorkerReadyForNativeCommand() {
@@ -86,16 +111,6 @@ function resetActiveInitConfig() {
     workerState.activeConfig = config;
     workerState.activeInitAttemptId = null;
     workerState.activeProfileName = null;
-}
-
-function findEvictableSessionId() {
-    for (const sessionId of workerState.sessions.keys()) {
-        if (!hasActiveRequestForSession(sessionId)) {
-            return sessionId;
-        }
-    }
-
-    return null;
 }
 
 async function disposeModelStack({ operation } = {}) {
@@ -140,134 +155,6 @@ async function initModel() {
     })();
 
     return workerState.initPromise;
-}
-
-function buildContextCreationObsoleteError(requestId) {
-    const requestObsoleteError = buildRequestObsoleteError(requestId);
-    if (requestObsoleteError) return requestObsoleteError;
-
-    if (workerState.resetting || workerState.shuttingDown || !workerState.ready || !workerState.model) {
-        return new Error("Model is resetting");
-    }
-
-    return null;
-}
-
-async function createSessionContextWithRetry(sessionId, requestId = null) {
-    const profiles = buildContextRetryProfiles({
-        baseContextConfig: workerState.activeConfig.context,
-        creationRetry: workerState.activeConfig.context.creationRetry,
-        hardwareProbe: workerState.activeConfig.hardwareProbe ?? null
-    });
-
-    const attemptedProfiles = [];
-    let lastError = null;
-
-    for (const profile of profiles) {
-        const obsoleteBeforeAttempt = buildContextCreationObsoleteError(requestId);
-        if (obsoleteBeforeAttempt) throw obsoleteBeforeAttempt;
-
-        attemptedProfiles.push(profile.name);
-
-        let context = null;
-        let session = null;
-        let contextController = null;
-        const record = getActiveRequest(requestId);
-
-        try {
-            contextController = new AbortController();
-
-            if (record) {
-                record.contextController = contextController;
-                synchronizeExternalCancellation(record, "Context creation canceled");
-            }
-
-            const obsoleteBeforeCreate = buildContextCreationObsoleteError(requestId);
-            if (obsoleteBeforeCreate) throw obsoleteBeforeCreate;
-
-            context = await workerState.model.createContext({
-                ...toContextCreateOptions(profile.context),
-                createSignal: contextController.signal
-            });
-
-            if (typeof context.getSequence !== "function") {
-                throw new Error("Context does not expose getSequence()");
-            }
-
-            const sequence = context.getSequence();
-
-            session = new LlamaChatSession({
-                contextSequence: sequence
-            });
-        } catch (err) {
-            lastError = err;
-            await disposePartialSessionArtifacts({ session, context });
-
-            const obsoleteAfterFailure = buildContextCreationObsoleteError(requestId);
-            if (obsoleteAfterFailure) throw obsoleteAfterFailure;
-
-            continue;
-        } finally {
-            if (record?.contextController === contextController) {
-                record.contextController = null;
-            }
-        }
-
-        const wrapper = {
-            session,
-            context,
-            contextProfile: profile.name,
-            contextConfig: profile.context
-        };
-
-        const obsoleteAfterSuccess = buildContextCreationObsoleteError(requestId);
-        if (obsoleteAfterSuccess) {
-            await disposePartialSessionArtifacts(wrapper);
-            throw obsoleteAfterSuccess;
-        }
-
-        return wrapper;
-    }
-
-    throw buildContextCreationError({
-        sessionId,
-        attemptedProfiles,
-        lastError
-    });
-}
-
-async function getSession(sessionId, requestId = null) {
-    if (!workerState.model) throw new Error("Model not initialized");
-
-    if (workerState.sessions.has(sessionId)) return workerState.sessions.get(sessionId);
-
-    if (workerState.sessions.size >= workerState.activeConfig.sessions.maxCount) {
-        const evictableSessionId = findEvictableSessionId();
-
-        if (!evictableSessionId) {
-            throw new Error("Cannot create session: all sessions are active");
-        }
-
-        await disposeSessionById(workerState.sessions, evictableSessionId);
-    }
-
-    const wrapper = await createSessionContextWithRetry(sessionId, requestId);
-    workerState.sessions.set(sessionId, wrapper);
-
-    return wrapper;
-}
-
-async function resetSession(sessionId) {
-    const records = abortActiveRequests(
-        (record) => record.sessionId === sessionId,
-        (record) => createPromptAbortError(`Session reset: ${sessionId}`, {
-            requestId: record.id,
-            sessionId
-        })
-    );
-
-    await waitForActiveRequestBoundaries(records);
-    await disposeSessionById(workerState.sessions, sessionId);
 }
 
 async function resetModel() {
