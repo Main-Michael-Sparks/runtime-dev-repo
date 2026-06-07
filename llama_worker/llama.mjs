@@ -8,6 +8,16 @@ import { createWorkerOperationQueue } from "./serialization/workerOperationQueue
 import { createPromptAbortError } from "./errors/promptAbort.mjs";
 import { createOutboundMessages } from "./messages/outboundMessages.mjs";
 import { disposeModelWithPolicy, resolveModelDisposalPolicy } from "./lifecycle/modelDisposalPolicy.mjs";
+import {
+    disposeSessionById,
+    disposeAllSessions,
+    disposePartialSessionArtifacts
+} from "./session/sessionDisposal.mjs";
+import {
+    toContextCreateOptions,
+    buildContextCreationError
+} from "./context/contextOptions.mjs";
+import { createChunkFactory } from "./prompt/chunkFactory.mjs";
 
 const workerState = createWorkerState({
     baseConfig: config,
@@ -239,62 +249,8 @@ function findEvictableSessionId() {
     return null;
 }
 
-async function disposeSessionEntry(entry) {
-    if (!entry) return;
-
-    const cleanupErrors = [];
-
-    if (entry.session?.disposed !== true && typeof entry.session?.dispose === "function") {
-        try {
-            entry.session.dispose({
-                disposeSequence: true
-            });
-        } catch (err) {
-            cleanupErrors.push(err);
-        }
-    }
-
-    if (entry.context?.disposed !== true && typeof entry.context?.dispose === "function") {
-        try {
-            await entry.context.dispose();
-        } catch (err) {
-            cleanupErrors.push(err);
-        }
-    }
-
-    if (cleanupErrors.length > 0) {
-        throw cleanupErrors[0];
-    }
-}
-
-async function disposeSessionById(sessionId) {
-    const entry = workerState.sessions.get(sessionId);
-    if (!entry) return;
-
-    await disposeSessionEntry(entry);
-    workerState.sessions.delete(sessionId);
-}
-
-async function disposeAllSessions() {
-    const cleanupErrors = [];
-
-    for (const [sessionId, entry] of workerState.sessions.entries()) {
-        try {
-            await disposeSessionEntry(entry);
-        } catch (err) {
-            cleanupErrors.push({ sessionId, err });
-        }
-    }
-
-    workerState.sessions.clear();
-
-    if (cleanupErrors.length > 0) {
-        throw cleanupErrors[0].err;
-    }
-}
-
 async function disposeModelStack({ operation } = {}) {
-    await disposeAllSessions();
+    await disposeAllSessions(workerState.sessions);
 
     const modelDisposalPolicy = resolveModelDisposalPolicy({ operation });
     const modelDisposalOutcome = await disposeModelWithPolicy({
@@ -337,19 +293,6 @@ async function initModel() {
     return workerState.initPromise;
 }
 
-function toContextCreateOptions(contextConfig) {
-    return {
-        contextSize: contextConfig.contextSize,
-        batchSize: contextConfig.batchSize,
-        threads: contextConfig.threads,
-        flashAttention: contextConfig.flashAttention,
-        performanceTracking: contextConfig.performanceTracking,
-        sequences: contextConfig.sequences,
-        failedCreationRemedy: contextConfig.failedCreationRemedy,
-        ignoreMemorySafetyChecks: contextConfig.ignoreMemorySafetyChecks
-    };
-}
-
 function buildContextCreationObsoleteError(requestId) {
     const requestObsoleteError = buildRequestObsoleteError(requestId);
     if (requestObsoleteError) return requestObsoleteError;
@@ -359,47 +302,6 @@ function buildContextCreationObsoleteError(requestId) {
     }
 
     return null;
-}
-
-async function disposePartialSessionArtifacts({ session, context }) {
-    const cleanupErrors = [];
-
-    if (session?.disposed !== true && typeof session?.dispose === "function") {
-        try {
-            session.dispose({
-                disposeSequence: true
-            });
-        } catch (err) {
-            cleanupErrors.push(err);
-        }
-    }
-
-    if (context?.disposed !== true && typeof context?.dispose === "function") {
-        try {
-            await context.dispose();
-        } catch (err) {
-            cleanupErrors.push(err);
-        }
-    }
-
-    if (cleanupErrors.length > 0) {
-        throw cleanupErrors[0];
-    }
-}
-
-function buildContextCreationError({ sessionId, attemptedProfiles, lastError }) {
-    const err = new Error(
-        `Context creation failed after ${attemptedProfiles.length} attempt(s). ` +
-        `Session: ${sessionId}. ` +
-        `Attempted profiles: ${attemptedProfiles.join(", ")}. ` +
-        `Last error: ${lastError?.message ?? String(lastError)}`
-    );
-
-    err.sessionId = sessionId;
-    err.attemptedContextProfiles = attemptedProfiles;
-    err.lastError = lastError;
-
-    return err;
 }
 
 async function createSessionContextWithRetry(sessionId, requestId = null) {
@@ -497,7 +399,7 @@ async function getSession(sessionId, requestId = null) {
             throw new Error("Cannot create session: all sessions are active");
         }
 
-        await disposeSessionById(evictableSessionId);
+        await disposeSessionById(workerState.sessions, evictableSessionId);
     }
 
     const wrapper = await createSessionContextWithRetry(sessionId, requestId);
@@ -516,7 +418,7 @@ async function resetSession(sessionId) {
     );
 
     await waitForActiveRequestBoundaries(records);
-    await disposeSessionById(sessionId);
+    await disposeSessionById(workerState.sessions, sessionId);
 }
 
 async function resetModel() {
@@ -549,27 +451,6 @@ async function shutdownWorker() {
     await disposeModelStack({ operation: "shutdown" });
 }
 
-function toChunkFactory() {
-    let lastTokens = [];
-
-    return function toChunk(t) {
-        if (Array.isArray(t)) {
-            const chunk = workerState.model.detokenize(t, false, lastTokens);
-            lastTokens = [...lastTokens, ...t].slice(-8);
-            return chunk;
-        }
-
-        if (typeof t === "number") {
-            const tokens = [t];
-            const chunk = workerState.model.detokenize(tokens, false, lastTokens);
-            lastTokens = [...lastTokens, ...tokens].slice(-8);
-            return chunk;
-        }
-
-        return String(t);
-    };
-}
-
 async function runPromptTask(record, msg) {
     const {
         id,
@@ -587,7 +468,7 @@ async function runPromptTask(record, msg) {
     const { session } = await getSession(sessionId, id);
     synchronizeExternalCancellation(record);
 
-    const toChunk = toChunkFactory();
+    const toChunk = createChunkFactory(workerState.model);
 
     const result = await session.prompt(text, {
         maxTokens: workerState.activeConfig.model.maxTokens,
