@@ -72,7 +72,8 @@ const RUNTIME_FILES = [
     "llama_worker/state/workerState.mjs",
     "llama_worker/serialization/workerOperationQueue.mjs",
     "llama_worker/errors/promptAbort.mjs",
-    "llama_worker/messages/outboundMessages.mjs"
+    "llama_worker/messages/outboundMessages.mjs",
+    "llama_worker/messages/workerProtocolRouter.mjs"
 ];
 
 function logSection(title) {
