@@ -38,6 +38,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const SMOKE_TEST_VERSION = "drain-shutdown-v1-branch-scoped-real-modes-v3";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
@@ -602,6 +603,11 @@ async function modeShutdownDuringActiveInitRejects() {
 }
 
 async function importRealRuntime(label) {
+  assertRealRuntimeDependencyPreflight({
+    repoRoot: REPO_ROOT,
+    smokeName: `${path.basename(SELF_PATH)}:${label}`,
+  });
+
   const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
   return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
 }
@@ -888,7 +894,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("\n[SMOKE TEST FAILURE]");
-  console.error(err);
+  reportSmokeTestFailure(err);
   process.exitCode = 1;
 });

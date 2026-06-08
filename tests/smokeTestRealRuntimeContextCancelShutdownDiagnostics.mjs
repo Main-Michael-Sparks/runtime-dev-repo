@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -156,7 +157,13 @@ async function runChild(mode) {
 }
 
 async function importRuntime() {
-    return import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${MODE}`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+    return import(`${runtimeUrl}?mode=${MODE}&t=${Date.now()}`);
 }
 
 async function realInit(runtime) {
@@ -436,7 +443,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

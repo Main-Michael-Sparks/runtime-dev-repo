@@ -26,6 +26,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -755,6 +756,16 @@ async function realPromptResult(req) {
     return readPromptResult(req);
 }
 
+async function importRealRuntime(label) {
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${label}`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+    return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
+}
+
 async function realInit(runtime) {
     await withDeadline(
         runtime.initModel({
@@ -776,7 +787,7 @@ async function realInit(runtime) {
 async function modeRealFreshSessionCancelContextBoundary() {
     logSection("real fresh-session cancel context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
+    const runtime = await importRealRuntime("real-fresh-session-cancel-context-boundary");
     await realInit(runtime);
 
     const sessionId = `real-cancel-${Date.now()}`;
@@ -812,7 +823,7 @@ async function modeRealFreshSessionCancelContextBoundary() {
 async function modeRealFreshSessionResetContextBoundary() {
     logSection("real fresh-session reset context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
+    const runtime = await importRealRuntime("real-fresh-session-reset-context-boundary");
     await realInit(runtime);
 
     const sessionId = `real-reset-${Date.now()}`;
@@ -853,7 +864,7 @@ async function modeRealFreshSessionResetContextBoundary() {
 async function modeRealFreshSessionShutdownContextBoundary() {
     logSection("real fresh-session shutdown context boundary");
 
-    const runtime = await import(pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href);
+    const runtime = await importRealRuntime("real-fresh-session-shutdown-context-boundary");
     await realInit(runtime);
 
     const sessionId = `real-shutdown-${Date.now()}`;
@@ -979,7 +990,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

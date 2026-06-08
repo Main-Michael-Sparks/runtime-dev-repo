@@ -1,0 +1,276 @@
+# dev-notes.30 — worker-layout-option-c-finalize-v1
+
+Date: 2026-06-08
+Branch/slice: worker-layout-option-c-finalize-v1
+
+## Purpose
+
+Close out the Worker Layout Option C branch family with final branch-family documentation, candidate/staged artifact packaging, artifact/package verification, final handoff notes, and a minimal real-runtime smoke-test setup preflight discovered during final verification.
+
+This is a finalization branch. It does not perform another worker extraction and does not change production runtime behavior. The only code changes are test-harness diagnostics for real-runtime dependency resolution and real-runtime active-prompt target reliability.
+
+## Source-truth posture
+
+Active source truth remains the GitHub `modularization` branch until Michael confirms the branch family has been merged or superseded.
+
+The local formatted mirror used for staging was:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+```
+
+Treat local ZIPs, sandbox files, generated packages, and checkpoint files as reviewable artifacts or freeze points. Do not let them override newer direct GitHub source inspection if GitHub and the artifacts diverge.
+
+Recent-upload caveat remains active: direct ref-qualified GitHub blob/raw file inspection is preferred over branch summary pages or cached/indirect views for recently uploaded files.
+
+## Scope
+
+Added/changed:
+
+```text
+docs/dev-notes.30
+tests/helpers/realRuntimeDependencyPreflight.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestHardwareAwareInitRetry.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestLifecycleRegression.mjs
+tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+The smoke-test changes are limited to real-runtime setup preflight, active-prompt target reliability, and failure reporting. They do not weaken assertions and do not change mock fixture behavior.
+
+Generated outside the repo candidate:
+
+```text
+RuntimeDev-Checkpoint-WorkerLayoutOptionC-FINAL.md
+NextSession-Bootstrap-After-WorkerLayoutOptionC-FINAL.md
+worker-layout-option-c-finalize-v1-candidate.zip
+worker-layout-option-c-finalize-v1-staged-files.zip
+artifact/manifest/fingerprint outputs
+```
+
+## Branch-family summary
+
+Worker Layout Option C is expected to close after final verification gates. The family completed the staged worker split through:
+
+```text
+worker-layout-option-c-preflight-tests-v1
+worker-layout-option-c-state-core-v1
+worker-layout-option-c-disposal-primitives-v1
+worker-layout-option-c-cancellation-core-v1
+worker-layout-option-c-context-session-v1
+worker-layout-option-c-lifecycle-services-v1
+worker-layout-option-c-prompt-runner-v1
+worker-layout-option-c-router-v1
+worker-layout-option-c-test-contract-cleanup-v1
+worker-layout-option-c-finalize-v1
+```
+
+The worker remains rooted at:
+
+```text
+llama_worker/llama.mjs
+```
+
+and remains composed from domain modules under:
+
+```text
+llama_worker/cancellation/
+llama_worker/context/
+llama_worker/errors/
+llama_worker/lifecycle/
+llama_worker/messages/
+llama_worker/prompt/
+llama_worker/serialization/
+llama_worker/session/
+llama_worker/state/
+```
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+```text
+production runtime behavior changes
+production worker behavior changes
+worker router changes
+parent runtime lifecycle changes
+config/configOverride changes
+scheduler changes
+prompt/output semantic changes
+model identity/path changes
+new feature work
+cleanup refactors outside closeout docs/verification artifacts and the scoped real-runtime setup diagnostic
+optimization work
+parent-runtime lifecycle modularization
+child-process/native containment redesign
+```
+
+The next parent-runtime lifecycle family must remain separate.
+
+## Architecture boundaries preserved
+
+The finalization branch preserves the established Runtime Dev boundaries:
+
+```text
+queue-based concurrency remains intact
+worker remains the model/native execution boundary
+parent runtime owns request lifecycle
+parent-side stream shaping remains parent-side
+config remains the primary tuning surface
+init/reset/shutdown behavior remains unchanged
+workerBridge.mjs continues targeting ./llama_worker/llama.mjs
+llama_worker/llama.mjs remains the worker entrypoint/composition root
+worker protocol message shape remains unchanged
+model identity/path remains immutable without redesign
+```
+
+## Test-harness preflight added during finalization
+
+Final verification exposed a setup failure mode in formatted repo mirrors: real-runtime smoke modes import the repository runtime or worker directly, while mock modes create a temporary fixture with a fake `node-llama-cpp` package. If a formatted mirror is not package-resolvable from `llama_worker/llama.mjs`, raw Node module-resolution errors can obscure whether the failure is setup-related or runtime-behavior-related.
+
+This branch adds `tests/helpers/realRuntimeDependencyPreflight.mjs`, which resolves `node-llama-cpp` from the same location as the worker entrypoint before real-runtime modes import `runtime.mjs` or construct a real worker. If resolution fails, the smoke test reports:
+
+```text
+[SMOKE SETUP FAILURE] Real-runtime smoke requires node-llama-cpp to be resolvable from llama_worker/llama.mjs.
+This is a smoke-test setup failure, not a runtime behavior result.
+```
+
+The preflight is wired only into real-runtime paths in the changed smoke tests. It does not skip real-runtime tests, does not mask failures after dependency resolution succeeds, and does not alter production runtime or worker code.
+
+A follow-up real-runtime run in a package-resolvable checkout reached `node-llama-cpp` and passed the real cancel and resetSession native-boundary modes, then exposed a separate shutdown-abort smoke target race: the real active prompt could complete before shutdown cancellation was asserted. The finalization branch therefore also updates `smokeTestWorkerNativeCancellationBoundary.mjs` to make real active-prompt targets more reliable by:
+
+```text
+waiting on the first streamed chunk directly instead of polling every 50ms
+using REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=0 by default
+using a longer default real prompt target via REAL_SMOKE_LONG_PROMPT_ITEMS=2000
+checking that the real prompt is still pending before issuing cancel/reset/shutdown/drain actions
+reporting prompt-target completion as [SMOKE SETUP FAILURE] rather than as a runtime behavior result
+```
+
+The behavior assertion remains intact: once the prompt is confirmed still active and the lifecycle/cancel action is issued, the request must reject with the expected cancellation/shutdown reason.
+
+## Propagation review
+
+Confirmed expected propagation state:
+
+```text
+no production runtime imports changed
+no production worker imports changed
+no worker protocol message shape changed
+no changed RUNTIME_FILES lists required
+no changed runtime fixture file lists required
+no mock fixture behavior changed
+no test assertions weakened
+real-runtime active-prompt completion before cancellation is classified as setup/target failure, not pass/skip
+no changed public API exports
+no changed package runtime entrypoints
+```
+
+## Validation notes
+
+Finalization validation should include the same Worker Option C closeout gates:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+The real-runtime dependency preflight can be locally checked in a tree without `node-llama-cpp` by running a real child mode and confirming that it fails with `[SMOKE SETUP FAILURE]` rather than a raw worker import crash.
+
+The active-prompt target reliability path is tuned with:
+
+```text
+REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=0
+REAL_ACTIVE_PROMPT_SETTLE_PROBE_MS=0
+REAL_SMOKE_LONG_PROMPT_ITEMS=2000
+```
+
+If a real-runtime prompt still completes before the cancellation/shutdown action can be issued, the test reports `[SMOKE SETUP FAILURE]` and recommends increasing `REAL_SMOKE_LONG_PROMPT_ITEMS`, using a slower local model/config, or keeping `REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=0`.
+
+If a broad combined command hits a local wrapper timeout, isolate the affected suite with a longer wrapper timeout before treating it as a behavior failure.
+
+## Real-runtime gate
+
+Recommended Michael-side real-runtime checks unless explicitly waived:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+```
+
+If these fail with `[SMOKE SETUP FAILURE]`, fix the local package-resolution layout before classifying the result as a runtime behavior failure.
+
+`smokeTestInitThenResetWithoutPriorPrompt.mjs` default mode should fail on prompt rejection, prompt timeout, failed init/reset/shutdown, or child failure. It may warn, but should not fail by default, on empty real-model output or missing sentinel text. Use `STRICT_REAL_OUTPUT=1` or `STRICT_REAL_SENTINEL=1` only when intentionally testing output quality or model instruction compliance.
+
+## GitHub verification procedure
+
+After upload/push, perform direct source inspection on the GitHub `modularization` branch. Minimum direct paths:
+
+```text
+docs/dev-notes.30
+docs/dev-notes.29
+llama_worker/llama.mjs
+llama_worker/messages/workerProtocolRouter.mjs
+llama_worker/prompt/promptRunner.mjs
+llama_worker/state/workerState.mjs
+llama_worker/lifecycle/modelDisposalPolicy.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/helpers/realRuntimeDependencyPreflight.mjs
+tests/tools/checkWorkerImportCycles.mjs
+tests/tools/checkRuntimeFixtureCoverage.mjs
+tests/smokeTestWorkerProtocolContract.mjs
+tests/smokeTestWorkerStreamOrdering.mjs
+tests/smokeTestWorkerModelPathImmutability.mjs
+tests/smokeTestWorkerModelDisposalPolicy.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+tests/smokeTestLifecycleRegression.mjs
+runtime/request/runtimeRequestSettlement.mjs
+workerBridge.mjs
+runtime.mjs
+```
+
+Also inspect the branch tree and latest commit messages, but treat commit messages as supporting context only.
+
+## Known caveats carried forward
+
+- Fresh GitHub uploads may not immediately propagate consistently through all GitHub views.
+- Mock/sandbox tests do not prove native/model behavior.
+- A real-runtime `[SMOKE SETUP FAILURE]` means the local test tree cannot resolve `node-llama-cpp` from `llama_worker/llama.mjs`; it is not a runtime behavior result.
+- Real-runtime output warnings in `smokeTestInitThenResetWithoutPriorPrompt.mjs` are not default failures unless strict flags are enabled.
+- Prior broad command wrapper timeouts around slow lifecycle/native-policy smoke suites should be isolated before being classified as deterministic behavior failures.
+
+## Recommended next work after closeout
+
+After Worker Layout Option C finalization is staged, tested, artifact-guarded, GitHub-verified, and checkpointed, the next separate branch family is parent-runtime lifecycle modularization.
+
+Likely next branch:
+
+```text
+runtime-lifecycle-modularization-v1-request-settlement-helper
+```
+
+That branch must begin with a fresh source review and a settlement matrix from current parent-runtime request settlement paths. Do not combine it with Worker Option C finalization.

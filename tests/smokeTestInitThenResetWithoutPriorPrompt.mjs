@@ -28,6 +28,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -125,6 +126,16 @@ function getChildDeadlineMs(mode) {
     }
 
     return 30000;
+}
+
+async function importRealRuntime(label) {
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${label}`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+    return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
 }
 
 function withDeadline(promise, ms, label) {
@@ -600,7 +611,7 @@ async function modeMockInitResetPromptAfterConfigOverride() {
 }
 
 async function runRealInitResetPrompt({ configOverride = null } = {}) {
-    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../runtime.mjs");
+    const { initModel, prompt, resetModel, shutdownRuntime } = await importRealRuntime("real-init-reset-prompt");
 
     const initOptions = {
         attempts: 2,
@@ -639,7 +650,7 @@ async function modeRealInitResetPrompt() {
 async function modeRealInitPromptResetPromptControl() {
     logSection("real control initModel -> prompt -> resetModel -> prompt");
 
-    const { initModel, prompt, resetModel, shutdownRuntime } = await import("../runtime.mjs");
+    const { initModel, prompt, resetModel, shutdownRuntime } = await importRealRuntime("real-init-prompt-reset-prompt-control");
 
     await withDeadline(
         initModel({
@@ -771,7 +782,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

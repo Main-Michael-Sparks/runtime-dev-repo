@@ -24,11 +24,15 @@
 // - Shutdown remains last within any child mode that uses it.
 
 import { spawn } from "child_process";
+import path from "path";
 import process from "process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
+const TEST_DIR = path.dirname(SELF_PATH);
+const REPO_ROOT = path.resolve(TEST_DIR, "..");
 const SKIP_RUNTIME = process.env.SKIP_RUNTIME === "1";
 
 function logSection(title) {
@@ -55,6 +59,16 @@ function assertIncludes(text, expected, message) {
     if (!String(text).includes(expected)) {
         throw new Error(`[FAIL] ${message}; expected ${JSON.stringify(text)} to include ${JSON.stringify(expected)}`);
     }
+}
+
+async function importRealRuntime(label) {
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${label}`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+    return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
 }
 
 async function expectReject(label, fn, expectedText = null) {
@@ -361,7 +375,7 @@ async function modePureHardwareProbe() {
 async function modeRuntimeInvalidOptions() {
     logSection("runtime invalid options reject before model init");
 
-    const { initModel, shutdownRuntime } = await import("../runtime.mjs");
+    const { initModel, shutdownRuntime } = await importRealRuntime("runtime-invalid-options");
 
     await expectReject(
         "disallowed runtime configOverride",
@@ -398,7 +412,7 @@ async function modeRuntimeOverridePromptReset() {
         prompt,
         resetModel,
         shutdownRuntime
-    } = await import("../runtime.mjs");
+    } = await importRealRuntime("runtime-override-prompt-reset");
 
     await initModel({
         enabled: true,
@@ -454,7 +468,7 @@ async function modeRuntimeOverridePromptReset() {
 async function modeRuntimeHardwareAwarePrompt() {
     logSection("runtime hardware-aware strategy with prompt");
 
-    const { initModel, prompt, shutdownRuntime } = await import("../runtime.mjs");
+    const { initModel, prompt, shutdownRuntime } = await importRealRuntime("runtime-hardware-aware-prompt");
 
     await initModel({
         enabled: true,
@@ -500,7 +514,7 @@ async function modeRuntimeHardwareAwarePrompt() {
 async function modeRuntimeTimeoutBlocksAutoInit() {
     logSection("runtime failed explicit custom init blocks silent default auto-init");
 
-    const { initModel, prompt, shutdownRuntime } = await import("../runtime.mjs");
+    const { initModel, prompt, shutdownRuntime } = await importRealRuntime("runtime-timeout-blocks-auto-init");
 
     await expectReject(
         "forced custom/profile init timeout",
@@ -591,7 +605,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

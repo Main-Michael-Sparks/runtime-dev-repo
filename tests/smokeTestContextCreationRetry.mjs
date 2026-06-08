@@ -34,6 +34,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
@@ -426,11 +427,17 @@ async function modeRealRuntimeContextRetryFallback() {
         "REAL_CONTEXT_RETRY_BASE_CONTEXT_SIZE must be a positive integer"
     );
 
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:real-context-retry-fallback`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
     const {
         initModel,
         prompt,
         shutdownRuntime
-    } = await import("../runtime.mjs");
+    } = await import(`${runtimeUrl}?mode=${MODE}&label=real-context-retry-fallback&t=${Date.now()}`);
 
     try {
         await initModel({
@@ -713,7 +720,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });
