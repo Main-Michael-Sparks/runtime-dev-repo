@@ -1,0 +1,247 @@
+# Dev Notes 09 — runtime-lifecycle-modularization-v1 first clean module
+
+## Branch
+
+`runtime-lifecycle-modularization-v1`
+
+## Status
+
+First clean modularization slice staged and sandbox verified.
+
+This branch intentionally stops after one low-risk module extraction. Broader lifecycle modularization is deferred until a higher-fidelity modularization plan is available and reviewed.
+
+## Source base
+
+Started from the formatted active-source ZIP:
+
+```text
+active-source-truth_runtime-dev-repo-main.zip
+```
+
+The source base already included:
+
+```text
+docs/dev-notes.07
+tests/smokeTestWorkerOperationSerialization.mjs
+docs/dev-notes.08
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+So this branch starts after worker operation serialization and the init-reset-without-prior-prompt follow-up test work.
+
+## Purpose
+
+Begin lifecycle modularization conservatively by extracting only pure native-operation policy helpers from `inference.mjs`.
+
+The goal is to improve separation of concerns without changing behavior.
+
+## Implementation summary
+
+Added:
+
+```text
+nativeOperationPolicy.mjs
+```
+
+The new module owns pure native operation hard-stop policy helpers:
+
+```js
+export const VALID_NATIVE_OPERATION_HARD_STOP_KEYS = new Set([
+    "enabled",
+    "resetModelTimeoutMs",
+    "shutdownTimeoutMs",
+    "resetSessionTimeoutMs",
+    "timeoutAction"
+]);
+
+export const VALID_NATIVE_OPERATION_TIMEOUT_ACTIONS = new Set([
+    "mark-unhealthy"
+]);
+
+export function resolveNativeOperationHardStopConfig(configSnapshot) { ... }
+
+export function createNativeOperationTimeoutError({ operation, sessionId = null, timeoutMs }) { ... }
+```
+
+`inference.mjs` now imports:
+
+```js
+import {
+    createNativeOperationTimeoutError,
+    resolveNativeOperationHardStopConfig
+} from "./nativeOperationPolicy.mjs";
+```
+
+and passes the current config snapshot explicitly:
+
+```js
+resolveNativeOperationHardStopConfig(config);
+```
+
+## What intentionally stayed in `inference.mjs`
+
+The following behavior-bearing state and coordination helpers remain in `inference.mjs`:
+
+```text
+runtimeUnhealthy
+createRuntimeUnhealthyError()
+assertRuntimeHealthy()
+markRuntimeUnhealthy()
+waitForNativeOperationBoundary()
+```
+
+Reason:
+
+- they close over parent runtime state;
+- they are coupled to reset/session/shutdown waiter behavior;
+- moving them safely should be a later deliberate lifecycle-state extraction, not part of this first slice.
+
+## Test fixture propagation
+
+Several smoke tests create temporary mock runtime trees using fixed `RUNTIME_FILES` lists. Because `inference.mjs` now imports `nativeOperationPolicy.mjs`, those fixture lists were updated to include the new module.
+
+Updated fixture lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions or intended behavior were changed.
+
+## Files changed
+
+Added:
+
+```text
+nativeOperationPolicy.mjs
+docs/dev-notes.09
+```
+
+Modified:
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Behavior preservation notes
+
+No intentional changes to:
+
+```text
+initModel()
+ensureModelReady()
+prompt()
+cancelPrompt()
+resetSession()
+resetModel()
+shutdownRuntime()
+scheduler behavior
+worker lifecycle/replacement
+worker operation serialization
+config override validation
+retry/profile planning
+stream shaping
+prompt/output semantics
+model identity/path policy
+```
+
+No worker-thread hard-kill behavior was introduced.
+
+`timeoutAction` remains restricted to:
+
+```text
+mark-unhealthy
+```
+
+## Validation performed
+
+Syntax check:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Targeted hard-stop policy smoke:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+Result:
+
+```text
+PASS
+All native operation timeout policy smoke tests finished.
+```
+
+Broader sandbox/mock regression subset:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Real-runtime lifecycle checks were not run in the sandbox.
+
+## Review notes
+
+The first targeted smoke initially failed because `nativeOperationPolicy.mjs` was missing from test fixture copy lists. That failure was a propagation issue, not a behavior assertion failure. The fixture lists were corrected and the targeted plus broader sandbox/mock smoke set passed.
+
+The extraction is intentionally conservative. It creates a clean module seam while avoiding deeper lifecycle-state movement.
+
+## Caveats
+
+- `nativeOperationPolicy.mjs` contains small local validation helpers that overlap with helper names still present in `inference.mjs`. This is intentional for this first slice to avoid creating a broad shared validation module prematurely.
+- This branch does not materially reduce the complexity of `initModel()`, `resetModel()`, or shutdown coordination. It only establishes the first low-risk module seam.
+- Further modularization should be planned from a high-fidelity responsibility/dependency map before moving behavior-bearing lifecycle state.
+
+## Future modularization candidates
+
+Potential future slices, pending review:
+
+```text
+request cancellation settlement helper
+runtime lifecycle state container
+init cycle coordinator
+shutdown coordinator
+session reset coordinator
+native boundary/unhealthy state coordinator
+```
+
+Do not implement these from this branch by inertia. Each should be reviewed for ordering and behavior risk before extraction.
+
+## Recommended next step
+
+Stop implementation here for this thread/branch scope.
+
+Use this first clean module as a safe checkpoint while waiting for a deeper modularization plan. A future planning pass should review the full lifecycle dependency graph before touching behavior-heavy functions.

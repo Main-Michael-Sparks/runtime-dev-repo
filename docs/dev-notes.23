@@ -1,0 +1,279 @@
+# Dev Notes 23 — Worker Layout Option C Disposal Primitives v1
+
+## Date
+
+2026-06-07
+
+## Branch
+
+```text
+worker-layout-option-c-disposal-primitives-v1
+```
+
+## Purpose
+
+This branch resumes the paused Worker Layout Option C disposal-primitives slice after the inherited real-runtime context-cancel shutdown timeout fix landed on `modularization`.
+
+It keeps `llama_worker/llama.mjs` as the stable worker entrypoint and composition root while extracting only small worker leaf helpers for:
+
+- session/context disposal primitives;
+- context option projection and terminal context-creation error construction;
+- prompt token chunk factory creation.
+
+## Source base
+
+Implementation was staged from the updated formatted mirror:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+/mnt/data/resume_disposal_work/base/runtime-dev-repo-modularization
+```
+
+The mirror includes the completed real-runtime shutdown bugfix baseline:
+
+```text
+llama_worker/lifecycle/modelDisposalPolicy.mjs
+tests/smokeTestWorkerModelDisposalPolicy.mjs
+tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+This branch was manually reapplied onto that updated base. The old paused disposal-primitives patch was not applied wholesale because `llama_worker/llama.mjs` changed in the shared disposal area.
+
+## Important bugfix interaction preserved
+
+The inherited real-runtime shutdown bugfix made model disposal policy operation-aware:
+
+```text
+resetModel -> disposeModelStack({ operation: "reset_model" })
+shutdownWorker -> disposeModelStack({ operation: "shutdown" })
+```
+
+This branch preserves that distinction. The new session-disposal helper is only passed `workerState.sessions`; it does not own model disposal policy, reset/shutdown operation selection, or terminal model-dispose abandonment behavior.
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- cancellation-core extraction;
+- active-request registry extraction;
+- request-boundary extraction;
+- context retry service extraction;
+- session service extraction;
+- model/reset/shutdown lifecycle extraction;
+- prompt runner extraction;
+- worker protocol router extraction;
+- parent runtime changes;
+- worker protocol redesign;
+- model path/model identity behavior changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction.
+
+## Files added
+
+```text
+llama_worker/session/sessionDisposal.mjs
+llama_worker/context/contextOptions.mjs
+llama_worker/prompt/chunkFactory.mjs
+docs/dev-notes.23
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### Session disposal primitives
+
+`llama_worker/session/sessionDisposal.mjs` exports:
+
+```text
+disposeSessionEntry(entry)
+disposeSessionById(sessions, sessionId)
+disposeAllSessions(sessions)
+disposePartialSessionArtifacts({ session, context })
+```
+
+The extracted helpers preserve the existing disposal behavior:
+
+- session disposal is attempted before context disposal;
+- session disposal keeps `{ disposeSequence: true }`;
+- context disposal remains awaited;
+- cleanup errors are collected and the first error is thrown;
+- all-session cleanup clears the sessions map after iterating;
+- partial context/session cleanup uses the same session-first/context-second ordering.
+
+The helpers accept the `sessions` map as an injected argument and do not import worker state, `llama.mjs`, or lifecycle services.
+
+### Context options
+
+`llama_worker/context/contextOptions.mjs` exports:
+
+```text
+toContextCreateOptions(contextConfig)
+buildContextCreationError({ sessionId, attemptedProfiles, lastError })
+```
+
+The context creation option projection preserves the same keys:
+
+```text
+contextSize
+batchSize
+threads
+flashAttention
+performanceTracking
+sequences
+failedCreationRemedy
+ignoreMemorySafetyChecks
+```
+
+The terminal context-creation error preserves:
+
+```text
+err.sessionId
+err.attemptedContextProfiles
+err.lastError
+```
+
+`buildContextCreationObsoleteError()` remains inline in `llama_worker/llama.mjs` because it depends on request-obsolete state and worker reset/shutdown readiness.
+
+### Chunk factory
+
+`llama_worker/prompt/chunkFactory.mjs` exports:
+
+```text
+createChunkFactory(model)
+```
+
+The extracted helper preserves:
+
+- per-prompt `lastTokens` closure;
+- array-token detokenization path;
+- numeric-token detokenization path;
+- `slice(-8)` token-history behavior;
+- fallback `String(t)` behavior.
+
+## Propagation review
+
+- `tests/helpers/runtimeFixtureFiles.mjs` now includes the three new worker helper modules.
+- Direct smoke-test `RUNTIME_FILES` arrays now include the three new worker helper modules.
+- Existing bugfix file `llama_worker/lifecycle/modelDisposalPolicy.mjs` remains included in fixture lists.
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`.
+- No module under `llama_worker/**` imports `llama_worker/llama.mjs` or `workerBridge.mjs`.
+- No root `inference.mjs` was reintroduced.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static/helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight / policy checks
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result: PASS.
+
+### Mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+Note: the first combined sandbox command hit the harness command timeout while `smokeTestNativeOperationHardStopPolicy.mjs` was still running. The affected test and remaining regression tests were rerun separately with a longer command timeout and passed.
+
+### Toolbox / artifact guard
+
+```bash
+python3 toolbox_pipeline.py preflight /mnt/data/resume_disposal_work/staged \
+  --changed-file-list /mnt/data/resume_disposal_work/changed_files.txt \
+  --out-dir /mnt/data/resume_disposal_work/toolbox_pipeline \
+  --json /mnt/data/resume_disposal_work/toolbox_pipeline/preflight.json \
+  --timeout-tier normal \
+  --show-step-output
+
+python3 artifact_guard.py \
+  --source-root /mnt/data/resume_disposal_work/base/runtime-dev-repo-modularization \
+  --candidate-root /mnt/data/resume_disposal_work/staged \
+  --manifest /mnt/data/resume_disposal_work/artifact_manifest.json \
+  --json /mnt/data/resume_disposal_work/artifact_guard_report.json \
+  --syntax-timeout 60
+```
+
+Result: PASS.
+
+## Real-runtime testing
+
+Not run in this sandbox. Michael should rerun the resumed branch real-runtime gates after local package/application.
+
+Recommended real-runtime checks include:
+
+```bash
+SMOKE_MODE=real-fresh-session-cancel-context-boundary node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-cancel-new-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-reset-new-session-then-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+## Caveats / known risks
+
+```text
+Finding:
+  This branch touches worker disposal helper boundaries after the model-disposal-policy bugfix.
+Affected surface:
+  llama_worker/llama.mjs disposal flow and session/context disposal helpers.
+Why it matters:
+  reset_model must remain conservative while terminal shutdown keeps the bounded model.dispose policy from the bugfix branch.
+Smallest safe correction:
+  Preserve operation-aware disposeModelStack call sites and keep model disposal policy outside this branch's new helpers.
+What still needs verification:
+  Michael-side real-runtime cancellation/shutdown gates after applying the rebased branch.
+```
+
+## Future work not included
+
+Next planned Worker Layout Option C branch remains:
+
+```text
+worker-layout-option-c-cancellation-core-v1
+```
+
+Do not start that branch until this disposal-primitives branch is reviewed, tested, artifact-guarded, real-runtime checked as needed, repo-verified, and checkpointed.

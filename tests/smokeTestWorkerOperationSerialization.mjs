@@ -26,32 +26,18 @@
 import assert from "node:assert/strict";
 import { Worker } from "node:worker_threads";
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
+import { copyRuntimeFixture as copySharedRuntimeFixture } from "./helpers/copyRuntimeFixture.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
-const RUNTIME_FILES = [
-    "config.mjs",
-    "configOverride.mjs",
-    "contextRetryProfiles.mjs",
-    "hardwareProbe.mjs",
-    "inference.mjs",
-    "normalizer.mjs",
-    "observer.mjs",
-    "request.mjs",
-    "retryProfiles.mjs",
-    "scheduler.mjs",
-    "streamController.mjs",
-    "workerBridge.mjs",
-    "llama_worker/llama.mjs"
-];
 
 function logSection(title) {
     console.log(`\n=== ${title} ===`);
@@ -207,14 +193,7 @@ function assertEventOrder(events, firstPredicate, secondPredicate, label) {
 }
 
 async function copyRuntimeFixture() {
-    const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "runtime-worker-serialization-"));
-
-    for (const rel of RUNTIME_FILES) {
-        const src = path.join(REPO_ROOT, rel);
-        const dest = path.join(tmpRoot, rel);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(src, dest);
-    }
+    const tmpRoot = await copySharedRuntimeFixture({ repoRoot: REPO_ROOT, prefix: "runtime-worker-serialization-" });
 
     const fakePackageRoot = path.join(tmpRoot, "node_modules", "node-llama-cpp");
     await mkdir(fakePackageRoot, { recursive: true });
@@ -545,6 +524,11 @@ async function modeCancelBypassesLifecycleQueue() {
 
 
 function createDirectWorkerHarness(extraEnv = {}) {
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${MODE}`
+    });
+
     const messages = [];
     let workerError = null;
     let workerExitCode = null;
@@ -822,7 +806,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

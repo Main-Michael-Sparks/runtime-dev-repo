@@ -1,0 +1,284 @@
+# Runtime Dev Dev Notes 13 — Runtime Lifecycle Session Reset Coordinator v1
+
+## Branch
+
+```text
+runtime-lifecycle-modularization-v1-session-reset-coordinator
+```
+
+## Status
+
+```text
+STAGED / SANDBOX-MOCK VERIFIED
+```
+
+These notes record the behavior-preserving session-reset coordinator extraction from `inference.mjs`.
+
+## Source base
+
+Active formatted source truth used for this branch:
+
+```text
+runtime-dev-repo-modularization.zip
+```
+
+The source base already contained the completed modularization seams:
+
+```text
+nativeOperationPolicy.mjs / docs/dev-notes.09
+runtimeRequestSettlement.mjs / docs/dev-notes.10
+runtimeLifecycleState.mjs / docs/dev-notes.11
+nativeBoundaryCoordinator.mjs / docs/dev-notes.12
+```
+
+## Purpose
+
+Extract parent-side `resetSession()` orchestration into a narrow coordinator module while preserving the existing runtime behavior exactly.
+
+## Files added
+
+```text
+runtimeSessionResetCoordinator.mjs
+docs/dev-notes.13
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Behavior moved
+
+Moved from `inference.mjs` into `runtimeSessionResetCoordinator.mjs`:
+
+```text
+resetSession() runtime-health check
+runtimeResetting rejection
+runtimeShuttingDown rejection
+native hard-stop config resolution
+existing session-reset waiter handling
+session reset waiter creation
+sessionsResetting mutation at reset start
+session-scoped scheduler.cancelBySession() cancellation flow
+parent cancellation notification for canceled requests
+worker cancel messages for canceled requests
+stream cancel / traceCanceled / done rejection / traceDelete order
+worker reset_session message
+waitForNativeOperationBoundary() call for resetSession
+session-scoped timeout marker and timeout error
+```
+
+The public API export remains in `inference.mjs`:
+
+```js
+export async function resetSession(sessionId = "default") {
+    return resetSessionCoordinator(..., sessionId);
+}
+```
+
+## Behavior intentionally not moved
+
+The following intentionally remain in `inference.mjs`:
+
+```text
+public API exports
+prompt admission checks
+worker message router reset_done handling
+worker message router session-reset error handling
+initModel()
+ensureModelReady()
+resetModel()
+shutdownRuntime()
+model reset waiter handling
+shutdown waiter handling
+scheduler creation/ownership
+workerBridge ownership
+request creation
+cancelPrompt()
+shutdown cancellation helper
+model reset cancellation helper
+assertNoSessionResetInProgress()
+```
+
+The following were intentionally not changed:
+
+```text
+llama_worker/llama.mjs
+scheduler.mjs
+workerBridge.mjs
+runtimeRequestSettlement.mjs
+runtimeLifecycleState.mjs
+nativeBoundaryCoordinator.mjs
+nativeOperationPolicy.mjs
+configOverride.mjs
+retry/profile planning
+public API shape
+prompt/output semantics
+worker message protocol
+```
+
+## Preserved session reset invariants
+
+```text
+resetSession timeout does not mark global runtime unhealthy.
+resetSession timeout does not call markRuntimeUnhealthy().
+resetSession timeout does not terminate or recreate the worker.
+resetSession timeout marks waiter.timedOut = true.
+resetSession timeout leaves that session blocked until worker reset completion/error cleanup or process restart.
+Late reset_done after timeout clears the session block without resolving the timed-out caller.
+Late reset error after timeout clears the session block without rejecting the timed-out caller again.
+Concurrent resetSession(sessionId) while active returns the existing promise.
+Concurrent resetSession(sessionId) after timeout throws "Session is resetting: <sessionId>".
+Prompt admission remains session-scoped for sessionsResetting.
+Model reset and shutdown still reject while an active session reset is in progress.
+```
+
+## Cancellation-order preservation
+
+For requests canceled by session reset, the branch preserves the existing order:
+
+```text
+scheduler.cancelBySession(sessionId)
+notifyRequestsCancellationRequested(canceled, reason)
+for each canceled request:
+    sendToWorker({ type: "cancel", id, sessionId, reason })
+    cancelStream(req)
+    traceCanceled(req)
+    req.rejectDone(new Error(reason))
+    traceDelete(req.id)
+```
+
+No new cancel-channel closure was added to the session-reset cancellation loop in this branch.
+
+## Import direction
+
+Preserved import direction:
+
+```text
+inference.mjs -> runtimeSessionResetCoordinator.mjs
+```
+
+Avoided forbidden direction:
+
+```text
+runtimeSessionResetCoordinator.mjs does not import inference.mjs
+```
+
+`runtimeSessionResetCoordinator.mjs` receives its dependencies through a narrow context object from `inference.mjs`.
+
+## Fixture propagation
+
+Because `inference.mjs` now imports `runtimeSessionResetCoordinator.mjs`, seven fixed-fixture smoke tests were updated to include the new module in their `RUNTIME_FILES` lists:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions were intentionally changed.
+
+## Sandbox/mock verification
+
+Syntax check:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Targeted mock/sandbox tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Broader mock/sandbox baseline:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+## Real-runtime verification
+
+Not run in sandbox.
+
+Recommended Michael-side real-runtime verification before merge consideration:
+
+```bash
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Adjust exact modes only if current test comments require it.
+
+## Caveats
+
+```text
+No candidate-specific regression evidence was found in sandbox/mock verification.
+Real model/runtime tests still need Michael-side execution before merge consideration.
+GitHub branch upload verification has not been performed yet.
+```
+
+Prior known real-runtime caveats from earlier lifecycle branches remain preserved and were not addressed by this branch because they are not proven candidate-specific.
+
+## Future work not included
+
+```text
+init coordinator extraction
+model reset coordinator extraction
+shutdown coordinator extraction
+worker protocol router extraction
+request cancellation helper extraction
+scheduler redesign
+worker-local changes
+native hard-kill containment
+configOverride expansion
+model path/model identity redesign
+cleanup/optimization pass
+```

@@ -1,0 +1,254 @@
+# Dev Notes 25 — Worker Layout Option C Context Session v1
+
+## Date
+
+2026-06-07
+
+## Branch
+
+```text
+worker-layout-option-c-context-session-v1
+```
+
+## Purpose
+
+This branch continues Worker Layout Option C by extracting worker context/session helpers from `llama_worker/llama.mjs` while keeping `llama_worker/llama.mjs` as the stable worker entrypoint and composition root.
+
+The extraction is intentionally narrow:
+
+- context creation retry service;
+- session service / session eviction / session reset helper.
+
+## Source base
+
+Implementation was staged from the formatted mirror:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+/mnt/data/context_session_work/runtime-dev-repo-modularization
+```
+
+Active source truth remains GitHub branch:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/modularization
+```
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- model/reset/shutdown lifecycle extraction;
+- prompt runner extraction;
+- worker protocol router extraction;
+- parent runtime changes;
+- worker protocol redesign;
+- model path/model identity behavior changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction;
+- child-process/native containment redesign.
+
+## Files added
+
+```text
+llama_worker/context/contextRetryService.mjs
+llama_worker/session/sessionService.mjs
+docs/dev-notes.25
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### `llama_worker/context/contextRetryService.mjs`
+
+Added `createContextRetryService(...)`, which returns:
+
+```text
+buildContextCreationObsoleteError(requestId)
+createSessionContextWithRetry(sessionId, requestId = null)
+```
+
+Preserved behavior:
+
+- context retry profiles still come from `buildContextRetryProfiles(...)`;
+- retry profile names are still collected in `attemptedProfiles`;
+- `record.contextController` is still assigned before context creation and cleared in `finally`;
+- external cancellation is still synchronized before context creation;
+- cancellation/obsolete state remains terminal and does not retry as a genuine context failure;
+- failed or obsolete context/session creation still disposes partial artifacts;
+- successful wrappers still include `session`, `context`, `contextProfile`, and `contextConfig`;
+- final context creation errors still use `buildContextCreationError(...)`.
+
+### `llama_worker/session/sessionService.mjs`
+
+Added `createSessionService(...)`, which returns:
+
+```text
+findEvictableSessionId()
+getSession(sessionId, requestId = null)
+resetSession(sessionId)
+```
+
+Preserved behavior:
+
+- existing sessions are returned directly;
+- max-session eviction skips active sessions through request-boundary state;
+- all-active session saturation still throws `Cannot create session: all sessions are active`;
+- session map insertion still happens only after successful wrapper creation;
+- `resetSession()` still aborts matching active requests, waits for request boundaries, then disposes the session entry.
+
+### `llama_worker/llama.mjs`
+
+`llama_worker/llama.mjs` now imports and wires:
+
+```js
+import { createContextRetryService } from "./context/contextRetryService.mjs";
+import { createSessionService } from "./session/sessionService.mjs";
+```
+
+Composition-root wiring now creates:
+
+```text
+requestBoundaries
+contextRetryService
+sessionService
+```
+
+`runPromptTask()` still calls `getSession(sessionId, id)` after same-session boundary waiting and request obsolete checks. `handlePromptMessage()` still owns final active-request deletion and cancel-port close.
+
+## Propagation review
+
+Fixture propagation was updated in:
+
+```text
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+New fixture entries:
+
+```text
+llama_worker/context/contextRetryService.mjs
+llama_worker/session/sessionService.mjs
+```
+
+Architecture propagation:
+
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`;
+- `llama_worker/llama.mjs` remains the worker entrypoint/composition root;
+- no worker-domain module imports `llama_worker/llama.mjs` or `workerBridge.mjs`;
+- parent runtime files were not changed.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static/helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight / policy checks
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result: PASS.
+
+### Mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+### Toolbox preflight
+
+```bash
+python3 toolbox_pipeline.py preflight ...
+```
+
+Result: PASS.
+
+Toolbox preflight covered repo fingerprint, codebase blueprint, recursive fixture manifest check, and impact map for the changed files.
+
+## Review notes
+
+During copy-completeness review, an initial mechanical removal accidentally removed `disposeModelStack()` and `initModel()` along with the moved context/session block. This was corrected before syntax and smoke testing. The final staged `llama_worker/llama.mjs` preserves both functions inline; lifecycle extraction remains out of scope.
+
+## Caveats / known risks
+
+```text
+Finding:
+  Context retry/session service extraction moves code that coordinates context creation aborts, partial artifact cleanup, session insertion, and resetSession waits.
+Affected surface:
+  createSessionContextWithRetry, getSession, resetSession, contextController ownership, active session eviction.
+Why it matters:
+  Small ordering drift could cause canceled context creation to retry, partial artifacts to leak, active sessions to be evicted, or resetSession to dispose before request boundaries settle.
+Smallest safe correction:
+  Keep contextController ownership in the context retry service, keep session insertion after successful wrapper creation, and keep resetSession ordering as abort -> wait boundaries -> dispose.
+What still needs verification:
+  Michael real-runtime context/session carry-forward gates before merge readiness.
+```
+
+## Real-runtime gates recommended before merge readiness
+
+```bash
+SMOKE_MODE=real-fresh-session-cancel-context-boundary node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-cancel-new-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-reset-new-session-then-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-prompt-then-shutdown-control node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-no-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+## Future work not included
+
+- lifecycle service extraction;
+- prompt runner extraction;
+- worker protocol router extraction;
+- final worker-layout cleanup;
+- parent runtime changes;
+- child-process/native containment redesign.

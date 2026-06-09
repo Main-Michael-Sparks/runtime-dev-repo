@@ -1,0 +1,261 @@
+# Dev Notes 16 — Runtime Lifecycle Model Reset Coordinator v1
+
+Date: 2026-06-03
+Branch: `runtime-lifecycle-modularization-v1-model-reset-coordinator`
+Source base: `runtime-dev-repo-modularization.zip`
+Observed source ZIP SHA-256: `7f6bace7246d81471cc7901c15b1380f7d77ec1372b50ae5f4f0058a859bdf78`
+
+## Status
+
+```text
+STAGED / MOCK-SANDBOX VERIFIED
+```
+
+These notes record the behavior-preserving model reset coordinator extraction from `inference.mjs`.
+
+## Purpose
+
+The purpose of this branch is to reduce `inference.mjs` responsibility load by moving parent-side model reset orchestration into:
+
+```text
+runtimeModelResetCoordinator.mjs
+```
+
+The public API export remains in `inference.mjs`:
+
+```js
+export async function resetModel() {
+    return resetModelCoordinator({
+        config,
+        lifecycle,
+        scheduler,
+        sendToWorker,
+        terminateWorker,
+        recreateWorker,
+        resolveNativeOperationHardStopConfig,
+        assertRuntimeHealthy,
+        markRuntimeUnhealthy,
+        waitForNativeOperationBoundary,
+        assertNoSessionResetInProgress,
+        notifyRequestsCancellationRequested,
+        cancelStream,
+        traceCanceled,
+        traceDelete,
+        reinitializeModelAfterReset,
+        createInitCoordinatorContext
+    });
+}
+```
+
+## Files added
+
+```text
+runtimeModelResetCoordinator.mjs
+docs/dev-notes.16
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No worker-local files were intentionally modified.
+
+## Behavior moved
+
+Moved from `inference.mjs` into `runtimeModelResetCoordinator.mjs`:
+
+```text
+runtime-health assertion before reset
+runtimeResetting guard
+runtimeShuttingDown guard
+native hard-stop config resolution for model reset
+session-reset-in-progress rejection
+runtimeResetting flag set/clear
+scheduler readiness freeze
+cancel-all request settlement loop for model reset
+parent-side cancellation notification for reset-canceled requests
+worker cancel messages for reset-canceled requests
+modelResetWaiter creation and cleanup
+reset_model worker command
+native operation boundary wait for model reset
+runtime unhealthy marking on model reset timeout
+session reset waiter/set clearing after successful reset boundary
+worker termination after safe worker reset boundary
+worker recreation after termination
+post-reset re-init through the existing init coordinator helper
+```
+
+## Behavior intentionally not moved
+
+The following remain in `inference.mjs`:
+
+```text
+public API exports
+prompt admission and queueing
+cancelPrompt fast path
+resetSession public wrapper and coordinator context wiring
+shutdownRuntime public wrapper and coordinator context wiring
+worker message router
+ready/init-error router handling
+model_reset_done router handling
+scheduler ownership
+workerBridge ownership
+init coordinator context construction
+request cancellation notification helper shared by reset/session/shutdown
+```
+
+This branch intentionally does not extract the worker protocol router, scheduler, worker bridge, shutdown coordinator changes, session reset coordinator changes, init coordinator redesign, native hard-stop policy redesign, worker-local behavior, config override behavior, or cleanup-only refactors.
+
+## Coordinator interface
+
+`runtimeModelResetCoordinator.mjs` exports:
+
+```js
+export async function resetModelCoordinator(ctx) {}
+```
+
+`inference.mjs` supplies the coordinator with explicit dependencies instead of allowing the module to import parent runtime singletons directly.
+
+## Behavior preservation notes
+
+The extraction preserves the current parent-side model reset behavior:
+
+```text
+resetModel still rejects when runtime is unhealthy
+resetModel still rejects during active runtime reset
+resetModel still rejects during runtime shutdown
+resetModel still rejects while a non-timed-out session reset is in progress
+scheduler readiness is still set false before cancel-all settlement
+all queued/running requests are still canceled with reason "Model reset"
+parent MessageChannel cancellation notification still precedes worker cancel messages
+worker cancel messages still include id, sessionId, and reason
+streams still cancel before trace deletion
+request done promises still reject with Error("Model reset")
+modelResetWaiter is still installed before reset_model is sent
+reset_model still waits through waitForNativeOperationBoundary
+model reset timeout still marks the runtime unhealthy and requires process restart
+session reset state is still cleared only after successful worker reset boundary
+worker termination/recreation still happens only after cooperative reset boundary
+post-reset re-init still uses reinitializeModelAfterReset(createInitCoordinatorContext())
+runtimeResetting and modelResetWaiter are still cleared in finally
+```
+
+## Fixture propagation
+
+Because `inference.mjs` now imports `runtimeModelResetCoordinator.mjs`, the new module was added to the fixture-copy `RUNTIME_FILES` lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions were intentionally changed.
+
+## Sandbox verification completed
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+### Targeted/broader sandbox/mock tests
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Notes:
+
+```text
+A first combined run reached the sandbox command timeout while partway through smokeTestWorkerNativeCancellationBoundary.mjs.
+The worker-native cancellation suite was rerun separately with a longer sandbox timeout and completed with its final pass marker.
+No [FAIL] markers were found in the retained sandbox logs.
+```
+
+## Review notes
+
+Review of changed files against the source base showed only the intended differences:
+
+```text
+inference.mjs imports runtimeModelResetCoordinator.mjs and delegates resetModel()
+runtimeModelResetCoordinator.mjs is new
+the seven fixture-copy smoke tests include runtimeModelResetCoordinator.mjs
+docs/dev-notes.16 is new
+```
+
+## Recommended local real-runtime verification
+
+Before merge readiness, run at least:
+
+```bash
+node ./tests/smokeTestLifecycleRegression.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+The highest-value real-runtime checks for this branch are:
+
+```text
+model reset idle and active paths
+init -> resetModel -> prompt without prior prompt
+reset after configOverride init
+native hard-stop resetModel timeout behavior
+worker-native resetModel cancellation boundary
+hardware-aware init followed by resetModel/re-init behavior
+```
+
+## Known caveats
+
+```text
+Sandbox verification used mock/skip modes only; model-backed real-runtime tests still need Michael-side execution.
+No GitHub branch verification has been performed yet for this branch.
+No worker-local files were intentionally modified.
+This branch does not address worker protocol router extraction.
+This branch does not change shutdown/session reset/init coordinator behavior beyond dependency wiring for model reset.
+```
+
+## Suggested next workflow step
+
+```text
+Review candidate artifact and patch.
+Run Michael-side real-runtime verification.
+If local verification passes, upload to GitHub branch.
+Then verify GitHub branch contents against the candidate before checkpoint/bootstrap docs.
+```

@@ -29,32 +29,18 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile, mkdir, cp } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
+import { copyRuntimeFixture as copySharedRuntimeFixture } from "./helpers/copyRuntimeFixture.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
-const RUNTIME_FILES = [
-    "config.mjs",
-    "configOverride.mjs",
-    "contextRetryProfiles.mjs",
-    "hardwareProbe.mjs",
-    "inference.mjs",
-    "normalizer.mjs",
-    "observer.mjs",
-    "request.mjs",
-    "retryProfiles.mjs",
-    "scheduler.mjs",
-    "streamController.mjs",
-    "workerBridge.mjs",
-    "llama_worker/llama.mjs"
-];
 
 function logSection(title) {
     console.log(`\n=== ${title} ===`);
@@ -129,7 +115,7 @@ async function modePureContextProfiles() {
         normalizeContextCreationRetryOptions,
         deriveBoundedContextSize,
         buildContextRetryProfiles
-    } = await import("../contextRetryProfiles.mjs");
+    } = await import("../runtime/config/contextRetryProfiles.mjs");
 
     const normalized = normalizeContextCreationRetryOptions({});
     assert.equal(normalized.enabled, true, "creationRetry defaults enabled");
@@ -400,11 +386,17 @@ async function modeRealRuntimeContextRetryFallback() {
         "REAL_CONTEXT_RETRY_BASE_CONTEXT_SIZE must be a positive integer"
     );
 
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:real-context-retry-fallback`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
     const {
         initModel,
         prompt,
         shutdownRuntime
-    } = await import("../inference.mjs");
+    } = await import(`${runtimeUrl}?mode=${MODE}&label=real-context-retry-fallback&t=${Date.now()}`);
 
     try {
         await initModel({
@@ -445,17 +437,10 @@ async function modeRealRuntimeContextRetryFallback() {
 }
 
 async function createMockRuntimeFixture() {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "ctx-retry-smoke-"));
-
-    for (const rel of RUNTIME_FILES) {
-        const src = path.join(REPO_ROOT, rel);
-        const dest = path.join(tempDir, rel);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(src, dest);
-    }
+    const tempDir = await copySharedRuntimeFixture({ repoRoot: REPO_ROOT, prefix: "ctx-retry-smoke-" });
 
     await writeFile(
-        path.join(tempDir, "hardwareProbe.mjs"),
+        path.join(tempDir, "runtime/config/hardwareProbe.mjs"),
         `export async function probeHardware() {
     return {
         platform: "mock",
@@ -528,7 +513,7 @@ async function modeMockContextRetrySuccess() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=retry-success-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=retry-success-${Date.now()}`
         );
 
         const req = await prompt("context retry success", { stream: false });
@@ -566,7 +551,7 @@ async function modeMockContextRetryFailure() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=retry-failure-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=retry-failure-${Date.now()}`
         );
 
         const req = await prompt("context retry failure", { stream: false });
@@ -608,7 +593,7 @@ async function modeMockCleanupFailureAbort() {
 
     try {
         const { prompt, shutdownRuntime } = await import(
-            `${pathToFileURL(path.join(fixtureDir, "inference.mjs")).href}?mode=cleanup-failure-${Date.now()}`
+            `${pathToFileURL(path.join(fixtureDir, "runtime.mjs")).href}?mode=cleanup-failure-${Date.now()}`
         );
 
         const req = await prompt("context cleanup failure", { stream: false });
@@ -687,7 +672,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

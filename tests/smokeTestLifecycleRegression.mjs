@@ -19,11 +19,15 @@
 //   explicit recovery.
 
 import { spawn } from "child_process";
+import path from "path";
 import process from "process";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const SELF_PATH = fileURLToPath(import.meta.url);
+const TEST_DIR = path.dirname(SELF_PATH);
+const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
 function logSection(title) {
   console.log(`\n=== ${title} ===`);
@@ -73,6 +77,16 @@ async function readPromptResult(req, { logChunks = false } = {}) {
   return req.done;
 }
 
+async function importRealRuntime(label) {
+  assertRealRuntimeDependencyPreflight({
+    repoRoot: REPO_ROOT,
+    smokeName: `${path.basename(SELF_PATH)}:${label}`,
+  });
+
+  const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+  return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
+}
+
 async function runChild(mode) {
   return new Promise((resolve, reject) => {
     console.log("[SMOKE] spawning child:", mode);
@@ -113,7 +127,7 @@ async function runChild(mode) {
 async function modeInvalidOptionsCurrentContract() {
   logSection("current init option validation");
 
-  const { initModel, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, shutdownRuntime } = await importRealRuntime("invalid-options-current-contract");
 
   await expectReject(
     "unsupported init retry strategy",
@@ -155,7 +169,7 @@ async function modeInvalidOptionsCurrentContract() {
 async function modeDuplicateExplicitInit() {
   logSection("duplicate explicit init rejection");
 
-  const { initModel, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, shutdownRuntime } = await importRealRuntime("duplicate-explicit-init");
 
   const firstInit = initModel({
     attempts: 1,
@@ -178,7 +192,7 @@ async function modeDuplicateExplicitInit() {
 async function modePromptAutoInit() {
   logSection("prompt auto-init via ensureModelReady");
 
-  const { prompt, shutdownRuntime } = await import("../inference.mjs");
+  const { prompt, shutdownRuntime } = await importRealRuntime("prompt-auto-init");
 
   const req = await prompt("Say hello briefly.");
   const result = await readPromptResult(req, { logChunks: false });
@@ -196,7 +210,7 @@ async function modePromptAutoInit() {
 async function modeRetryTimeoutRecovery() {
   logSection("default init ready-timeout failure then explicit recovery");
 
-  const { initModel, prompt, shutdownRuntime } = await import("../inference.mjs");
+  const { initModel, prompt, shutdownRuntime } = await importRealRuntime("retry-timeout-recovery");
 
   await expectReject(
     "forced default init timeout",
@@ -237,9 +251,9 @@ async function modeLifecycleRegression() {
     resetSession,
     resetModel,
     shutdownRuntime,
-  } = await import("../inference.mjs");
+  } = await importRealRuntime("lifecycle-regression");
 
-  const { getTrace, getAllTraces } = await import("../observer.mjs");
+  const { getTrace, getAllTraces } = await import("../runtime/observability/observer.mjs");
 
   await initModel({
     attempts: 2,
@@ -420,7 +434,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("\n[SMOKE TEST FAILURE]");
-  console.error(err);
+  reportSmokeTestFailure(err);
   process.exitCode = 1;
 });

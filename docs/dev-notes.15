@@ -1,0 +1,279 @@
+# Dev Notes 15 — Runtime Lifecycle Init Coordinator v1
+
+Date: 2026-05-28
+Branch: `runtime-lifecycle-modularization-v1-init-coordinator`
+Source base: `runtime-dev-repo-modularization.zip`
+Observed source ZIP SHA-256: `cd693011ca701919f9d627a6a703ca1c53b60ece1f6709e225ec68e869ac9dc0`
+
+## Status
+
+```text
+STAGED / MOCK-SANDBOX VERIFIED
+```
+
+These notes record the behavior-preserving init coordinator extraction from `inference.mjs`.
+
+## Purpose
+
+The purpose of this branch is to reduce `inference.mjs` responsibility load by moving parent-side initialization orchestration into:
+
+```text
+runtimeInitCoordinator.mjs
+```
+
+The public API export remains in `inference.mjs`:
+
+```js
+export async function initModel(options = {}) {
+    return initModelCoordinator(createInitCoordinatorContext(), options);
+}
+```
+
+`prompt()` still remains in `inference.mjs` and still performs admission checks before and after readiness. It now calls the coordinator readiness helper:
+
+```js
+await ensureModelReadyCoordinator(createInitCoordinatorContext());
+```
+
+`resetModel()` remains in `inference.mjs`. Only its re-init sub-step was delegated:
+
+```js
+await reinitializeModelAfterReset(createInitCoordinatorContext());
+```
+
+## Files added
+
+```text
+runtimeInitCoordinator.mjs
+docs/dev-notes.15
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No worker-local files were intentionally modified.
+
+## Behavior moved
+
+Moved from `inference.mjs` into `runtimeInitCoordinator.mjs`:
+
+```text
+init option key validation
+hardwareAware option normalization
+init retry option resolution
+hardware probe decision logic
+worker config snapshot creation for init attempts
+init profile and attempt-plan creation
+last-success fixed init plan creation
+single-attempt init send/timeout behavior
+init retry cycle execution
+final init error construction
+explicit initModel coordination
+ensureModelReady / prompt auto-init coordination
+resetModel re-init planning/execution helper
+```
+
+## Behavior intentionally not moved
+
+The following remain in `inference.mjs`:
+
+```text
+public API exports
+prompt admission and queueing
+cancelPrompt
+resetSession public wrapper
+resetModel orchestration
+shutdownRuntime public wrapper
+worker message router
+ready/init-error router handling
+scheduler ownership
+workerBridge ownership
+request cancellation loops
+request settlement calls
+native boundary/unhealthy coordination calls
+```
+
+This branch intentionally does not extract the model reset coordinator, worker protocol router, scheduler, worker bridge, or any worker-local behavior.
+
+## Coordinator interface
+
+`runtimeInitCoordinator.mjs` exports:
+
+```js
+export async function initModelCoordinator(ctx, options = {}) {}
+export async function ensureModelReadyCoordinator(ctx) {}
+export async function startInitCycle(ctx, initPlan) {}
+export async function reinitializeModelAfterReset(ctx) {}
+```
+
+`inference.mjs` supplies a narrow context object:
+
+```js
+function createInitCoordinatorContext() {
+    return {
+        config,
+        lifecycle,
+        scheduler,
+        sendToWorker,
+        terminateWorker,
+        recreateWorker,
+        assertRuntimeHealthy
+    };
+}
+```
+
+## Behavior preservation notes
+
+The extraction preserves the current parent-side init behavior:
+
+```text
+explicit init still rejects during runtime unhealthy, shutdown, or reset
+explicit init after ready still rejects meaningful init options
+explicit duplicate init still rejects while init is active
+prompt auto-init still waits on the full init cycle
+failed explicit custom/profile init still blocks unsafe silent default auto-init
+retry attempts still use the same attempt-plan generation semantics
+worker terminate/recreate ordering during init retry is preserved
+ready timeout behavior is preserved
+last successful effective config reuse is preserved
+resetModel still reinitializes before resolving
+active init attempt id / stale ready-message protection remains router-owned in inference.mjs
+```
+
+## Fixture propagation
+
+Because `inference.mjs` now imports `runtimeInitCoordinator.mjs`, the new module was added to the fixture-copy `RUNTIME_FILES` lists in:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions were intentionally changed.
+
+## Sandbox verification completed
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+### Targeted sandbox/mock tests
+
+```bash
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Failure markers in targeted log:
+
+```text
+0
+```
+
+### Broader sandbox/mock baseline
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Failure markers in broader mock/sandbox baseline log:
+
+```text
+0
+```
+
+## Known caveats
+
+Real-runtime tests were not run in the sandbox. They require Michael's local environment with `node-llama-cpp` and model files available.
+
+The worker message router remains in `inference.mjs` by design. The ready/init-error branches still directly mutate lifecycle state, because router extraction is a later branch.
+
+`resetModel()` remains in `inference.mjs` by design. This branch delegates only the re-init planning/execution sub-step to avoid mixing model reset extraction with init coordinator extraction.
+
+## Recommended Michael-side real-runtime checks
+
+Recommended local verification after reviewing/uploading this candidate:
+
+```bash
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+```
+
+## Future work not included
+
+Not included in this branch:
+
+```text
+model reset coordinator extraction
+worker protocol router extraction
+session reset changes
+shutdown changes
+worker-local changes
+scheduler redesign
+workerBridge redesign
+configOverride expansion
+model path/model identity override
+prompt/output semantic changes
+cleanup-only refactors
+optimization work
+legacy test migration
+```
+
+## Recommended next branch
+
+Tentative next branch after this branch is verified and checkpointed:
+
+```text
+runtime-lifecycle-modularization-v1-model-reset-coordinator
+```
+
+Re-review current source before starting that branch.

@@ -1,0 +1,92 @@
+# Dev Notes 19 — Runtime Layout Folder Structure v1
+
+This note records the behavior-preserving physical layout migration after the public entrypoint rename to `runtime.mjs`.
+
+## Purpose
+
+Move parent-runtime internal modules into a `runtime/` folder with subfolders while preserving public runtime behavior and path-sensitive worker/model boundaries.
+
+This change is layout-only. It does not redesign request scheduling, worker execution, lifecycle behavior, prompt/output semantics, config override behavior, retry/profile planning, shutdown/drain semantics, model identity/path resolution, or worker protocol messages.
+
+## Public entrypoint and stable root files
+
+`runtime.mjs` remains the canonical public runtime entrypoint at the repo root.
+
+During the first two layout units, these path-sensitive files were intentionally left at the repo root while parent runtime internals moved first:
+
+```text
+config.mjs
+configOverride.mjs
+contextRetryProfiles.mjs
+hardwareProbe.mjs
+retryProfiles.mjs
+workerBridge.mjs
+llama_worker/llama.mjs
+```
+
+`docs/dev-notes.20` records the follow-up config/profile helper layout unit, which moved the config/profile helpers into `runtime/config/`.
+
+`workerBridge.mjs` still constructs the worker from `./llama_worker/llama.mjs`, and `llama_worker/llama.mjs` still resolves the configured model path from the worker file location.
+
+## Moved modules
+
+Parent runtime internals were moved into these folders:
+
+```text
+runtime/lifecycle/nativeBoundaryCoordinator.mjs
+runtime/lifecycle/nativeOperationPolicy.mjs
+runtime/lifecycle/runtimeInitCoordinator.mjs
+runtime/lifecycle/runtimeLifecycleState.mjs
+runtime/lifecycle/runtimeModelResetCoordinator.mjs
+runtime/lifecycle/runtimeSessionResetCoordinator.mjs
+runtime/lifecycle/runtimeShutdownCoordinator.mjs
+runtime/lifecycle/workerProtocolRouter.mjs
+runtime/observability/observer.mjs
+runtime/request/request.mjs
+runtime/request/runtimeRequestSettlement.mjs
+runtime/request/scheduler.mjs
+runtime/stream/normalizer.mjs
+runtime/stream/streamController.mjs
+```
+
+Historical notes before this one may still mention the old flat module paths because they describe earlier branch states.
+
+## Test fixture propagation
+
+Fixture-copy `RUNTIME_FILES` lists were updated to use the nested runtime paths where required. The fixture copy helpers already create destination parent directories recursively, so nested runtime paths remain copyable in temporary smoke-test repos.
+
+## Behavior boundaries preserved
+
+This layout branch preserves:
+
+```text
+queue-based concurrency
+worker as native/model execution boundary
+parent runtime ownership of request lifecycle
+parent-side stream shaping
+config as primary tuning surface
+cancelPrompt fast path
+workerBridge generation guard behavior
+worker protocol message shape
+init/reset/shutdown semantics
+model path/model identity non-overrideability
+```
+
+## Verification focus
+
+Recommended verification for this branch remains:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+grep -R "inference\.mjs" -n --include='*.mjs' .
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+If this branch is uploaded and considered for merge readiness, Michael-side real-runtime checks should still be run because fixture paths and runtime imports changed.

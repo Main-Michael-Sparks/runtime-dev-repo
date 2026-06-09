@@ -1,0 +1,71 @@
+# dev-notes.28 — worker-layout-option-c-router-v1
+
+Date: 2026-06-07
+Branch/slice: worker-layout-option-c-router-v1
+
+## Purpose
+
+Extract the worker-side message routing body from `llama_worker/llama.mjs` into `llama_worker/messages/workerProtocolRouter.mjs` while preserving `llama_worker/llama.mjs` as the worker entrypoint and composition root.
+
+## Scope
+
+Added:
+
+```text
+llama_worker/messages/workerProtocolRouter.mjs
+```
+
+Modified:
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+fixture-copy smoke tests with local RUNTIME_FILES arrays
+```
+
+## Preserved behavior
+
+The router extraction preserves the current worker route behavior:
+
+```text
+init: set active init config, init model, return
+cancel: bypass lifecycle serialization, build prompt abort metadata, abort active request, return
+shutdown: enqueue serialized shutdown, post shutdown_done after completion, return
+reset_session: enqueue serialized reset_session, assert ready inside operation, reset session, post reset_done with sessionId, return
+reset_model: enqueue serialized reset_model, assert ready inside operation, reset model, post model_reset_done, return
+prompt: assert ready before handlePromptMessage(msg)
+unknown message: no-op fallthrough
+catch/error: preserve initErrorMeta fallback and postWorkerError shape
+```
+
+## Non-goals
+
+This branch does not change parent runtime code, worker protocol shapes, lifecycle service behavior, prompt runner cleanup ownership, context/session behavior, config/retry behavior, model path behavior, cancellation semantics, cleanup, or optimization.
+
+## Propagation
+
+`llama_worker/messages/workerProtocolRouter.mjs` was added to the shared runtime fixture list and the active fixture-copy smoke tests that still maintain local `RUNTIME_FILES` arrays.
+
+## Validation notes
+
+Recommended validation remains:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Real-runtime tests remain required before merge-readiness because this branch touches worker message routing, cancellation, lifecycle command routing, and prompt routing.

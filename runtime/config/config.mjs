@@ -1,6 +1,6 @@
 export const config = {
     modelLoad: {
-        baseModel: "../../../base/mistral-7b-instruct-v0.2.Q4_K_M.gguf",
+        baseModel: "../../../base/Q2.5-4b-VL-I/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
         gpuLayers: 0,
         useMmap: true,
         useMlock: false,

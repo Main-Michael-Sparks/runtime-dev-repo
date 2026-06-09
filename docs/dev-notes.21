@@ -1,0 +1,171 @@
+# Dev Notes 21 — Worker Layout Option C Preflight Tests v1
+
+Status: staged, syntax-checked, helper-checked, mock-smoke-tested, artifact-guarded locally against the sandbox candidate.
+
+## Purpose
+
+This branch adds preflight test and fixture infrastructure before production code movement in `llama_worker/llama.mjs`.
+
+The goal is to create regression guards for the later Option C worker split around:
+
+- exact worker protocol message shape;
+- stream ordering and parent final-result settlement behavior;
+- worker-side model path immutability;
+- runtime fixture-copy coverage;
+- future `llama_worker/**` import-cycle hygiene.
+
+## Source base
+
+Sandbox candidate was staged from the current local formatted mirror at:
+
+```text
+/mnt/data/review_repo_mod/runtime-dev-repo-modularization
+```
+
+That mirror has the post-parent-layout compact root shape:
+
+```text
+runtime.mjs
+workerBridge.mjs
+runtime/**
+llama_worker/llama.mjs
+tests/**
+```
+
+GitHub `modularization` remains the intended source truth before upload/merge verification.
+
+## Added files
+
+```text
+tests/helpers/runtimeFixtureFiles.mjs
+tests/helpers/copyRuntimeFixture.mjs
+tests/helpers/directWorkerHarness.mjs
+tests/tools/checkWorkerImportCycles.mjs
+tests/tools/checkRuntimeFixtureCoverage.mjs
+tests/smokeTestWorkerProtocolContract.mjs
+tests/smokeTestWorkerStreamOrdering.mjs
+tests/smokeTestWorkerModelPathImmutability.mjs
+docs/dev-notes.21
+```
+
+## Production files changed
+
+None.
+
+The branch intentionally does not modify:
+
+```text
+runtime.mjs
+workerBridge.mjs
+runtime/** production modules
+llama_worker/llama.mjs
+```
+
+## Implementation summary
+
+### Fixture helpers
+
+`tests/helpers/runtimeFixtureFiles.mjs` defines the shared runtime fixture manifest and worker entrypoint.
+
+`tests/helpers/copyRuntimeFixture.mjs` copies an explicit repo-relative file list into an isolated temporary runtime tree. It rejects absolute paths and parent-directory traversal.
+
+`tests/helpers/directWorkerHarness.mjs` creates an isolated runtime fixture, injects a deterministic mock `node-llama-cpp` package, spawns the worker directly, collects messages, waits for protocol events, and cleans up the temporary worker/fixture.
+
+### Static guard tools
+
+`tests/tools/checkWorkerImportCycles.mjs` checks that:
+
+- worker internals do not import `llama_worker/llama.mjs`;
+- worker internals do not import `workerBridge.mjs`;
+- `workerBridge.mjs` still points at `./llama_worker/llama.mjs`;
+- no current worker import cycle exists.
+
+`tests/tools/checkRuntimeFixtureCoverage.mjs` checks that:
+
+- every shared fixture file exists;
+- files reachable from `runtime.mjs` and `llama_worker/llama.mjs` are included in the shared fixture manifest;
+- any remaining local `RUNTIME_FILES` arrays in active tests still match the shared list.
+
+Existing smoke tests were not weakened or mass-rewritten in this branch. Local fixture arrays remain in place for now but are guarded for equality with the shared manifest.
+
+### New smoke tests
+
+`tests/smokeTestWorkerProtocolContract.mjs` locks the externally visible worker protocol shape for ready, stream, done, error, reset, model reset, and shutdown messages.
+
+`tests/smokeTestWorkerStreamOrdering.mjs` verifies deterministic stream token order per request id through the direct worker path, plus parent-side streaming/non-streaming final result behavior through the runtime path.
+
+`tests/smokeTestWorkerModelPathImmutability.mjs` verifies that `configOverride` still rejects `modelLoad.baseModel`, and that a malicious `configSnapshot.modelLoad.baseModel` does not change worker `loadModel({ modelPath })` during init or after reset/re-init.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### New tools/tests
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+```
+
+Result: PASS.
+
+### Existing mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+## Toolbox/helper checks
+
+`toolbox_pipeline.py preflight` passed with:
+
+- repo fingerprint snapshot;
+- codebase blueprint scan;
+- impact map.
+
+Impact was limited to new test/helper/tool/doc files. No production importers were affected.
+
+`artifact_guard.py` passed after manifest correction. The first guard manifest incorrectly listed new files as `expectedChangedFiles`; that failed because artifact guard classifies them as candidate-only, not changed existing files. The corrected manifest uses `newFiles` and passes.
+
+## Propagation review
+
+- Shared fixture manifest includes current post-layout runtime modules.
+- Existing active fixture arrays still match the shared manifest.
+- New helper dependencies are test-only.
+- No production runtime/worker module imports new test helpers.
+- No root `inference.mjs` is present in the candidate.
+- New tests use mock `node-llama-cpp`; no real model required.
+
+## Caveats
+
+This is not a production worker split. It is a preflight/test-infrastructure branch.
+
+Mock/sandbox tests do not prove native/model behavior. Later production branches touching worker cancellation, context creation, prompt streaming, reset, shutdown, or router behavior still need Michael-side real-runtime verification for merge readiness unless explicitly waived.
+
+## Recommended next step
+
+Upload/push this branch for GitHub direct verification. After repo verification and review, the next branch in the Option C sequence is:
+
+```text
+worker-layout-option-c-state-core-v1
+```
+
+That next branch should extract only the first owner/leaf pieces: worker state, worker operation queue, prompt-abort error helper, and outbound message helpers.

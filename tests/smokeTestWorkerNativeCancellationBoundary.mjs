@@ -31,9 +31,11 @@
 //   REAL_READY_TIMEOUT_MS=120000
 //   REAL_PROMPT_DEADLINE_MS=300000
 //   REAL_SHUTDOWN_DEADLINE_MS=240000
-//   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=1
+//   REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=0
+//   REAL_ACTIVE_PROMPT_SETTLE_PROBE_MS=0
 //   REAL_NATIVE_BOUNDARY_DEADLINE_MS=240000
 //   REAL_FIRST_CHUNK_TIMEOUT_MS=120000
+//   REAL_SMOKE_LONG_PROMPT_ITEMS=2000
 //   REAL_SMOKE_CONTEXT_SIZE=2048
 //   REAL_SMOKE_BATCH_SIZE=128
 //
@@ -47,11 +49,12 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { assertRealRuntimeDependencyPreflight, reportSmokeTestFailure } from "./helpers/realRuntimeDependencyPreflight.mjs";
+import { copyRuntimeFixture as copySharedRuntimeFixture } from "./helpers/copyRuntimeFixture.mjs";
 
 const SMOKE_TEST_VERSION = "worker-native-cancellation-boundary-v1-message-channel-v9";
 const MODE = process.env.SMOKE_MODE || "orchestrator";
@@ -59,21 +62,6 @@ const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
-const RUNTIME_FILES = [
-    "config.mjs",
-    "configOverride.mjs",
-    "contextRetryProfiles.mjs",
-    "hardwareProbe.mjs",
-    "inference.mjs",
-    "normalizer.mjs",
-    "observer.mjs",
-    "request.mjs",
-    "retryProfiles.mjs",
-    "scheduler.mjs",
-    "streamController.mjs",
-    "workerBridge.mjs",
-    "llama_worker/llama.mjs"
-];
 
 function logSection(title) {
     console.log(`\n=== ${title} ===`);
@@ -95,6 +83,23 @@ function readPositiveIntEnv(name, fallback) {
     return value;
 }
 
+function readNonNegativeIntEnv(name, fallback) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === "") return fallback;
+
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`${name} must be a non-negative integer`);
+    }
+
+    return value;
+}
+
+async function sleepIfPositive(ms) {
+    if (ms > 0) {
+        await sleep(ms);
+    }
+}
 
 function readOptionalPositiveIntEnv(name) {
     const raw = process.env[name];
@@ -190,57 +195,92 @@ async function readPromptResult(req) {
     return req.done;
 }
 
+function createRealActivePromptSetupError(label, detail) {
+    const err = new Error([
+        `[SMOKE SETUP FAILURE] ${label} completed before the smoke could exercise active-prompt cancellation.`,
+        "This real-runtime smoke requires a still-active prompt target; the prompt completed too quickly for the cancellation boundary under test.",
+        detail,
+        "Fix: increase REAL_SMOKE_LONG_PROMPT_ITEMS, use a slower local model/config, or rerun with REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS=0."
+    ].filter(Boolean).join("\n"));
+
+    err.code = "SMOKE_REAL_RUNTIME_ACTIVE_PROMPT_NOT_AVAILABLE";
+    return err;
+}
+
 function startStreamPump(req, { logChunks = false } = {}) {
     const stats = {
         chunks: 0,
         text: ""
     };
 
+    let settleFirstChunk;
+    let firstChunkSettled = false;
+    const firstChunk = new Promise((resolve, reject) => {
+        settleFirstChunk = { resolve, reject };
+    });
+
+    function resolveFirstChunk() {
+        if (firstChunkSettled) return;
+        firstChunkSettled = true;
+        settleFirstChunk.resolve(stats);
+    }
+
+    function rejectFirstChunk(err) {
+        if (firstChunkSettled) return;
+        firstChunkSettled = true;
+        settleFirstChunk.reject(err);
+    }
+
     const done = (async () => {
-        if (!req.stream) return stats;
-
-        const reader = req.stream.getReader();
-
-        while (true) {
-            const { value, done: streamDone } = await reader.read();
-            if (streamDone) break;
-
-            stats.chunks += 1;
-            stats.text += String(value ?? "");
-
-            if (logChunks) {
-                console.log("chunk:", JSON.stringify(value));
-            }
+        if (!req.stream) {
+            rejectFirstChunk(new Error("streaming is not enabled"));
+            return stats;
         }
 
-        return stats;
+        try {
+            const reader = req.stream.getReader();
+
+            while (true) {
+                const { value, done: streamDone } = await reader.read();
+                if (streamDone) break;
+
+                stats.chunks += 1;
+                stats.text += String(value ?? "");
+                resolveFirstChunk();
+
+                if (logChunks) {
+                    console.log("chunk:", JSON.stringify(value));
+                }
+            }
+
+            if (stats.chunks === 0) {
+                rejectFirstChunk(new Error("stream closed before first streamed chunk"));
+            }
+
+            return stats;
+        } catch (err) {
+            rejectFirstChunk(err);
+            throw err;
+        }
     })();
 
-    return { stats, done };
+    return { stats, firstChunk, done };
 }
 
 async function waitForFirstStreamChunk(req, pump, label) {
     const timeoutMs = readPositiveIntEnv("REAL_FIRST_CHUNK_TIMEOUT_MS", 120000);
 
     await Promise.race([
-        waitForCondition(
-            () => pump.stats.chunks > 0,
+        withDeadline(
+            pump.firstChunk,
             timeoutMs,
-            `${label} first streamed chunk`,
-            50
+            `${label} first streamed chunk`
         ),
-        pump.done.then(
-            () => {
-                if (pump.stats.chunks === 0) {
-                    throw new Error(`[FAIL] ${label} stream closed before first streamed chunk`);
-                }
-            },
-            (err) => {
-                throw new Error(
-                    `[FAIL] ${label} stream errored before first streamed chunk: ${err?.message ?? err}`
-                );
-            }
-        ),
+        pump.firstChunk.catch((err) => {
+            throw new Error(
+                `[FAIL] ${label} stream did not produce a first chunk: ${err?.message ?? err}`
+            );
+        }),
         req.done.then(
             (value) => {
                 if (pump.stats.chunks === 0) {
@@ -250,9 +290,11 @@ async function waitForFirstStreamChunk(req, pump, label) {
                 }
             },
             (err) => {
-                throw new Error(
-                    `[FAIL] ${label} request rejected before first streamed chunk: ${err?.message ?? err}`
-                );
+                if (pump.stats.chunks === 0) {
+                    throw new Error(
+                        `[FAIL] ${label} request rejected before first streamed chunk: ${err?.message ?? err}`
+                    );
+                }
             }
         )
     ]);
@@ -265,19 +307,46 @@ function collectDone(req) {
     );
 }
 
+async function assertRealPromptStillPending(req, label) {
+    const probeMs = readNonNegativeIntEnv("REAL_ACTIVE_PROMPT_SETTLE_PROBE_MS", 0);
+    const pending = Symbol("pending");
+    const result = await Promise.race([
+        collectDone(req),
+        sleep(probeMs).then(() => pending)
+    ]);
+
+    if (result === pending) return;
+
+    if (result.status === "resolved") {
+        throw createRealActivePromptSetupError(
+            label,
+            `Prompt resolved before cancellation was issued. Result prefix: ${String(result.value).slice(0, 160)}`
+        );
+    }
+
+    throw new Error(`[FAIL] ${label} rejected before cancellation was issued: ${result.message}`);
+}
+
 async function readExpectedRejectionAndPump(req, pump, label, expectedText, deadlineMs) {
     await withDeadline(pump.done, deadlineMs, `${label} stream close`);
     await expectReject(label, () => req.done, expectedText);
 }
 
 function longRealPrompt(label) {
-    return `${label}. Begin immediately, then write a numbered list of 120 short items about runtime lifecycle safety. ` +
-        `Keep each item short and continue until complete.`;
+    const itemCount = readPositiveIntEnv("REAL_SMOKE_LONG_PROMPT_ITEMS", 2000);
+
+    return `${label}. Begin immediately, then write exactly ${itemCount} numbered short items about runtime lifecycle safety. ` +
+        `Do not summarize. Do not stop early. Keep each item short and continue the numbered list until complete.`;
 }
 
 async function importRealRuntime(label) {
-    const inferenceUrl = pathToFileURL(path.join(REPO_ROOT, "inference.mjs")).href;
-    return import(`${inferenceUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
+    assertRealRuntimeDependencyPreflight({
+        repoRoot: REPO_ROOT,
+        smokeName: `${path.basename(SELF_PATH)}:${label}`
+    });
+
+    const runtimeUrl = pathToFileURL(path.join(REPO_ROOT, "runtime.mjs")).href;
+    return import(`${runtimeUrl}?mode=${MODE}&label=${label}&t=${Date.now()}`);
 }
 
 async function readShortRealPrompt(prompt, text, options = {}) {
@@ -382,16 +451,9 @@ async function runChild(mode) {
 }
 
 async function copyRuntimeFixture() {
-    const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "runtime-worker-native-cancel-"));
+    const tmpRoot = await copySharedRuntimeFixture({ repoRoot: REPO_ROOT, prefix: "runtime-worker-native-cancel-" });
 
-    for (const rel of RUNTIME_FILES) {
-        const src = path.join(REPO_ROOT, rel);
-        const dest = path.join(tmpRoot, rel);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(src, dest);
-    }
-
-    const configPath = path.join(tmpRoot, "config.mjs");
+    const configPath = path.join(tmpRoot, "runtime/config/config.mjs");
     let configText = await readFile(configPath, "utf8");
     configText = configText.replace(
         /maxInFlight:\s*\d+,/,
@@ -629,8 +691,8 @@ async function withMockRuntime(fn, env = {}) {
     }
 
     try {
-        const inferenceUrl = pathToFileURL(path.join(tmpRoot, "inference.mjs")).href;
-        const runtime = await import(`${inferenceUrl}?mode=${MODE}&t=${Date.now()}`);
+        const runtimeUrl = pathToFileURL(path.join(tmpRoot, "runtime.mjs")).href;
+        const runtime = await import(`${runtimeUrl}?mode=${MODE}&t=${Date.now()}`);
         await fn(runtime, eventLogPath);
     } finally {
         for (const key of Object.keys(mergedEnv)) {
@@ -1078,7 +1140,7 @@ async function modeRealCancelActivePromptNativeBoundary() {
 
     const { initModel, prompt, cancelPrompt, shutdownRuntime } = await importRealRuntime("real-cancel-active-prompt-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
+    const cancelDelayMs = readNonNegativeIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 0);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
@@ -1093,7 +1155,8 @@ async function modeRealCancelActivePromptNativeBoundary() {
     const pump = startStreamPump(req);
 
     await waitForFirstStreamChunk(req, pump, "real cancel active prompt");
-    await sleep(cancelDelayMs);
+    await sleepIfPositive(cancelDelayMs);
+    await assertRealPromptStillPending(req, "real cancel active prompt");
     assert.equal(cancelPrompt(req.id), true);
     await readExpectedRejectionAndPump(req, pump, "real canceled prompt", "Prompt canceled", nativeBoundaryDeadlineMs);
 
@@ -1115,7 +1178,7 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
 
     const { initModel, prompt, resetSession, shutdownRuntime } = await importRealRuntime("real-reset-session-active-prompt-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
+    const cancelDelayMs = readNonNegativeIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 0);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const shutdownDeadlineMs = readPositiveIntEnv("REAL_SHUTDOWN_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
@@ -1130,7 +1193,8 @@ async function modeRealResetSessionActivePromptNativeBoundary() {
     const pump = startStreamPump(req);
 
     await waitForFirstStreamChunk(req, pump, "real resetSession active prompt");
-    await sleep(cancelDelayMs);
+    await sleepIfPositive(cancelDelayMs);
+    await assertRealPromptStillPending(req, "real resetSession active prompt");
 
     await Promise.all([
         readExpectedRejectionAndPump(req, pump, "real session-reset canceled prompt", "Session reset: real-reset-alpha", nativeBoundaryDeadlineMs),
@@ -1155,7 +1219,7 @@ async function modeRealShutdownAbortNativeBoundary() {
 
     const { initModel, prompt, shutdownRuntime } = await importRealRuntime("real-shutdown-abort-native-boundary");
     const readyTimeoutMs = readPositiveIntEnv("REAL_READY_TIMEOUT_MS", 120000);
-    const cancelDelayMs = readPositiveIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 1);
+    const cancelDelayMs = readNonNegativeIntEnv("REAL_ACTIVE_PROMPT_CANCEL_DELAY_MS", 0);
     const nativeBoundaryDeadlineMs = readPositiveIntEnv("REAL_NATIVE_BOUNDARY_DEADLINE_MS", 240000);
     const promptDeadlineMs = readPositiveIntEnv("REAL_PROMPT_DEADLINE_MS", 300000);
 
@@ -1169,7 +1233,8 @@ async function modeRealShutdownAbortNativeBoundary() {
     const pump = startStreamPump(req);
 
     await waitForFirstStreamChunk(req, pump, "real shutdown abort active prompt");
-    await sleep(cancelDelayMs);
+    await sleepIfPositive(cancelDelayMs);
+    await assertRealPromptStillPending(req, "real shutdown abort active prompt");
 
     await Promise.all([
         readExpectedRejectionAndPump(req, pump, "real shutdown canceled prompt", "Runtime shutdown", nativeBoundaryDeadlineMs),
@@ -1204,6 +1269,7 @@ async function modeRealDrainTimeoutNativeBoundary() {
     const pump = startStreamPump(req);
 
     await waitForFirstStreamChunk(req, pump, "real drain-timeout active prompt");
+    await assertRealPromptStillPending(req, "real drain-timeout active prompt");
 
     await Promise.all([
         readExpectedRejectionAndPump(req, pump, "real drain-timeout canceled prompt", "Runtime shutdown timeout", nativeBoundaryDeadlineMs),
@@ -1343,7 +1409,6 @@ async function main() {
 }
 
 main().catch((err) => {
-    console.error("\n[SMOKE TEST FAILURE]");
-    console.error(err);
+    reportSmokeTestFailure(err);
     process.exitCode = 1;
 });

@@ -1,0 +1,144 @@
+# dev-notes.17 — Worker Protocol Router Extraction
+
+## Branch / work item
+
+`runtime-lifecycle-modularization-v1-worker-protocol-router`
+
+## Purpose
+
+Extract parent-side worker message routing from `inference.mjs` into `workerProtocolRouter.mjs` while preserving the current worker protocol contract and runtime lifecycle behavior.
+
+This is behavior-preserving modularization only. It does not redesign worker messages, workerBridge ownership, scheduler behavior, request settlement semantics, stream shaping, init/reset/shutdown coordinators, config override surfaces, model identity/path behavior, or worker-local/native execution behavior.
+
+## Files added
+
+```text
+workerProtocolRouter.mjs
+docs/dev-notes.17
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+`workerProtocolRouter.mjs` now exports:
+
+```js
+export function createWorkerProtocolRouter(ctx) { ... }
+```
+
+`inference.mjs` remains the composition root and wires the router through explicit dependency injection:
+
+```js
+onWorkerMessage(createWorkerProtocolRouter({
+    config,
+    lifecycle,
+    scheduler,
+    normalizeToken,
+    pushStream,
+    closeStream,
+    errorStream,
+    traceDone,
+    traceError,
+    traceDelete,
+    settleCompletedRequest,
+    settleFailedRequest
+}));
+```
+
+The router module owns the moved `toErrorObject(raw)` helper and the worker message routing body that previously lived inline inside `inference.mjs`.
+
+## Responsibilities moved
+
+```text
+ready message handling with init-attempt stale guard
+session reset done/error waiter routing
+model reset done/error waiter routing
+shutdown done/error waiter routing
+stream token routing and parent-side stream push
+request done routing through scheduler.complete and settleCompletedRequest
+init-error routing with init-attempt stale guard
+legacy/no-attempt init failure routing
+request error routing through scheduler.fail and settleFailedRequest
+worker error object normalization helper
+```
+
+## Responsibilities intentionally kept in inference.mjs
+
+```text
+public API exports
+composition root wiring
+lifecycle state instance creation
+scheduler creation
+init coordinator context construction
+prompt admission checks
+cancelPrompt fast path
+parent cancellation notification helpers
+resetSession/resetModel/shutdownRuntime wrapper context wiring
+workerBridge ownership through imported bridge helpers
+```
+
+## Behavior preservation checklist
+
+The extraction preserves:
+
+```text
+ready stale-attempt guard
+ready state mutation order
+scheduler readiness set on ready
+session reset waiter deletion and timedOut guard
+model reset waiter clear-before-resolve behavior
+shutdown waiter clear-before-resolve behavior
+stream ignored for missing/canceled/done requests
+stream normalization before finalText append
+stream finalText append before pushStream
+done path uses scheduler.complete before settlement
+settleCompletedRequest dependency object and semantics
+init error stale-attempt guard
+model reset error precedence before generic init failure
+shutdown error precedence before generic init failure
+legacy/no-attempt init failure path
+session reset error timedOut guard
+request error uses scheduler.fail before settlement
+settleFailedRequest dependency object and semantics
+unknown messages remain ignored as before
+```
+
+## Fixture propagation
+
+`workerProtocolRouter.mjs` was added to the fixture-copy `RUNTIME_FILES` lists in the current smoke tests that build temporary runtime trees from `inference.mjs` dependencies.
+
+## Verification notes
+
+Recommended verification for this branch:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+## Caveats
+
+This branch is intentionally narrow. It does not add new router tests beyond preserving and rerunning the existing lifecycle/router/settlement smoke suite. A future stale-message-specific router test could be considered if routing behavior is redesigned later, but it is not required for this behavior-preserving extraction.
+
+## Recommended next work
+
+After this branch is verified and checkpointed, the next work item should be reassessed against the current modularization state. Likely candidates are final cleanup/plumbing review or a separate future branch for one of the remaining open feature areas, not mixed into this router extraction.

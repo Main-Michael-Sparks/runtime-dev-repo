@@ -1,0 +1,110 @@
+# dev-notes.31 — runtime-public-entrypoint-contract-v1
+
+Date: 2026-06-08
+Branch/slice: runtime-public-entrypoint-contract-v1
+
+## Purpose
+
+Add a static public-entrypoint contract guard so `runtime.mjs` remains a thin public API/composition root after the parent-runtime and Worker Layout Option C modularization work.
+
+This branch is intended to close the current modularization arc for now. It protects the current entrypoint boundary against future casual re-bloating instead of performing another production extraction.
+
+## Scope
+
+Added:
+
+```text
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+docs/dev-notes.31
+```
+
+Modified:
+
+```text
+none
+```
+
+## Public entrypoint contract guarded
+
+The new smoke test statically checks that `runtime.mjs` exports exactly:
+
+```text
+cancelPrompt
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+```
+
+It also checks that `runtime.mjs` continues to act as a composition root by referencing the expected runtime coordinator/helper modules while avoiding direct worker/native/model execution dependencies.
+
+## Important test design note
+
+The smoke test intentionally does not import `runtime.mjs`. Current `runtime.mjs` wires the worker protocol router at module load, and `workerBridge.mjs` creates the worker when `onWorkerMessage()` is called without an existing worker. A static source-text contract test avoids starting a worker and avoids requiring `node-llama-cpp` for this guard branch.
+
+## Protected boundaries
+
+The test guards these entrypoint boundaries:
+
+```text
+runtime.mjs remains the stable public runtime API entrypoint
+runtime.mjs remains a composition root, not a parent-runtime dumping ground
+workerBridge.mjs continues targeting ./llama_worker/llama.mjs
+llama_worker/llama.mjs remains the worker entrypoint/composition root
+executable non-legacy source does not depend on inference.mjs
+runtime.mjs does not directly import node-llama-cpp or llama_worker internals
+```
+
+## Non-goals
+
+This branch does not include:
+
+```text
+production runtime behavior changes
+production worker behavior changes
+public API changes
+scheduler changes
+config/configOverride changes
+prompt/output semantic changes
+model identity/path changes
+lifecycle behavior changes
+cancellation behavior changes
+cleanup refactors
+optimization work
+new feature work
+real-runtime dependency requirements
+```
+
+## Propagation review
+
+No runtime fixture file lists were changed or required. The new smoke test reads source files directly and imports only Node built-ins.
+
+No production imports changed. No worker imports changed. No package entrypoints changed. No test fixture architecture changed.
+
+## Validation notes
+
+Recommended validation for this branch:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Real-runtime testing is not required if this branch remains test/docs only.
+
+## Caveats
+
+This is a static guard, not behavioral proof. It catches entrypoint/export/wiring drift and stale `inference.mjs` executable references, but it does not replace lifecycle, cancellation, shutdown, stream, or real-runtime smoke suites when production runtime behavior changes.
+
+GitHub remains source truth unless Michael says otherwise. Direct ref-qualified GitHub source inspection should still be used after upload before claiming repo-verified status.
+
+## Future work not included
+
+Future work should be feature-specific, bug-specific, tool-calling-specific, or explicitly approved cleanup/optimization. Further production extraction from `runtime.mjs` should not happen by inertia.

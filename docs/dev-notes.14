@@ -1,0 +1,282 @@
+# Dev Notes 14 — Runtime Lifecycle Shutdown Coordinator v1
+
+Date: 2026-05-28
+Branch: `runtime-lifecycle-modularization-v1-shutdown-coordinator`
+Source base: corrected `runtime-dev-repo-modularization.zip`
+Observed source ZIP SHA-256: `38007fbc61f2a6503efdf6c12a8f1305c5e56996872b03f331d9e082fe4b73a3`
+
+## Status
+
+```text
+STAGED / MOCK-SANDBOX VERIFIED
+```
+
+This branch extracts parent-side shutdown orchestration from `inference.mjs` into a narrow coordinator module while preserving existing behavior.
+
+## Purpose
+
+The purpose of this branch is to reduce `inference.mjs` responsibility load by moving shutdown-specific coordination into:
+
+```text
+runtimeShutdownCoordinator.mjs
+```
+
+The public API export remains in `inference.mjs`:
+
+```js
+export async function shutdownRuntime(options = {}) {
+    return shutdownRuntimeCoordinator({
+        config,
+        lifecycle,
+        scheduler,
+        sendToWorker,
+        terminateWorker,
+        resolveNativeOperationHardStopConfig,
+        assertRuntimeHealthy,
+        markRuntimeUnhealthy,
+        waitForNativeOperationBoundary,
+        assertNoSessionResetInProgress,
+        notifyRequestsCancellationRequested,
+        cancelStream,
+        traceCanceled,
+        traceDelete
+    }, options);
+}
+```
+
+## Files added
+
+```text
+runtimeShutdownCoordinator.mjs
+docs/dev-notes.14
+```
+
+## Files modified
+
+```text
+inference.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Behavior moved
+
+Moved from `inference.mjs` into `runtimeShutdownCoordinator.mjs`:
+
+```text
+VALID_SHUTDOWN_MODES
+shutdown option validation
+shutdown init-active check
+shutdown request cancellation loop
+shutdown worker-finalization flow
+abort shutdown orchestration
+drain shutdown orchestration
+drain-with-timeout shutdown orchestration
+scheduler-idle-or-timeout race helper
+```
+
+## Behavior intentionally not moved
+
+The following remain in `inference.mjs` after this branch:
+
+```text
+public API exports
+prompt admission
+cancelPrompt()
+initModel()
+ensureModelReady()
+runInitCycle()
+resetSession() public wrapper
+resetModel()
+worker message router
+shutdown_done router handling
+worker error routing during shutdown
+scheduler creation/ownership
+workerBridge ownership
+request creation
+session reset coordinator composition
+native boundary coordinator composition
+request settlement helper composition
+```
+
+## Behavior preservation notes
+
+Preserved shutdown option behavior:
+
+```text
+mode defaults to "abort"
+supported modes remain "abort", "drain", and "drain-with-timeout"
+unsupported mode error text is unchanged
+drain-with-timeout still requires timeoutMs
+timeoutMs must remain a positive integer
+timeoutMs remains rejected for abort and drain modes
+```
+
+Preserved `shutdownRuntime()` preflight order:
+
+```text
+validateShutdownOptions(options)
+resolveNativeOperationHardStopConfig(config)
+assertRuntimeHealthy(lifecycle)
+runtimeResetting rejection
+runtimeShuttingDown rejection
+active init rejection
+active session reset rejection
+mode-specific shutdown path
+```
+
+Preserved abort behavior:
+
+```text
+lifecycle.runtimeShuttingDown = true
+scheduler.setReady(false)
+cancelRequestsForShutdown("Runtime shutdown")
+finalizeWorkerShutdown()
+```
+
+Preserved plain drain behavior:
+
+```text
+lifecycle.runtimeShuttingDown = true
+scheduler.waitForIdle()
+finalizeWorkerShutdown()
+```
+
+Plain drain still does not gain abort behavior. Already accepted queued/pending work remains allowed to complete.
+
+Preserved drain-with-timeout behavior:
+
+```text
+lifecycle.runtimeShuttingDown = true
+wait for scheduler idle or timeout
+if timeout wins:
+    scheduler.setReady(false)
+    cancelRequestsForShutdown("Runtime shutdown timeout")
+finalizeWorkerShutdown()
+```
+
+Preserved shutdown cancellation order:
+
+```text
+scheduler.cancelAll()
+notifyRequestsCancellationRequested(canceled, reason)
+for each canceled request:
+    sendToWorker({ type: "cancel", id, sessionId, reason })
+    cancelStream(req)
+    traceCanceled(req)
+    req.rejectDone(new Error(reason))
+    traceDelete(req.id)
+```
+
+Preserved final worker shutdown order:
+
+```text
+resolveNativeOperationHardStopConfig(config)
+create shutdown waiter
+waitForShutdown.catch(() => {})
+lifecycle.shutdownWaiter = { resolve, reject }
+sendToWorker({ type: "shutdown" })
+waitForNativeOperationBoundary(waitForShutdown, shutdownTimeoutMs, "shutdown", hardStopConfig)
+if timed out: markRuntimeUnhealthy(lifecycle, { operation: "shutdown", timeoutMs }) and throw
+clear session reset tracking
+terminateWorker()
+finally lifecycle.shutdownWaiter = null
+```
+
+## Fixture propagation
+
+Because `inference.mjs` now imports `runtimeShutdownCoordinator.mjs`, seven fixed-fixture smoke tests were updated to include the new module in their `RUNTIME_FILES` lists:
+
+```text
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+No test assertions were intentionally changed.
+
+## Verification run in sandbox
+
+Syntax check:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result:
+
+```text
+PASS
+```
+
+Targeted mock/sandbox tests:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+Broader mock/sandbox baseline:
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result:
+
+```text
+PASS
+```
+
+## Real-runtime verification
+
+Real-runtime tests were not run in the sandbox. Recommended Michael-side real-runtime verification before merge readiness:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SMOKE_MODE=real-orchestrator node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+node ./tests/smokeTestLifecycleRegression.mjs
+node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+## Known caveats / non-blockers
+
+This branch is intended as behavior-preserving modularization, not a shutdown redesign.
+
+It does not add hard-kill behavior, child-process containment, worker-local changes, new shutdown modes, scheduler changes, or request settlement changes.
+
+## Recommended next branch after this one
+
+Tentative next branch after this shutdown coordinator branch is fully verified and checkpointed:
+
+```text
+runtime-lifecycle-modularization-v1-init-coordinator
+```
+
+Re-evaluate current source before starting that branch.

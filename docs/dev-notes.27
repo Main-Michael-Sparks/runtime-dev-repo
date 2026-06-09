@@ -1,0 +1,304 @@
+# Dev Notes 27 — Worker Layout Option C Prompt Runner v1
+
+## Date
+
+2026-06-07
+
+## Branch
+
+```text
+worker-layout-option-c-prompt-runner-v1
+```
+
+## Purpose
+
+This branch continues Worker Layout Option C by extracting worker prompt execution and prompt-message active-request lifecycle handling from `llama_worker/llama.mjs` into a dedicated prompt runner service while keeping `llama_worker/llama.mjs` as the stable worker entrypoint and composition root.
+
+The extraction is intentionally narrow:
+
+- prompt task execution;
+- prompt message active-request setup;
+- prompt final cleanup ownership.
+
+## Source base
+
+Implementation was staged from the formatted repository mirror:
+
+```text
+/mnt/data/runtime-dev-repo-modularization.zip
+```
+
+Active source truth remains GitHub branch:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/modularization
+```
+
+The prior lifecycle-services checkpoint warned that GitHub HTML/blob/directory views may appear stale or mixed shortly after uploads. This branch should be verified after upload through direct source/raw paths, preferably cache-busted when GitHub views are inconsistent.
+
+## Explicit non-goals preserved
+
+This branch does not include:
+
+- worker protocol router extraction;
+- parent runtime changes;
+- worker protocol redesign;
+- model lifecycle changes;
+- reset lifecycle changes;
+- shutdown lifecycle changes;
+- context/session service changes;
+- configOverride surface changes;
+- prompt/output semantic changes;
+- cleanup or optimization outside the narrow extraction;
+- child-process/native containment redesign.
+
+## Files added
+
+```text
+llama_worker/prompt/promptRunner.mjs
+docs/dev-notes.27
+```
+
+## Files modified
+
+```text
+llama_worker/llama.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+## Implementation summary
+
+### `llama_worker/prompt/promptRunner.mjs`
+
+Added `createPromptRunner(...)`, which returns:
+
+```text
+runPromptTask(record, msg)
+handlePromptMessage(msg)
+```
+
+Preserved behavior in `runPromptTask(...)`:
+
+- same-session prompts still wait for prior same-session request boundaries before prompt work;
+- external cancellation is still synchronized before session creation;
+- obsolete-before-session checks still run before `getSession(sessionId, id)`;
+- `getSession(sessionId, id)` is still called with the request id;
+- external cancellation is still synchronized after session creation;
+- chunk factory creation still uses the current worker model;
+- generation options still read from `state.activeConfig.model`;
+- prompt abort signal and `stopOnAbortSignal: false` are preserved;
+- `onToken(...)` still synchronizes cancellation before token handling;
+- obsolete requests still suppress token emission;
+- `stream: false` still suppresses `postStream(...)` while leaving final `postDone(...)` behavior intact;
+- obsolete-after-prompt checks still run before posting done;
+- `postDone({ id, res: result })` shape is unchanged.
+
+Preserved behavior in `handlePromptMessage(...)`:
+
+- active request record creation remains before prompt work;
+- request records are still inserted into `state.activeRequests` before `record.promise` starts;
+- `record.promise` still wraps the entire prompt task and cleanup boundary;
+- `record.error` is still assigned when prompt work throws;
+- prompt abort errors are still suppressed from worker `error` posting;
+- final cleanup still sets `record.state = "done"`;
+- final cleanup still deletes the active request from `state.activeRequests`;
+- final cleanup still closes `record.cancelPort` in a guarded `try/catch`.
+
+### `llama_worker/llama.mjs`
+
+`llama_worker/llama.mjs` now imports and wires:
+
+```js
+import { createPromptRunner } from "./prompt/promptRunner.mjs";
+```
+
+Composition-root wiring creates:
+
+```text
+promptRunner
+```
+
+and keeps the inline router call site unchanged in behavior:
+
+```js
+if (msg.type === "prompt") {
+    assertWorkerReadyForNativeCommand();
+    await handlePromptMessage(msg);
+}
+```
+
+Critical ownership preserved:
+
+- `llama_worker/llama.mjs` remains the worker entrypoint and composition root;
+- worker protocol router remains inline;
+- reset/session/shutdown serialization remains inline and still uses `enqueueWorkerOperation(...)`;
+- prompt readiness assertion remains inline before prompt handling;
+- active request deletion and cancel-port close moved with `handlePromptMessage(...)` as one prompt-runner unit, not into abort helpers or lifecycle helpers;
+- lifecycle helpers still only abort and wait, and do not delete active request records.
+
+## Propagation review
+
+Fixture propagation was updated in:
+
+```text
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+New fixture entry:
+
+```text
+llama_worker/prompt/promptRunner.mjs
+```
+
+Architecture propagation:
+
+- `workerBridge.mjs` still targets `./llama_worker/llama.mjs`;
+- `llama_worker/llama.mjs` remains the worker entrypoint/composition root;
+- no worker-domain module imports `llama_worker/llama.mjs` or `workerBridge.mjs`;
+- parent runtime files were not changed.
+
+## Tests run
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: PASS.
+
+### Static/helper checks
+
+```bash
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+```
+
+Result: PASS.
+
+### Worker preflight / policy checks
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerProtocolContract.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerStreamOrdering.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerModelPathImmutability.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result: PASS.
+
+### Mock/sandbox regression set
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: PASS.
+
+Operational note: one combined long-running shell command hit the sandbox command timeout while `smokeTestWorkerOperationSerialization.mjs` was running. The interrupted suite was rerun with a longer timeout and passed. The earlier partial individual modes also passed. This was treated as a harness timeout, not a behavior failure.
+
+## Review notes
+
+Prompt-runner extraction was staged after lifecycle-services extraction. The branch intentionally keeps the router inline so message routing, init metadata error shaping, lifecycle queueing, reset/session/shutdown behavior, and prompt readiness assertion remain at the same composition-root call sites.
+
+Copy-completeness focus points checked:
+
+- `runPromptTask(...)` moved as a behavior-preserving unit into `promptRunner.mjs`;
+- `handlePromptMessage(...)` moved as a behavior-preserving unit into `promptRunner.mjs`;
+- final active-request deletion and cancel-port close stayed inside `handlePromptMessage(...)` final cleanup;
+- cancellation helpers still abort/synchronize only and do not delete request records;
+- `llama_worker/llama.mjs` no longer keeps inline prompt task definitions but still wires prompt handling from the composition root;
+- fixture file lists include `llama_worker/prompt/promptRunner.mjs`.
+
+## Caveats / known risks
+
+```text
+Finding:
+  Prompt-runner extraction moves active-request final cleanup into a new module.
+Affected surface:
+  handlePromptMessage, activeRequests, request-boundary waits, same-session prompt sequencing, cancelPort lifecycle.
+Why it matters:
+  Early deletion from activeRequests would break reset/shutdown boundary waiting and same-session prompt sequencing.
+Smallest safe correction:
+  Keep record.state assignment, activeRequests.delete(id), and cancelPort.close() inside handlePromptMessage() final cleanup as one unit; do not move deletion into abort helpers or lifecycle helpers.
+What still needs verification:
+  Michael real-runtime prompt/cancel/reset/shutdown carry-forward gates before merge readiness.
+```
+
+```text
+Finding:
+  Prompt token emission and final done behavior were moved behind dependency-injected postStream/postDone helpers.
+Affected surface:
+  runPromptTask, onToken, stream false behavior, streaming/final result fallback behavior.
+Why it matters:
+  Small drift could change stream token order, suppress final done, or alter non-streaming final result behavior.
+Smallest safe correction:
+  Keep onToken ordering exactly: synchronize cancellation, check obsolete, return on stream false, chunk token, then postStream. Keep postDone after obsolete-after-prompt check.
+What still needs verification:
+  Real-runtime prompt streaming and cancellation behavior under local node-llama-cpp.
+```
+
+```text
+Finding:
+  GitHub HTML/blob/directory views may be stale or mixed after upload.
+Affected surface:
+  Repo verification step.
+Why it matters:
+  A stale view can falsely report missing promptRunner wiring or missing fixture propagation.
+Smallest safe correction:
+  Verify direct file paths and prefer cache-busted raw/source inspection for exact symbols after Michael uploads/applies the branch.
+What still needs verification:
+  Direct GitHub source inspection after branch upload/application.
+```
+
+## Real-runtime gates recommended before merge readiness
+
+Prompt-runner-focused carry-forward gates:
+
+```bash
+SMOKE_MODE=real-fresh-session-cancel-context-boundary node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SMOKE_MODE=real-cancel-new-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-same-session-followup-reset-new-session-then-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-prompt-then-shutdown-control node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+SMOKE_MODE=real-cancel-no-followup-shutdown node ./tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs
+```
+
+Additional real-runtime suggestions:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+```
+
+## Future work not included
+
+- worker protocol router extraction;
+- final worker-layout cleanup;
+- parent runtime changes;
+- child-process/native containment redesign;
+- cleanup pass;
+- optimization pass.

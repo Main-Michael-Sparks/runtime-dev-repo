@@ -40,17 +40,17 @@ const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
 const RUNTIME_FILES = [
-  "config.mjs",
-  "configOverride.mjs",
-  "contextRetryProfiles.mjs",
-  "hardwareProbe.mjs",
-  "inference.mjs",
-  "normalizer.mjs",
-  "observer.mjs",
-  "request.mjs",
-  "retryProfiles.mjs",
-  "scheduler.mjs",
-  "streamController.mjs",
+  "runtime/config/config.mjs",
+  "runtime/config/configOverride.mjs",
+  "runtime/config/contextRetryProfiles.mjs",
+  "runtime/config/hardwareProbe.mjs",
+  "runtime.mjs",
+  "runtime/stream/normalizer.mjs",
+  "runtime/observability/observer.mjs",
+  "runtime/request/request.mjs",
+  "runtime/config/retryProfiles.mjs",
+  "runtime/request/scheduler.mjs",
+  "runtime/stream/streamController.mjs",
   "workerBridge.mjs",
   "llama_worker/llama.mjs",
 ];
@@ -133,7 +133,7 @@ async function createRuntimeFixture({
     await cp(src, dest);
   }
 
-  const configPath = path.join(tempDir, "config.mjs");
+  const configPath = path.join(tempDir, "runtime/config/config.mjs");
   let configText = await readFile(configPath, "utf8");
 
   const originalWorkerDir = path.join(REPO_ROOT, "llama_worker");
@@ -177,7 +177,7 @@ async function createRuntimeFixture({
 }
 
 async function importRuntimeFromRoot(rootDir, label) {
-  const href = `${pathToFileURL(path.join(rootDir, "inference.mjs")).href}?isolation=${label}-${Date.now()}`;
+  const href = `${pathToFileURL(path.join(rootDir, "runtime.mjs")).href}?isolation=${label}-${Date.now()}`;
   return import(href);
 }
 
