@@ -1,3 +1,110 @@
-# runtime-dev-repo
-node-llama-cpp runtime development repo
-for active development only. 
+# Runtime Dev Runtime
+
+This repository is the active development tree for Michael Sparks' local `node-llama-cpp` runtime.
+
+The current codebase is organized around a stable public runtime entrypoint, a parent-side runtime layer, and a worker-side model/native execution boundary.
+
+## Current source shape
+
+```text
+runtime.mjs                 public runtime API / composition root
+workerBridge.mjs            stable worker bridge to ./llama_worker/llama.mjs
+runtime/                    parent runtime modules
+  config/                   base config, config override validation, retry/profile helpers
+  lifecycle/                init/reset/shutdown/native-boundary coordinators
+  observability/            trace helpers
+  request/                  request creation, scheduler, settlement helpers
+  stream/                   token normalization and parent-side stream shaping
+llama_worker/               worker/native/model boundary modules
+  llama.mjs                 worker composition root
+  cancellation/             active request registry and request-boundary helpers
+  context/                  context options and context retry service
+  errors/                   worker prompt abort error helper
+  lifecycle/                model/reset/shutdown lifecycle services
+  messages/                 worker outbound messages and protocol router
+  prompt/                   chunk creation and prompt runner
+  serialization/            worker operation queue
+  session/                  session service and disposal helpers
+  state/                    worker state factory
+```
+
+Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
+
+## Public API
+
+`runtime.mjs` currently exports exactly:
+
+```text
+cancelPrompt
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+```
+
+The static public-entrypoint guard is:
+
+```bash
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+## Fast local checks
+
+Use these before packaging or uploading branch candidates:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Broader static/mock checks used by recent branches include:
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Real-runtime tests require a working local `node-llama-cpp` and model setup. Mock/sandbox tests are useful regression guards, but they do not prove native/model behavior.
+
+## Documentation
+
+Start with:
+
+```text
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+Historical branch notes are preserved as `docs/dev-notes.01` through the latest `docs/dev-notes.*` file. They are useful checkpoints and caveat records, but current architecture decisions should be read through the current docs first.
+
+## Feature branch guidance
+
+Future features such as embeddings, tool/function calling, or multimodal input should be planned as separate feature branches. Cleanup work should stay separate from feature work and optimization work.
+
+Do not change these boundaries casually:
+
+```text
+queue-based concurrency
+worker as model/native execution boundary
+parent runtime owns request lifecycle
+parent-side stream shaping
+config as primary tuning surface
+careful init/reset/shutdown behavior
+prompt/output semantics
+model identity/path guardrails
+worker protocol shape
+```

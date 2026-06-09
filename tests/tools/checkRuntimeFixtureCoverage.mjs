@@ -3,7 +3,7 @@
 // Purpose:
 // - Static preflight guard for runtime fixture drift.
 // - Verifies the shared fixture manifest includes production files reachable from runtime.mjs and llama_worker/llama.mjs.
-// - Verifies older duplicated RUNTIME_FILES arrays still match the shared list until each test is fully migrated.
+// - Flags reintroduced local RUNTIME_FILES arrays so fixture-copy smoke tests keep using the shared manifest.
 
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -16,6 +16,10 @@ const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "../..");
 const MANIFEST = new Set(RUNTIME_FIXTURE_FILES);
+
+// Keep this empty unless a future test has a documented reason to carry a local
+// fixture list. Prefer tests/helpers/runtimeFixtureFiles.mjs for all runtime fixtures.
+const ALLOWED_LOCAL_RUNTIME_FILE_ARRAYS = new Set();
 
 function extractStaticImports(source) {
     const imports = [];
@@ -113,11 +117,19 @@ async function main() {
         assert.ok(MANIFEST.has(rel), `RUNTIME_FIXTURE_FILES missing reachable production file: ${rel}`);
     }
 
+    let localArrayCount = 0;
+
     for (const full of await listTestFiles(path.join(REPO_ROOT, "tests"))) {
         const rel = normalizeRel(full);
         const source = await readFile(full, "utf8");
         const localArray = parseRuntimeFilesArray(source);
         if (!localArray) continue;
+
+        localArrayCount += 1;
+        assert.ok(
+            ALLOWED_LOCAL_RUNTIME_FILE_ARRAYS.has(rel),
+            `${rel} defines a local RUNTIME_FILES array; use tests/helpers/runtimeFixtureFiles.mjs instead`
+        );
 
         assert.deepEqual(
             [...localArray].sort(),
@@ -126,7 +138,7 @@ async function main() {
         );
     }
 
-    console.log(`[OK] runtime fixture coverage passed for ${RUNTIME_FIXTURE_FILES.length} file(s).`);
+    console.log(`[OK] runtime fixture coverage passed for ${RUNTIME_FIXTURE_FILES.length} file(s); local arrays: ${localArrayCount}.`);
 }
 
 await main();

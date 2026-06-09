@@ -17,11 +17,11 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { copyRuntimeFixture as copySharedRuntimeFixture } from "./helpers/copyRuntimeFixture.mjs";
 
 const MODE = process.env.SMOKE_MODE || "orchestrator";
 const RUN_REAL_RUNTIME = process.env.REAL_RUNTIME === "1";
@@ -29,47 +29,6 @@ const SELF_PATH = fileURLToPath(import.meta.url);
 const TEST_DIR = path.dirname(SELF_PATH);
 const REPO_ROOT = path.resolve(TEST_DIR, "..");
 
-const RUNTIME_FILES = [
-    "runtime/config/config.mjs",
-    "runtime/config/configOverride.mjs",
-    "runtime/config/contextRetryProfiles.mjs",
-    "runtime/config/hardwareProbe.mjs",
-    "runtime.mjs",
-    "runtime/lifecycle/nativeOperationPolicy.mjs",
-    "runtime/lifecycle/nativeBoundaryCoordinator.mjs",
-    "runtime/request/runtimeRequestSettlement.mjs",
-    "runtime/lifecycle/runtimeLifecycleState.mjs",
-    "runtime/lifecycle/runtimeSessionResetCoordinator.mjs",
-    "runtime/lifecycle/runtimeShutdownCoordinator.mjs",
-    "runtime/lifecycle/runtimeInitCoordinator.mjs",
-    "runtime/lifecycle/runtimeModelResetCoordinator.mjs",
-    "runtime/lifecycle/workerProtocolRouter.mjs",
-    "runtime/stream/normalizer.mjs",
-    "runtime/observability/observer.mjs",
-    "runtime/request/request.mjs",
-    "runtime/config/retryProfiles.mjs",
-    "runtime/request/scheduler.mjs",
-    "runtime/stream/streamController.mjs",
-    "workerBridge.mjs",
-    "llama_worker/llama.mjs",
-    "llama_worker/cancellation/activeRequestRegistry.mjs",
-    "llama_worker/cancellation/requestBoundaries.mjs",
-    "llama_worker/lifecycle/modelDisposalPolicy.mjs",
-    "llama_worker/lifecycle/modelLifecycle.mjs",
-    "llama_worker/lifecycle/resetLifecycle.mjs",
-    "llama_worker/lifecycle/shutdownLifecycle.mjs",
-    "llama_worker/session/sessionDisposal.mjs",
-    "llama_worker/session/sessionService.mjs",
-    "llama_worker/context/contextOptions.mjs",
-    "llama_worker/context/contextRetryService.mjs",
-    "llama_worker/prompt/chunkFactory.mjs",
-    "llama_worker/prompt/promptRunner.mjs",
-    "llama_worker/state/workerState.mjs",
-    "llama_worker/serialization/workerOperationQueue.mjs",
-    "llama_worker/errors/promptAbort.mjs",
-    "llama_worker/messages/outboundMessages.mjs",
-    "llama_worker/messages/workerProtocolRouter.mjs"
-];
 
 function logSection(title) {
     console.log(`\n=== ${title} ===`);
@@ -262,14 +221,7 @@ async function readPromptResult(req) {
 }
 
 async function copyRuntimeFixture() {
-    const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "runtime-option-a-"));
-
-    for (const rel of RUNTIME_FILES) {
-        const src = path.join(REPO_ROOT, rel);
-        const dest = path.join(tmpRoot, rel);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(src, dest);
-    }
+    const tmpRoot = await copySharedRuntimeFixture({ repoRoot: REPO_ROOT, prefix: "runtime-option-a-" });
 
     const configPath = path.join(tmpRoot, "runtime/config/config.mjs");
     let configText = await readFile(configPath, "utf8");

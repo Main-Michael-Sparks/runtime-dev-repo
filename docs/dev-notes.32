@@ -1,0 +1,152 @@
+# dev-notes.32 — runtime-consolidation-cleanup-v1
+
+Date: 2026-06-09
+Branch/slice: runtime-consolidation-cleanup-v1
+
+## Purpose
+
+Consolidate repo documentation and test fixture-helper usage after the completed parent-runtime and Worker Layout Option C modularization arcs.
+
+This branch prepares the repo for future feature-specific planning, such as embedding support, tool/function calling, and researched multimodal/vision support, without implementing those features.
+
+## Scope
+
+Added:
+
+```text
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+docs/dev-notes.32
+```
+
+Modified:
+
+```text
+README.md
+tests/tools/checkRuntimeFixtureCoverage.mjs
+tests/smokeTestContextCreationCancelBoundary.mjs
+tests/smokeTestContextCreationRetry.mjs
+tests/smokeTestDrainShutdown.mjs
+tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+tests/smokeTestNativeOperationHardStopPolicy.mjs
+tests/smokeTestWorkerNativeCancellationBoundary.mjs
+tests/smokeTestWorkerOperationSerialization.mjs
+```
+
+Production runtime/worker files modified:
+
+```text
+none
+```
+
+## Documentation cleanup
+
+The root `README.md` now acts as a developer landing page for the current repo layout, public runtime API, fast static checks, broader mock checks, and feature-branch guidance.
+
+`docs/README.md` indexes the historical `dev-notes.*` files without renaming them. The old branch notes remain historical checkpoints and are intentionally not renamed in this branch.
+
+`docs/current-architecture.md` records the current parent runtime and worker layout, public entrypoints, stable boundaries, test organization, and the diagnostic status of `tests/smokeTestRealRuntimeContextCancelShutdownDiagnostics.mjs`.
+
+`docs/feature-readiness.md` records future feature-readiness notes for embeddings, tool/function calling, and multimodal/vision research without claiming implementation support.
+
+## Fixture helper consolidation
+
+The older fixture-copy smoke tests now reuse the shared fixture copier:
+
+```text
+tests/helpers/copyRuntimeFixture.mjs
+```
+
+They no longer carry duplicated local `RUNTIME_FILES` arrays. Their per-test fake `node-llama-cpp` packages, event logs, config text patches, environment handling, and smoke behavior remain local to each test.
+
+`tests/tools/checkRuntimeFixtureCoverage.mjs` now treats reintroduced local `RUNTIME_FILES` arrays as drift unless explicitly allowed in the checker. The current allowed set is empty.
+
+## Non-goals preserved
+
+This branch does not include:
+
+```text
+embedding implementation
+vision/multimodal implementation
+tool/function calling implementation
+node-llama-cpp API migration
+model path/model identity changes
+configOverride expansion
+scheduler behavior changes
+worker message protocol changes
+prompt/output semantic changes
+init/reset/shutdown behavior changes
+native timeout/unhealthy behavior changes
+performance tuning
+real-runtime behavior changes
+```
+
+## Propagation review
+
+Confirmed by intended patch shape:
+
+```text
+No production runtime imports changed.
+No production worker imports changed.
+No package entrypoints changed.
+No public API exports changed.
+No worker protocol shape changed.
+No model identity/path behavior changed.
+No prompt/output semantics changed.
+Shared runtime fixture manifest remains tests/helpers/runtimeFixtureFiles.mjs.
+Fixture-copy tests now consume the shared copier instead of duplicating the copy loop and manifest.
+Historical dev-note paths are preserved.
+```
+
+## Validation notes
+
+Candidate-local validation passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Artifact guard also passed against the uploaded formatted mirror with:
+
+```text
+source_file_count: 94
+candidate_file_count: 98
+changed_file_count: 9
+candidate_only_file_count: 4
+failing_finding_count: 0
+```
+
+Real-runtime testing is not required if this branch remains docs/test-helper cleanup only and no production runtime/worker behavior changes are introduced.
+
+## Caveats
+
+This branch is cleanup/consolidation, not feature support. Future embedding, tool/function calling, or multimodal/vision work still needs a separate plan/spec and may require real-runtime tests and API research.
+
+The historical `dev-notes.*` files keep their existing extensionless names to avoid broad documentation churn. A future docs-only rename pass may be considered separately if Michael wants that path cleanup.
+
+## Future work not included
+
+Potential future branches:
+
+```text
+runtime-embedding-support-v1-plan-spec
+runtime-tool-calling-support-v1-plan-spec
+runtime-vision-support-research-v1
+runtime-multimodal-input-support-v1-plan-spec
+```
