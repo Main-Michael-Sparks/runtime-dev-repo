@@ -1,0 +1,256 @@
+# Dev Notes 33 — Runtime System Blueprint v1
+
+**Date:** 2026-06-13  
+**Branch:** `runtime-system-blueprint-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Proposed / design-only checkpoint materials prepared; not repo-verified in this checkpoint.
+
+## Purpose
+
+This docs-only branch records the Runtime Dev greater-system architecture direction and the current Runtime Dev substrate boundary.
+
+The branch is intended to add the reviewed blueprint as documentation only:
+
+```text
+docs/runtime-system-blueprint-v1.md
+docs/dev-notes.33
+```
+
+Optional docs propagation may add links from:
+
+```text
+docs/README.md
+README.md
+```
+
+## Core principle
+
+```text
+Runtime Dev is the execution substrate.
+The Cognitive Graph Runtime is the future control layer.
+The Capability Bus is the compatibility/action boundary.
+Capabilities are typed abilities.
+Backends are replaceable execution mechanisms.
+```
+
+Important scope boundary:
+
+```text
+Make Runtime Dev graph-compatible without making it graph-dependent.
+```
+
+## Scope
+
+This branch is documentation only.
+
+It defines:
+
+```text
+full future Runtime + Cognitive Graph architecture
+current Runtime Dev substrate scope
+Capability Bus / Router / Service / Backend Adapter layering
+Graph Integration Contract
+action/result/event/context/memory bridge surfaces
+MCP inbound/outbound placement
+Knowledge DB / recall substrate direction
+model bundle and hardware profile direction
+future branch sequence after blueprint approval
+```
+
+## Explicit non-goals
+
+```text
+No production code.
+No graph implementation.
+No Capability Bus implementation.
+No Capability Router implementation.
+No capability service implementation.
+No backend adapter implementation.
+No MCP implementation.
+No Knowledge DB implementation.
+No memory DB implementation.
+No vision implementation.
+No embedding implementation.
+No rerank implementation.
+No retrieval implementation.
+No tool execution.
+No public API changes.
+No worker changes.
+No scheduler changes.
+No configOverride expansion.
+No model path/model identity changes.
+No prompt/output semantic changes.
+```
+
+## Key architecture decisions recorded
+
+### Runtime / graph boundary
+
+The Cognitive Graph Runtime may be hosted inside this repo, in a sibling package, in a separate package, or in a future repo. Placement does not change the boundary rule:
+
+```text
+Cognitive Graph Runtime -> Capability Bus -> Capability Router -> Capability Service -> Backend Adapter
+```
+
+Forbidden graph access:
+
+```text
+graph -> workerBridge
+graph -> llama_worker
+graph -> backend adapters
+graph -> raw model paths/projector paths
+graph -> direct tool processes
+```
+
+### Graph bridge surfaces
+
+The blueprint identifies the bridge as:
+
+```text
+Action Surface
+Result Surface
+Event Surface
+Context Surface
+Memory / Storage Surface
+```
+
+### MCP compatibility
+
+MCP is recorded as both inbound and outbound:
+
+```text
+mcpServerAdapter   [future inbound MCP compatibility / public integration adapter]
+mcpClientBackend   [future outbound MCP compatibility / backend adapter]
+```
+
+Both directions must cross the Capability Bus. MCP is not allowed to bypass policy, authorization, cancellation, tracing, or result normalization.
+
+### Knowledge DB / recall substrate
+
+Knowledge DB is not only a backend. It is a memory/recall capability family that may coordinate direct recall, soft recall, reranked candidates, and graph-linked recall.
+
+Runtime Dev may provide:
+
+```text
+storage
+indexing
+query
+link/reference operations
+checkpointing
+candidate recall
+result persistence
+```
+
+The Cognitive Graph Runtime owns:
+
+```text
+interpretation
+relevance
+traversal policy
+promotion/demotion
+verification/locking meaning
+contradiction handling
+repair decisions
+```
+
+### Storage backend family
+
+The blueprint explicitly avoids forcing memory into one DB shape.
+
+Candidate backend family:
+
+```text
+vectorStoreBackend
+graphStoreBackend
+knowledgeStoreBackend
+checkpointStoreBackend
+documentStoreBackend
+artifactStoreBackend
+eventLogStoreBackend
+keyValueStateStoreBackend
+relationalMetadataStoreBackend
+toolBackend
+```
+
+## Source basis and artifact details
+
+Blueprint sandbox source:
+
+```text
+/mnt/data/runtime-system-blueprint-v1.md
+```
+
+Blueprint SHA-256 at checkpoint time:
+
+```text
+3ec920afaabbb4cf64fb924a7e421fc03936290bdafae884f818096351be2674
+```
+
+Blueprint line count at checkpoint time:
+
+```text
+1659 lines
+```
+
+Source-truth note:
+
+```text
+GitHub remains the active source truth before any branch implementation.
+The sandbox blueprint is a reviewed design artifact/checkpoint candidate, not proof that the repo branch contains it.
+```
+
+## Validation status
+
+Completed in this checkpoint:
+
+```text
+Blueprint drafted as a sandbox design artifact.
+Graph-project clarifications folded in.
+MCP inbound/outbound placement folded in.
+Knowledge DB / recall substrate direction folded in.
+Checkpoint materials prepared.
+```
+
+Not completed in this checkpoint:
+
+```text
+No repo branch was directly inspected after staging.
+No GitHub branch content was repo-verified.
+No artifact guard was run.
+No docs link propagation was applied to an actual repo checkout here.
+No production tests were run because this is docs-only and no code was changed here.
+```
+
+## Recommended next branch after blueprint
+
+After the docs-only blueprint branch is reviewed/staged/repo-verified/checkpointed, start a separate plan/spec for:
+
+```text
+runtime-action-envelope-contract-v1
+```
+
+Purpose:
+
+```text
+Define typed action/result/event/context reference contracts and validation helpers.
+```
+
+Explicit non-goals for the next branch should include:
+
+```text
+No Capability Bus execution.
+No router implementation.
+No backend adapters.
+No MCP implementation.
+No Knowledge DB implementation.
+No graph implementation.
+No worker changes.
+No public API behavior changes.
+```
+
+## Caveats
+
+```text
+This checkpoint is documentation/checkpoint material only.
+Do not describe the branch as repo-verified, artifact-guarded, or merge-ready unless Michael stages/pushes the docs branch and the required verification gates are completed.
+```
