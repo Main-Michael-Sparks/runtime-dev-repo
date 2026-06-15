@@ -1,0 +1,326 @@
+# Runtime Dev Branch Notes — Capability Service Contract v1
+
+**Date:** 2026-06-15  
+**Branch:** `capability-service-contract-v1`  
+**Status:** Staged in sandbox; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, and Michael-run targeted tests passed. Not GitHub repo-verified until Michael uploads/pushes the branch and provides a repo link.
+
+---
+
+## Purpose
+
+This branch adds a contract-only Capability Service layer under `runtime/bus/`.
+
+The branch answers, in code and tests:
+
+```text
+how a capability service descriptor declares a stable serviceId for a capability;
+how service descriptors define input/result/cancellation/stream expectations without executing anything;
+how a service registry validates and exposes service descriptors;
+how a service plan checks a router plan against matching service metadata;
+how service contracts remain metadata-only and non-executing.
+```
+
+This is the next substrate step after the action envelope, capability registry, bus skeleton, and capability router contract branches:
+
+```text
+action envelope -> bus intake -> router plan -> service contract -> backend adapter contract -> executor
+```
+
+---
+
+## Source-truth notes
+
+The staging source was the corrected local repo ZIP mirror:
+
+```text
+/mnt/data/runtime-dev-repo-main.zip
+```
+
+Michael noted that the ZIP was downloaded directly from GitHub and that a prior live-page mismatch appeared to be a GitHub cache/retrieval-method issue. This branch should still be repo-verified by direct GitHub source/path inspection after upload.
+
+---
+
+## Files added
+
+```text
+runtime/bus/capabilityServiceCommon.mjs
+runtime/bus/capabilityServiceDefinition.mjs
+runtime/bus/capabilityServiceRegistry.mjs
+runtime/bus/capabilityServicePlan.mjs
+runtime/bus/capabilityServiceContract.mjs
+tests/smokeTestCapabilityServiceContract.mjs
+docs/dev-notes.38
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, observability, or scheduler files were modified.
+
+---
+
+## Modular design shape
+
+The branch follows the split router-contract pattern:
+
+```text
+capabilityServiceCommon.mjs          shared constants/copy/prefix/guard helpers
+capabilityServiceDefinition.mjs      service metadata definition validation
+capabilityServiceRegistry.mjs        service registry validation and lookup helpers
+capabilityServicePlan.mjs            route-plan-to-service-plan validation
+capabilityServiceContract.mjs        small public barrel/export surface
+```
+
+The public import surface is the barrel:
+
+```js
+import {
+    assertCapabilityServiceDefinition,
+    assertCapabilityServicePlan,
+    assertCapabilityServiceRegistry,
+    createCapabilityServiceRegistry,
+    getCapabilityService,
+    listCapabilityServices,
+    validateCapabilityServicePlan
+} from "../runtime/bus/capabilityServiceContract.mjs";
+```
+
+---
+
+## Contract behavior summary
+
+### Service definitions
+
+Service definition helpers:
+
+```text
+CAPABILITY_SERVICE_CONTRACT_VERSION
+CAPABILITY_SERVICE_REGISTRY_SCHEMA_VERSION
+CAPABILITY_SERVICE_STATUSES
+isKnownCapabilityServiceStatus()
+isKnownCapabilityServiceRequirementSupportLevel()
+isKnownCapabilityServiceApprovalSupportLevel()
+normalizeCapabilityServiceDefinition()
+validateCapabilityServiceDefinition()
+assertCapabilityServiceDefinition()
+copyCapabilityServiceDefinition()
+```
+
+Service definitions are metadata only. Validation requires:
+
+```text
+serviceId
+capability
+version
+status
+summary
+contracts
+input
+result
+requirements
+compatibility
+```
+
+Validation rejects unknown top-level fields, unknown nested contract fields, prototype-pollution keys, execution payload keys, model/projector path keys, path-like metadata values, duplicate input/result field labels, unknown service statuses, and unknown support-level values.
+
+### Service registry
+
+Service registry helpers:
+
+```text
+normalizeCapabilityServiceRegistry()
+validateCapabilityServiceRegistry()
+assertCapabilityServiceRegistry()
+createCapabilityServiceRegistry()
+listCapabilityServices()
+getCapabilityService()
+hasCapabilityService()
+```
+
+Registry validation includes schema versioning, nested service validation, `serviceId` uniqueness, copied lookup/list results, and support for multiple service definitions for the same capability when `serviceId` disambiguates them.
+
+### Service plans
+
+Service plan helpers:
+
+```text
+normalizeCapabilityServicePlan()
+validateCapabilityServicePlan()
+assertCapabilityServicePlan()
+```
+
+Service-plan validation accepts a normalized Capability Router route plan plus a Capability Service registry, then checks:
+
+```text
+route plan wrapper contractVersion;
+bus action wrapper/action/capabilityDefinition shape;
+route definition shape;
+service registry shape;
+route.serviceId exists in the service registry;
+service status is selectable;
+service capability matches route capability;
+service serviceId matches route serviceId;
+route backendKind is allowed by service compatibility;
+modelBundleId and hardwareProfileId are present when service compatibility requires them;
+streaming, timeout, cancellation, and contextRefs metadata are compatible.
+```
+
+The resulting service plan is still a descriptor. It does not call a service, call a backend, enqueue a request, emit runtime events, stream tokens, or touch native/model execution.
+
+---
+
+## Explicit non-goals
+
+This branch does not include:
+
+```text
+executeAction()
+Capability Bus executor
+service execution implementation
+backend adapter contract or implementation
+nativeWorkerBackend adapter
+runtime.mjs public API changes
+prompt() routing through the bus
+workerBridge changes
+llama_worker changes
+lifecycle/request/stream/config changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+policy engine implementation
+tool execution
+memory/retrieval execution
+Cognitive Graph Runtime implementation
+graph scheduler or graph node contracts
+cleanup-only refactors
+optimization changes
+namespace migration to runtime/capabilities/
+```
+
+---
+
+## Architecture boundaries preserved
+
+```text
+queue-based concurrency remains unchanged
+worker remains the model/native execution boundary
+parent runtime still owns request lifecycle
+parent-side stream shaping remains unchanged
+config remains the tuning surface
+prompt/output semantics are unchanged
+model identity/path is not made overrideable
+worker protocol shape is unchanged
+init/reset/shutdown behavior is unchanged
+Capability Bus/Router/Service contracts remain non-executing
+```
+
+---
+
+## Propagation review
+
+Confirmed staging propagation:
+
+```text
+README.md mentions capability service helpers as contract-only and non-executing.
+docs/current-architecture.md lists the split service contract modules under runtime/bus/.
+docs/README.md indexes dev-notes.38.
+docs/dev-notes.38 records implementation, non-goals, tests, caveats, and future work.
+No runtime fixture manifest update was required because runtime.mjs does not import the new module.
+No public API export changed.
+No worker import/cycle changed.
+No docs imply executable services are now live.
+```
+
+---
+
+## Tests run
+
+Assistant-side local staging checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result:
+
+```text
+All targeted contract and fixture-helper checks passed in the assistant sandbox.
+```
+
+Michael-run targeted checks on the extracted candidate tree:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Michael observed:
+
+```text
+All targeted fixture-helper regression tests passed.
+```
+
+No real-runtime test is required for this staged branch because it does not touch `runtime.mjs`, `workerBridge.mjs`, runtime lifecycle/request/stream/config/observability modules, `llama_worker/**`, prompt routing, cancellation, stream shaping, or native/model execution.
+
+---
+
+## Known caveats
+
+### Service placement is conservative
+
+The branch keeps the service contract bus-local under `runtime/bus/` for v1. That avoids mixing service-contract work with namespace/package migration.
+
+Future cleanup/extraction option:
+
+```text
+Move service contracts to runtime/capabilities/ after backend adapter contracts and executor seams are clearer.
+```
+
+### Router wrapper strictness caveat remains separate
+
+The prior router caveat remains non-blocking and unchanged:
+
+```text
+validateCapabilityRoutePlan() currently drops extra top-level bus wrapper keys rather than rejecting them.
+```
+
+This branch does not harden router behavior.
+
+### Service schemas are metadata labels
+
+The `input.schema` and `result.schema` fields are labels, not executable schemas. This avoids introducing a schema runtime or backend behavior in the service-contract branch.
+
+---
+
+## Future work not included
+
+Possible future branches:
+
+```text
+backend adapter contract v1
+model bundle registry contract v1
+hardware profile registry contract v1
+capability executor design/contract
+service namespace cleanup to runtime/capabilities/
+service/input result hardening if needed
+```
