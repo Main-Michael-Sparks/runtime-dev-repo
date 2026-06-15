@@ -1,0 +1,558 @@
+# Dev Notes 35 — Runtime Capability Registry Contract v1
+
+**Date:** 2026-06-15  
+**Branch:** `capability-registry-contract-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Repo-verified by direct GitHub inspection after push; syntax-checked, contract-smoke-tested, helper-checked, and public-entrypoint checked locally by Michael; artifact-guarded in sandbox. Recommended status: merge-ready for this contract-only scope.
+
+---
+
+## Purpose
+
+Add the next contract-only Runtime Dev substrate seam for future Capability Bus work: capability definition and registry metadata.
+
+This branch answers, in code and tests:
+
+```text
+what a capability definition looks like
+how capability definitions are versioned and status-labeled
+which action/result/event contract refs are attached to a capability
+which streaming/cancellation/timeout/approval metadata belongs to a definition
+which policy fields are recognized as metadata
+which backend compatibility fields are metadata only
+how a registry validates definitions and duplicate capability names
+how lookup/list helpers behave without executing anything
+```
+
+This remains contract-only. It does not make any capability executable.
+
+---
+
+## Files added
+
+```text
+runtime/bus/capabilityDefinition.mjs
+runtime/bus/capabilityRegistryContract.mjs
+tests/smokeTestCapabilityRegistryContract.mjs
+docs/dev-notes.35
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+Docs changes are limited to source-shape/index propagation for the new contract-only capability definition and registry modules.
+
+---
+
+## Modular design shape
+
+The `runtime/bus/` namespace remains a contract namespace:
+
+```text
+contractValidation.mjs              shared validation result/error helpers and safe object checks
+capabilityTaxonomy.mjs              frozen v1 capability/status/event/source-kind constants
+capabilityDefinition.mjs            capability definition metadata contract
+capabilityRegistryContract.mjs      registry validation, creation, lookup, and listing contract helpers
+contextRefs.mjs                     context reference validation and normalization
+actionEnvelope.mjs                  action request contract validation/normalization
+resultEnvelope.mjs                  normalized result/error contract validation/creation
+actionEvent.mjs                     action event contract validation/creation
+```
+
+`capabilityDefinition.mjs` imports only existing bus-local contract helpers/taxonomy.
+
+`capabilityRegistryContract.mjs` imports only bus-local contract helpers and `capabilityDefinition.mjs`.
+
+No `runtime.mjs`, `workerBridge.mjs`, `runtime/lifecycle/**`, `runtime/request/**`, `runtime/stream/**`, or `llama_worker/**` imports were introduced.
+
+---
+
+## Contract behavior summary
+
+### Capability definition
+
+`runtime/bus/capabilityDefinition.mjs` defines constants and helpers for one capability metadata record.
+
+Primary normalized shape:
+
+```js
+const capabilityDefinition = {
+    capability: "text.generate",
+    version: "v1",
+    status: "contract-only",
+    summary: "Generate text through an approved text capability service.",
+    contracts: {
+        action: "actionEnvelope.v1",
+        result: "resultEnvelope.v1",
+        event: "actionEvent.v1"
+    },
+    requirements: {
+        streaming: "supported",
+        cancellation: "supported",
+        timeout: "supported",
+        approval: "conditional"
+    },
+    policy: {
+        maxTokens: true,
+        approvalRequired: true,
+        allowTools: false,
+        budget: true
+    },
+    compatibility: {
+        backendKinds: ["nativeWorkerBackend"],
+        modelBundleRequired: true,
+        contextRefs: true
+    }
+};
+```
+
+Exported constants:
+
+```text
+CAPABILITY_DEFINITION_STATUSES
+CAPABILITY_REQUIREMENT_SUPPORT_LEVELS
+CAPABILITY_APPROVAL_SUPPORT_LEVELS
+CAPABILITY_CONTRACT_REFS
+```
+
+Exported helpers:
+
+```text
+isKnownCapabilityDefinitionStatus()
+isKnownCapabilityRequirementSupportLevel()
+isKnownCapabilityApprovalSupportLevel()
+normalizeCapabilityDefinition()
+validateCapabilityDefinition()
+assertCapabilityDefinition()
+```
+
+### Capability definition status values
+
+```text
+contract-only
+planned
+experimental
+implemented
+deprecated
+```
+
+For this branch, definitions are metadata only.
+
+A future `implemented` value should not be used as proof of execution wiring unless a later behavior branch actually adds the executor/router/backend path and tests it.
+
+### Requirement metadata values
+
+For streaming, cancellation, and timeout:
+
+```text
+supported
+unsupported
+required
+```
+
+For approval:
+
+```text
+supported
+unsupported
+conditional
+```
+
+These values describe contract expectations only. They do not bind streams, cancel requests, set timers, or request approval.
+
+### Policy metadata
+
+The policy object is boolean metadata for recognized policy fields:
+
+```text
+maxTokens
+approvalRequired
+allowTools
+budget
+```
+
+It says whether a capability recognizes a policy field. It does not enforce budgets or permissions in this branch.
+
+### Compatibility metadata
+
+The compatibility object allows high-level metadata only:
+
+```text
+backendKinds
+modelBundleRequired
+contextRefs
+```
+
+`compatibility.backendKinds` may include strings such as `nativeWorkerBackend`, but those strings are labels only. They do not select or invoke a backend.
+
+### Capability registry
+
+`runtime/bus/capabilityRegistryContract.mjs` defines the registry schema version and pure validation/lookup helpers.
+
+Registry shape:
+
+```js
+const registry = {
+    schemaVersion: "capability-registry.v1",
+    capabilities: [capabilityDefinition]
+};
+```
+
+Exported helpers:
+
+```text
+CAPABILITY_REGISTRY_SCHEMA_VERSION
+normalizeCapabilityRegistry()
+validateCapabilityRegistry()
+assertCapabilityRegistry()
+createCapabilityRegistry()
+listCapabilityDefinitions()
+getCapabilityDefinition()
+hasCapabilityDefinition()
+```
+
+V1 registry rule:
+
+```text
+one active definition per capability
+```
+
+Duplicate capability names reject.
+
+Duplicate capability/version pairs also reject. If parallel versioned definitions are needed later, that should be a separate registry-selection branch.
+
+---
+
+## Forbidden-key guard
+
+Capability definitions and registries reject model/backend/tool execution keys anywhere nested, including:
+
+```text
+modelPath
+baseModel
+mmprojPath
+projectorPath
+backend
+backendAdapter
+backendOptions
+adapterArgs
+rawBackendPayload
+toolProcess
+command
+shell
+exec
+spawn
+stdio
+cwd
+env
+```
+
+This preserves the existing model identity/path guardrail and prevents the registry from becoming an execution payload carrier.
+
+---
+
+## Explicit non-goals
+
+This branch does not include runtime execution surfaces. In short: no Capability Bus execution, no router, no service implementation, no backend adapters, no graph runtime, and no worker/native changes.
+
+Detailed non-goals:
+
+```text
+executeAction()
+Capability Bus executor
+Capability Router
+Capability Service implementation
+Backend Adapter contracts or implementations
+MCP inbound/outbound adapters
+Knowledge DB / memory backend implementation
+Cognitive Graph Runtime implementation
+graph node contracts
+graph scheduler
+runtime.mjs public API changes
+prompt() routing through bus
+workerBridge changes
+llama_worker changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+init/reset/shutdown behavior changes
+observer/event sink wiring
+streaming behavior changes
+cleanup unrelated to this contract branch
+optimization changes
+```
+
+---
+
+## Architecture boundaries preserved
+
+```text
+queue-based concurrency remains unchanged
+worker remains the model/native execution boundary
+parent runtime still owns request lifecycle
+parent-side stream shaping remains unchanged
+config remains the tuning surface
+prompt/output semantics are unchanged
+model identity/path is not made overrideable
+worker protocol shape is unchanged
+init/reset/shutdown behavior is unchanged
+```
+
+---
+
+## Propagation review
+
+Confirmed in the staged candidate and repo-verified branch:
+
+```text
+runtime.mjs unchanged
+workerBridge.mjs unchanged
+runtime/config/** unchanged
+runtime/lifecycle/** unchanged
+runtime/request/** unchanged
+runtime/stream/** unchanged
+runtime/observability/** unchanged
+llama_worker/** unchanged
+existing fixture helper manifest unchanged
+public runtime exports unchanged
+```
+
+Docs propagation:
+
+```text
+README.md updates runtime/bus/ description and fast checks
+docs/current-architecture.md lists capability definition/registry modules
+docs/README.md indexes dev-notes.35
+```
+
+Expected fixture propagation:
+
+```text
+No runtime fixture manifest updates required because runtime.mjs does not import the new modules.
+```
+
+---
+
+## Validation performed
+
+### Sandbox / assistant checks
+
+Syntax:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Contract smokes:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+```
+
+Helper/static guards:
+
+```bash
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Artifact guard:
+
+```text
+source files: 109
+candidate files: 113
+changed common files: 3
+candidate-only files: 4
+failing findings: 0
+```
+
+### Michael local validation
+
+Michael ran the targeted command list on the local candidate directory:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result:
+
+```text
+All targeted fixture-helper regression tests passed.
+```
+
+Observed pass details:
+
+```text
+[PASS] find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+[PASS] node ./tests/smokeTestActionEnvelopeContract.mjs
+[PASS] node ./tests/smokeTestCapabilityRegistryContract.mjs
+[PASS] node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+[PASS] node ./tests/tools/checkWorkerImportCycles.mjs
+[PASS] node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Notable smoke endpoints:
+
+```text
+All action envelope contract smoke checks finished.
+All capability registry contract smoke checks finished.
+[OK] runtime fixture coverage passed for 39 file(s); local arrays: 0.
+[OK] worker import hygiene passed for 18 worker file(s).
+All runtime public entrypoint contract checks finished.
+```
+
+---
+
+## Real-runtime note
+
+Real-runtime testing is not required for this branch because it remains contract-only and does not touch runtime execution, worker behavior, init/reset/shutdown, cancellation boundaries, context creation, prompt streaming, or native/model execution.
+
+If future slices wire capability contracts into `runtime.mjs`, `workerBridge.mjs`, capability execution, prompt routing, cancellation, streaming, or backend adapters, real-runtime testing should be reconsidered for merge readiness.
+
+---
+
+## GitHub verification status
+
+GitHub branch verified directly after push:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/capability-registry-contract-v1
+```
+
+Observed branch state at verification:
+
+```text
+2 commits
+7 files changed
+1 contributor
+```
+
+Branch commits checked:
+
+```text
+de5dffb
+4f6c1c6
+```
+
+Changed files matched the intended scope:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/dev-notes.35
+runtime/bus/capabilityDefinition.mjs
+runtime/bus/capabilityRegistryContract.mjs
+tests/smokeTestCapabilityRegistryContract.mjs
+```
+
+Direct source inspection confirmed:
+
+```text
+runtime/bus/capabilityDefinition.mjs exists and imports only bus-local validation/taxonomy helpers.
+runtime/bus/capabilityRegistryContract.mjs exists and imports only bus-local validation plus capability-definition helpers.
+tests/smokeTestCapabilityRegistryContract.mjs exists and checks that registry modules avoid runtime/worker execution imports.
+docs/dev-notes.35 records the branch as contract-only.
+README.md, docs/current-architecture.md, and docs/README.md include the intended documentation/index propagation.
+```
+
+No live GitHub diff evidence showed changes to:
+
+```text
+runtime.mjs
+workerBridge.mjs
+runtime/config/**
+runtime/lifecycle/**
+runtime/request/**
+runtime/stream/**
+runtime/observability/**
+llama_worker/**
+tests/helpers/**
+```
+
+---
+
+## Caveats / known risks
+
+### Finding: The registry is intentionally metadata-only.
+
+Affected surface: Future Capability Bus / Router / Service branches.
+
+Why it matters: Passing this branch proves capability metadata contract validation and lookup behavior only. It does not prove action execution, routing, backend selection, cancellation propagation, stream binding, policy enforcement, or graph integration.
+
+Smallest safe correction: Keep execution work in a separate reviewed bus/router/backend branch.
+
+What still needs verification: Future execution branches must prove behavior with targeted tests and, when runtime execution surfaces are touched, real-runtime checks as applicable.
+
+---
+
+### Finding: `compatibility.backendKinds` is metadata only.
+
+Affected surface: Future backend adapter and model bundle work.
+
+Why it matters: If backend kind metadata starts selecting or configuring backends, this branch would have silently become behavior-bearing.
+
+Smallest safe correction: Keep backend selection in future router/backend adapter branches. Reject backend options, adapter args, raw payloads, paths, commands, and environment/process fields in this contract.
+
+What still needs verification: Future backend branches must preserve model identity/path guardrails and define model bundle lookup separately.
+
+---
+
+### Finding: V1 registry rejects duplicate capability names.
+
+Affected surface: Future versioning/selection semantics.
+
+Why it matters: This keeps the v1 registry simple and avoids hidden selection rules, but future compatibility work may need parallel versions.
+
+Smallest safe correction: Add parallel version support only in a future registry-selection branch with explicit selection rules.
+
+What still needs verification: Future registry/router branches should decide whether version selection belongs in the registry, router, or model/capability service layer.
+
+---
+
+## Future work not included
+
+Recommended future branches:
+
+```text
+runtime-capability-bus-skeleton-v1
+runtime-capability-router-v1
+runtime-backend-adapter-contracts-v1
+runtime-model-bundle-registry-v1
+runtime-text-generate-capability-native-worker-adapter-v1
+runtime-embedding-capability-v1
+runtime-rerank-capability-v1
+runtime-retrieval-capability-v1
+runtime-memory-storage-surfaces-plan-spec-v1
+runtime-mcp-inbound-adapter-plan-spec-v1
+runtime-mcp-outbound-backend-plan-spec-v1
+cognitive-graph-runtime-control-layer-plan-spec-v1
+```
+
+---
+
+## Recommended next step
+
+Merge `capability-registry-contract-v1` into `main` for this contract-only scope.
+
+After merge, directly verify `main` and checkpoint the branch-family state before starting the next branch.
+
+Recommended next branch after merge verification:
+
+```text
+runtime-capability-bus-skeleton-v1
+```
+
+Keep the next branch skeleton-only unless Michael explicitly approves behavior wiring.

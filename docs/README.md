@@ -49,6 +49,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.32` | runtime consolidation cleanup v1 | current cleanup branch |
 | `dev-notes.33` | runtime system blueprint v1 | current design/checkpoint background |
 | `dev-notes.34` | runtime action envelope contract v1 | current contract branch |
+| `dev-notes.35` | runtime capability registry contract v1 | current contract branch |
 
 ## Reading order for new feature work
 
