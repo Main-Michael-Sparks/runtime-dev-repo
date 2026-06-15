@@ -1,0 +1,335 @@
+# Dev Notes 37 — Runtime Capability Router Contract v1
+
+**Date:** 2026-06-15  
+**Branch:** `runtime-capability-router-contract-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Staged in sandbox; syntax-checked and contract-smoke-tested locally in the assistant sandbox. Not GitHub-verified until Michael uploads/pushes the branch and provides a repo link.
+
+---
+
+## Purpose
+
+Add a contract-only Capability Router metadata and route-plan validation layer under `runtime/bus/`.
+
+This branch answers, in code and tests:
+
+```text
+how a normalized Capability Bus action can resolve to a route descriptor
+how router metadata validates capability-to-service/backend selection shape
+how route definitions remain metadata-only
+how route compatibility is checked against the bus-attached capability definition
+how route validation rejects missing, disabled, deprecated, duplicate, forbidden, or incompatible routes
+how the router contract remains bus-local and non-executing
+```
+
+This remains contract-only. It does not make any capability executable.
+
+---
+
+## Files added
+
+```text
+runtime/bus/capabilityRouterCommon.mjs
+runtime/bus/capabilityRouteDefinition.mjs
+runtime/bus/capabilityRouterRegistry.mjs
+runtime/bus/capabilityRoutePlan.mjs
+runtime/bus/capabilityRouterContract.mjs
+tests/smokeTestCapabilityRouterContract.mjs
+docs/dev-notes.37
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+Docs changes are limited to source-shape/index/test-command propagation for the new contract-only router module.
+
+---
+
+## Modular design shape
+
+The `runtime/bus/` namespace remains a contract namespace:
+
+```text
+contractValidation.mjs              shared validation result/error helpers and safe object checks
+capabilityTaxonomy.mjs              frozen v1 capability/status/event/source-kind constants
+capabilityDefinition.mjs            capability definition metadata contract
+capabilityRegistryContract.mjs      registry validation, creation, lookup, and listing contract helpers
+capabilityBusContract.mjs           non-executing bus intake validation against action + registry contracts
+capabilityBusResult.mjs             bus-level skeleton result-envelope constructors
+capabilityBusEvents.mjs             bus-level skeleton action-event constructors
+capabilityRouterCommon.mjs          shared router constants/copy/prefix/guard helpers
+capabilityRouteDefinition.mjs       route metadata definition validation
+capabilityRouterRegistry.mjs        router registry validation and lookup helpers
+capabilityRoutePlan.mjs             route-plan validation against bus action + registry
+capabilityRouterContract.mjs        public barrel for the router contract API
+contextRefs.mjs                     context reference validation and normalization
+actionEnvelope.mjs                  action request contract validation/normalization
+resultEnvelope.mjs                  normalized result/error contract validation/creation
+actionEvent.mjs                     action event contract validation/creation
+```
+
+The new router contract module imports only existing `runtime/bus/**` contract helpers.
+
+No `runtime.mjs`, `workerBridge.mjs`, `runtime/lifecycle/**`, `runtime/request/**`, `runtime/stream/**`, `runtime/observability/**`, or `llama_worker/**` imports were introduced.
+
+---
+
+## Contract behavior summary
+
+### Capability route definitions
+
+`runtime/bus/capabilityRouterContract.mjs` is a public barrel over split route-definition, registry, and route-plan modules. It exports route-definition helpers:
+
+```text
+CAPABILITY_ROUTER_CONTRACT_VERSION
+CAPABILITY_ROUTE_STATUSES
+isKnownCapabilityRouteStatus()
+normalizeCapabilityRouteDefinition()
+validateCapabilityRouteDefinition()
+assertCapabilityRouteDefinition()
+```
+
+Route definitions are metadata only:
+
+```js
+const route = {
+    routeId: "text-generate-default",
+    capability: "text.generate",
+    status: "contract-only",
+    serviceId: "text.generate.default",
+    backendKind: "nativeWorkerBackend",
+    backendId: "native-worker.default",
+    modelBundleId: "mistral-text-local",
+    hardwareProfileId: "laptopFallback",
+    requirements: {
+        streaming: "supported",
+        cancellation: "supported",
+        timeout: "supported"
+    }
+};
+```
+
+Validation behavior:
+
+```text
+requires routeId, capability, status, serviceId, and backendKind
+validates capability names against the v1 capability taxonomy
+validates route statuses against the v1 route status list
+allows disabled/deprecated route metadata but excludes those routes from route-plan selection
+allows backendId/modelBundleId/hardwareProfileId only as metadata IDs
+validates optional route requirements using existing support-level semantics
+rejects unknown top-level and requirement fields
+rejects dangerous/prototype-pollution keys through shared validation helpers
+rejects model path/projector path/backend payload/tool process/command/env fields
+rejects path-like metadata values
+```
+
+### Capability router registry
+
+Registry helpers:
+
+```text
+normalizeCapabilityRouterRegistry()
+validateCapabilityRouterRegistry()
+assertCapabilityRouterRegistry()
+createCapabilityRouterRegistry()
+listCapabilityRoutes()
+getCapabilityRoute()
+hasCapabilityRoute()
+```
+
+Registry behavior:
+
+```text
+schemaVersion defaults to capability-router.v1 when omitted
+routes must be an array
+nested route definitions are normalized and validated
+routeId values must be unique
+duplicate selectable routes for the same capability are rejected
+disabled/deprecated routes may coexist with one selectable route for the same capability
+```
+
+No priority/fallback route ordering was added in this branch.
+
+### Capability route plans
+
+Route-plan helpers:
+
+```text
+normalizeCapabilityRoutePlan()
+validateCapabilityRoutePlan()
+assertCapabilityRoutePlan()
+```
+
+Normalized shape:
+
+```js
+const routePlan = {
+    contractVersion: "capability-router.v1",
+    busAction,
+    route
+};
+```
+
+Route-plan validation behavior:
+
+```text
+validates busAction as a Capability Bus v1 wrapper
+validates nested action envelope and capability definition contracts
+validates the router registry
+requires the action and capability definition to describe the same capability
+selects a route for the requested capability
+rejects missing routes
+rejects disabled/deprecated-only routes as unselectable
+checks route.backendKind against capabilityDefinition.compatibility.backendKinds
+requires route.modelBundleId when modelBundleRequired is true
+rejects requested streaming when the selected route marks streaming unsupported
+rejects contextRefs when capability compatibility disables contextRefs
+returns copied/normalized busAction and route descriptors only
+```
+
+The route plan is still a descriptor. It does not call a service, call a backend, enqueue a request, emit events, stream tokens, or touch native/model execution.
+
+---
+
+## Explicit non-goals
+
+This branch does not include runtime execution surfaces.
+
+Detailed non-goals:
+
+```text
+executeAction()
+Capability Bus executor
+Capability Service implementation
+Backend Adapter contracts or implementations
+nativeWorkerBackend adapter
+model bundle registry implementation
+hardware profile registry implementation
+policy enforcement engine
+event emitter/subscription runtime
+memory/search/retrieval implementation
+tool calling
+MCP inbound/outbound adapters
+Cognitive Graph Runtime implementation
+runtime.mjs public API changes
+prompt() routing through bus
+workerBridge changes
+llama_worker changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+request lifecycle changes
+init/reset/shutdown behavior changes
+observer/event sink wiring
+streaming behavior changes
+cleanup unrelated to this contract branch
+optimization changes
+```
+
+---
+
+## Architecture boundaries preserved
+
+```text
+queue-based concurrency remains unchanged
+worker remains the model/native execution boundary
+parent runtime still owns request lifecycle
+parent-side stream shaping remains unchanged
+config remains the tuning surface
+prompt/output semantics are unchanged
+model identity/path is not made overrideable
+worker protocol shape is unchanged
+init/reset/shutdown behavior is unchanged
+Capability Router contract remains bus-local and non-executing
+```
+
+---
+
+## Propagation review
+
+Confirmed in the staged candidate:
+
+```text
+README.md mentions capability router behavior as contract-only router metadata/plan validation.
+docs/current-architecture.md lists the split capability router contract modules under runtime/bus/.
+docs/README.md indexes dev-notes.37.
+docs/dev-notes.37 records implementation, non-goals, tests, caveats, and future work.
+No runtime fixture manifest update was required because runtime.mjs does not import the new module.
+No public API export changed.
+No worker import/cycle changed.
+No docs imply executable routing is now live.
+```
+
+---
+
+## Tests
+
+Local assistant-sandbox validation commands:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Observed local result:
+
+```text
+All passed in the assistant sandbox.
+```
+
+Real-runtime testing was not required for this staged candidate because it remained contract-only and did not touch `runtime.mjs`, `workerBridge.mjs`, runtime lifecycle/request/stream/observability/config modules, `llama_worker/**`, prompt routing, cancellation, stream shaping, or native/model execution.
+
+---
+
+
+## Review note — route-plan wrapper key strictness
+
+During local review, `validateCapabilityRoutePlan()` was noted to validate the expected Capability Bus action wrapper fields and return a normalized route-plan copy containing only the accepted contract fields. It does not currently reject extra top-level wrapper keys on the input object.
+
+This is non-blocking for this contract-only branch because extra wrapper keys are not propagated into the normalized route plan. A future hardening branch may tighten this to reject unknown wrapper-level keys if Michael wants stricter input-shape enforcement.
+
+## Known caveat
+
+`docs/dev-notes.36` in the source base still contains stale staged/not-GitHub-verified wording from the prior branch. This branch does not silently rewrite that historical note. The capability bus checkpoint/bootstrap documents supersede that status wording.
+
+---
+
+## Future work not included
+
+Possible future branches, separate from this one:
+
+```text
+Capability Service contract v1
+Backend Adapter contract v1
+Model Bundle Registry v1
+Hardware Profile Registry v1
+Capability Bus executor / executeAction contract
+nativeWorkerBackend adapter
+policy/budget/approval hooks
+memory/search/retrieval capability contracts
+MCP inbound/outbound adapters
+Cognitive Graph Runtime control-layer package/track
+```
+
+---
+
+## Branch status
+
+Recommended staged status before upload:
+
+```text
+Staged / syntax-checked / contract-smoke-tested / helper-checked locally.
+Not repo-verified until Michael uploads or pushes the branch and direct GitHub source inspection confirms expected content.
+```
