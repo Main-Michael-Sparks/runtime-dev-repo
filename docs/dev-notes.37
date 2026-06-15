@@ -1,9 +1,9 @@
 # Dev Notes 37 — Runtime Capability Router Contract v1
 
 **Date:** 2026-06-15  
-**Branch:** `runtime-capability-router-contract-v1`  
+**Branch:** `capability-router-contract-v1`  
 **Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
-**Status:** Staged in sandbox; syntax-checked and contract-smoke-tested locally in the assistant sandbox. Not GitHub-verified until Michael uploads/pushes the branch and provides a repo link.
+**Status:** Repo-verified for the declared contract-only scope after upload; Michael-run targeted tests passed; no real-runtime test required because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -306,6 +306,14 @@ This is non-blocking for this contract-only branch because extra wrapper keys ar
 
 ---
 
+## Post-upload / main verification update
+
+After Michael uploaded/pushed `capability-router-contract-v1`, direct GitHub source/path inspection confirmed the expected router contract files and test were present. Michael also ran the recommended targeted command set successfully from the v2 notes-update candidate tree.
+
+A post-merge/main check found the router code/test content present and the current architecture/docs index content matching the staged candidate. The remaining issue was this dev note retaining its original staged/not-GitHub-verified status wording. This docs-only correction updates the status record without changing runtime or router code.
+
+---
+
 ## Future work not included
 
 Possible future branches, separate from this one:
@@ -327,9 +335,16 @@ Cognitive Graph Runtime control-layer package/track
 
 ## Branch status
 
-Recommended staged status before upload:
+Final reviewed status for the declared contract-only scope:
 
 ```text
-Staged / syntax-checked / contract-smoke-tested / helper-checked locally.
-Not repo-verified until Michael uploads or pushes the branch and direct GitHub source inspection confirms expected content.
+Staged.
+Syntax-checked.
+Contract-smoke-tested.
+Helper-checked.
+Artifact-guarded.
+Michael-run targeted tests passed.
+Repo-verified by direct GitHub source/path inspection after upload.
+No real-runtime test required because no runtime/worker/lifecycle/native execution surfaces changed.
+Merge-ready for the declared contract-only scope once this docs-only status correction is applied to main.
 ```
