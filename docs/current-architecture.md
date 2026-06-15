@@ -55,6 +55,13 @@ runtime/bus/
   resultEnvelope.mjs
   actionEvent.mjs
 
+runtime/backends/
+  backendAdapterCommon.mjs
+  backendAdapterDefinition.mjs
+  backendAdapterRegistry.mjs
+  backendAdapterPlan.mjs
+  backendAdapterContract.mjs
+
 runtime/config/
   config.mjs
   configOverride.mjs
@@ -86,6 +93,8 @@ runtime/stream/
 ```
 
 `runtime/bus/` is contract-only through `capability-service-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, capability router metadata/plan validation helpers, and capability service metadata/registry/plan validation helpers for future Capability Bus branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+
+`runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 
