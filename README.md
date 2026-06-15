@@ -10,6 +10,7 @@ The current codebase is organized around a stable public runtime entrypoint, a p
 runtime.mjs                 public runtime API / composition root
 workerBridge.mjs            stable worker bridge to ./llama_worker/llama.mjs
 runtime/                    parent runtime modules
+  bus/                      contract-only action/result/event/context envelope helpers
   config/                   base config, config override validation, retry/profile helpers
   lifecycle/                init/reset/shutdown/native-boundary coordinators
   observability/            trace helpers
@@ -29,6 +30,8 @@ llama_worker/               worker/native/model boundary modules
 ```
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
+
+`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, and action events for future Capability Bus work; it is not wired into `runtime.mjs`, prompt execution, routing, backend adapters, or worker behavior in this branch.
 
 ## Public API
 
