@@ -3,13 +3,11 @@
 **Date:** 2026-06-14  
 **Branch:** `runtime-action-envelope-contract-v1`  
 **Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
-**Status:** Merged to `main` via PR #13 / merge commit `ebaf104`. Michael-local syntax, contract smoke, helper, and public-entrypoint checks passed before merge. Direct GitHub source/file verification was completed after push and again after merge. The branch remains contract-only and does not touch runtime execution, worker behavior, lifecycle behavior, cancellation, context creation, prompt streaming, or model/native execution.
-
----
+**Status:** Staged candidate; syntax-checked, helper-checked, contract-smoke-tested, and artifact-guarded locally against the uploaded main mirror. Not repo-verified after push. Not merge-ready until Michael applies/pushes and direct GitHub verification is completed.
 
 ## Purpose
 
-Add contract-only Runtime Dev substrate modules for the future Capability Bus action surface defined by Runtime System Blueprint v1.
+Add contract-only Runtime Dev substrate modules for the future Capability Bus action surface defined by the Runtime System Blueprint v1.
 
 This branch establishes typed local contracts for:
 
@@ -23,8 +21,6 @@ action events
 ```
 
 The branch keeps Runtime Dev graph-compatible without making it graph-dependent. It creates reusable contract modules only; it does not implement action execution.
-
----
 
 ## Files added
 
@@ -49,34 +45,20 @@ docs/README.md
 
 The docs changes are limited to source-shape/index propagation for the new contract-only `runtime/bus/` namespace.
 
-## File that should not remain on main
-
-```text
-STAGED-BRANCH-NOTES.md
-```
-
-`STAGED-BRANCH-NOTES.md` was useful in the staged handoff package, but it contains stale pre-merge language and should be removed from `main` in a docs-only cleanup commit. The durable branch record is this dev note plus the normal repo history.
-
----
-
 ## Modular design shape
 
 The new `runtime/bus/` namespace is intentionally split by contract responsibility:
 
 ```text
-contractValidation.mjs       shared validation result/error helpers and safe object checks
-capabilityTaxonomy.mjs       frozen v1 capability/status/event/source-kind constants
-contextRefs.mjs              context reference validation and normalization
-actionEnvelope.mjs           action request contract validation/normalization
-resultEnvelope.mjs           normalized result/error contract validation/creation
-actionEvent.mjs              action event contract validation/creation
+contractValidation.mjs     shared validation result/error helpers and safe object checks
+capabilityTaxonomy.mjs     frozen v1 capability/status/event/source-kind constants
+contextRefs.mjs            context reference validation and normalization
+actionEnvelope.mjs         action request contract validation/normalization
+resultEnvelope.mjs         normalized result/error contract validation/creation
+actionEvent.mjs            action event contract validation/creation
 ```
 
-This shape avoids creating a broad bus executor or router prematurely.
-
-Later Capability Bus branches may import these helpers, but this branch does not wire them into runtime execution.
-
----
+This shape avoids creating a broad bus executor or router prematurely. Later Capability Bus branches may import these helpers, but this branch does not wire them into runtime execution.
 
 ## Contract behavior summary
 
@@ -222,17 +204,9 @@ action.policyDenied requires data.error or data.policyReason
 
 This is still a contract only. No event emitter, observer sink, subscription registry, or trace writer was added.
 
----
-
 ## Explicit non-goals
 
-This branch does not include runtime execution surfaces.
-
-In short:
-
-```text
-No Capability Bus execution, no router, no backend adapters, no graph runtime, and no worker/native changes.
-```
+This branch does not include runtime execution surfaces. In short: No Capability Bus execution, no router, no backend adapters, no graph runtime, and no worker/native changes.
 
 Detailed non-goals:
 
@@ -266,8 +240,6 @@ cleanup unrelated to this contract branch
 optimization changes
 ```
 
----
-
 ## Architecture boundaries preserved
 
 ```text
@@ -282,11 +254,9 @@ worker protocol shape is unchanged
 init/reset/shutdown behavior is unchanged
 ```
 
----
-
 ## Propagation review
 
-Confirmed in the merged branch scope:
+Confirmed in the staged candidate:
 
 ```text
 runtime.mjs unchanged
@@ -301,40 +271,40 @@ existing fixture helper manifest unchanged
 public runtime exports unchanged
 ```
 
-Docs propagation:
+Docs propagation is limited to:
 
 ```text
-README.md adds runtime/bus/ as contract-only namespace
+README.md                 adds runtime/bus/ as contract-only namespace
 docs/current-architecture.md adds runtime/bus/ layout and contract-only note
-docs/README.md indexes dev-notes.34
+docs/README.md            indexes dev-notes.33 if missing and dev-notes.34
 ```
 
 The new smoke test imports only the new `runtime/bus/` contract modules and does not copy or instantiate the runtime/worker fixture tree.
 
----
+## Validation performed on staged candidate
 
-## Validation performed
-
-Michael-local checks after applying the branch:
+Syntax and helper checks:
 
 ```bash
 find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
-node ./tests/smokeTestActionEnvelopeContract.mjs
 node ./tests/tools/checkRuntimeFixtureCoverage.mjs
 node ./tests/tools/checkWorkerImportCycles.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 ```
 
-Observed local results:
+Contract smoke:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+```
+
+Expected result:
 
 ```text
 All action envelope contract smoke checks finished.
-runtime fixture coverage passed for 39 file(s); local arrays: 0.
-worker import hygiene passed for 18 worker file(s).
-All runtime public entrypoint contract checks finished.
 ```
 
-Candidate package verification before handoff:
+Artifact/package verification:
 
 ```text
 artifact guard passed for the staged package with no failing findings
@@ -342,106 +312,83 @@ package contents inspected
 patch generated against uploaded main mirror
 ```
 
----
-
 ## Real-runtime note
 
-Real-runtime testing was not required for this branch because it remained contract-only and did not touch:
+Real-runtime testing is not required for this branch if it remains contract-only and does not touch runtime execution, worker behavior, init/reset/shutdown, cancellation boundaries, context creation, or prompt streaming.
 
-```text
-runtime execution
-worker behavior
-init/reset/shutdown
-request cancellation boundaries
-context creation
-prompt streaming
-native/model behavior
-```
-
-If future slices wire these contracts into `runtime.mjs`, `workerBridge.mjs`, capability execution, prompt routing, cancellation, stream binding, policy enforcement, or backend adapters, then real-runtime testing should be reconsidered for merge readiness.
-
----
+If future slices wire these contracts into `runtime.mjs`, `workerBridge.mjs`, capability execution, prompt routing, cancellation, or backend adapters, then real-runtime testing should be reconsidered for merge readiness.
 
 ## GitHub verification status
 
-Direct GitHub verification was completed after push and again after merge.
+Direct GitHub branch verification was not completed in this staged package.
 
-Confirmed:
-
-```text
-Branch existed and contained expected runtime/bus modules.
-docs/dev-notes.34 existed by direct blob/raw file inspection.
-docs/README.md indexed dev-notes.34.
-main received the merge via PR #13 / merge commit ebaf104.
-main contains runtime/bus/*, docs/dev-notes.34, docs/README.md, README.md, docs/current-architecture.md, and tests/smokeTestActionEnvelopeContract.mjs.
-The merge commit file tree did not include runtime.mjs, workerBridge.mjs, runtime/lifecycle/**, runtime/request/**, runtime/stream/**, runtime/config/**, or llama_worker/**.
-```
-
-Caveat from verification:
+Required after Michael applies and pushes the branch:
 
 ```text
-Some GitHub directory/listing views lagged or rendered inconsistently during review.
-Direct blob/raw/source file URLs and the merge commit file tree were treated as stronger evidence than stale listings.
+inspect branch file list directly
+confirm only intended files changed
+check latest commit message(s)
+open runtime.mjs and workerBridge.mjs to confirm no accidental behavior changes
+open runtime/bus/* and tests/smokeTestActionEnvelopeContract.mjs
+confirm docs/dev-notes.34 and scoped docs propagation
 ```
-
----
 
 ## Caveats / known risks
 
-### Finding: The new contracts are intentionally not wired into execution.
+Finding:
+The new contracts are intentionally not wired into execution.
 
-**Affected surface:** Future Capability Bus branches.
+Affected surface:
+Future Capability Bus branches.
 
-**Why it matters:** Passing this branch proves contract helper shape and smoke coverage. It does not prove action execution, routing, backend selection, cancellation propagation, stream binding, policy enforcement, or graph integration.
+Why it matters:
+Passing this branch only proves contract helper shape and smoke coverage. It does not prove action execution, routing, backend selection, cancellation propagation, stream binding, policy enforcement, or graph integration.
 
-**Smallest safe correction:** Keep the next execution-related branch separate. Do not add `executeAction()` or routing by inertia.
+Smallest safe correction:
+Keep the next branch as a separate bus-skeleton plan/spec, then wire one execution surface at a time.
 
-**What still needs verification:** Future bus/router/backend branches must prove behavior with targeted tests and, when runtime execution surfaces are touched, real-runtime checks as applicable.
-
----
-
-### Finding: The capability taxonomy may need future expansion or renaming.
-
-**Affected surface:** Capability naming and compatibility contracts.
-
-**Why it matters:** Names like `memory.search` and `retrieval.search` become compatibility surfaces once consumers import them.
-
-**Smallest safe correction:** Treat v1 taxonomy as a narrow starting surface. Add or rename capabilities only in explicit compatibility branches.
-
-**What still needs verification:** Future embedding/rerank/retrieval/memory backend work should re-check naming against actual backend/service implementations.
+What still needs verification:
+Future bus/router/backend branches must prove behavior with targeted tests and, when runtime execution surfaces are touched, real-runtime checks as applicable.
 
 ---
 
-### Finding: Context refs are reference-only and deliberately reject path-like values.
+Finding:
+The capability taxonomy may need future expansion or renaming.
 
-**Affected surface:** Future context materialization and storage adapters.
+Affected surface:
+Capability naming and compatibility contracts.
 
-**Why it matters:** This preserves model-path and backend-boundary safety, but future adapters may need structured refs beyond simple strings.
+Why it matters:
+Names like `memory.search` and `retrieval.search` become compatibility surfaces once consumers import them.
 
-**Smallest safe correction:** Keep string refs for v1. Add object-shaped context refs only with a later compatibility plan/spec.
+Smallest safe correction:
+Treat v1 taxonomy as a narrow starting surface. Add or rename capabilities only in explicit compatibility branches.
 
-**What still needs verification:** Future context materialization branches should define accepted ref schemes and adapter behavior.
-
----
-
-### Finding: `STAGED-BRANCH-NOTES.md` should be removed from `main`.
-
-**Affected surface:** Root repo documentation / branch status clarity.
-
-**Why it matters:** It contains staged/not-merge-ready language that is stale after PR #13 merged.
-
-**Smallest safe correction:** Delete `STAGED-BRANCH-NOTES.md` in a docs-only cleanup commit.
-
-**What still needs verification:** After cleanup push, direct-check that `STAGED-BRANCH-NOTES.md` no longer exists on `main`.
+What still needs verification:
+Future embedding/rerank/retrieval/memory backend work should re-check naming against actual backend/service implementations.
 
 ---
+
+Finding:
+Context refs are reference-only and deliberately reject path-like values.
+
+Affected surface:
+Future context materialization and storage adapters.
+
+Why it matters:
+This preserves model-path and backend-boundary safety, but future adapters may need structured refs beyond simple strings.
+
+Smallest safe correction:
+Keep string refs for v1. Add object-shaped context refs only with a later compatibility plan/spec.
+
+What still needs verification:
+Future context materialization branches should define accepted ref schemes and adapter behavior.
 
 ## Future work not included
 
 Recommended future branches:
 
 ```text
-runtime-capability-registry-contract-v1
 runtime-capability-bus-skeleton-v1
 runtime-capability-router-v1
 runtime-backend-adapter-contracts-v1
@@ -456,34 +403,12 @@ runtime-mcp-outbound-backend-plan-spec-v1
 cognitive-graph-runtime-control-layer-plan-spec-v1
 ```
 
----
-
 ## Recommended next step
 
-Perform a docs-only cleanup commit:
+After review, apply the staged candidate to a local branch named:
 
 ```text
-Delete:
-  STAGED-BRANCH-NOTES.md
-
-Modify:
-  docs/dev-notes.34
+runtime-action-envelope-contract-v1
 ```
 
-Then direct-check `main` again for:
-
-```text
-STAGED-BRANCH-NOTES.md absent
-docs/dev-notes.34 status updated
-runtime/bus/* still present
-docs/README.md still indexes dev-notes.34
-README.md and docs/current-architecture.md still describe runtime/bus as contract-only
-```
-
-After that, start the next feature branch from updated `main`.
-
-Recommended next branch:
-
-```text
-runtime-capability-registry-contract-v1
-```
+Then run the same local checks, push the branch, and perform direct GitHub source/file verification before considering the branch repo-verified.

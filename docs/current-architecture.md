@@ -35,6 +35,8 @@ node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 runtime/bus/
   contractValidation.mjs
   capabilityTaxonomy.mjs
+  capabilityDefinition.mjs
+  capabilityRegistryContract.mjs
   contextRefs.mjs
   actionEnvelope.mjs
   resultEnvelope.mjs
@@ -70,7 +72,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only in `runtime-action-envelope-contract-v1`. It records the action/result/event/context surface shape for future Capability Bus branches, but it does not execute actions, route capabilities, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-only through `runtime-capability-registry-contract-v1`. It records the action/result/event/context surface shape plus capability definition and registry metadata for future Capability Bus branches, but it does not execute actions, route capabilities, call backends, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 
