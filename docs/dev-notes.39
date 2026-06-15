@@ -1,0 +1,224 @@
+# Runtime Dev Branch Notes — Backend Adapter Contract v1
+
+**Date:** 2026-06-15  
+**Branch:** `backend-adapter-contract-v1`  
+**Status:** Staged locally from the main mirror; syntax-checked, contract-smoke-tested, helper-checked, and artifact-guarded in sandbox. Not repo-verified on GitHub yet. No real-runtime test required if the branch remains contract-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## Purpose
+
+This branch adds a contract-only Backend Adapter layer under `runtime/backends/`.
+
+The branch answers, in code and tests:
+
+```text
+how a backend adapter descriptor declares a stable adapterId and backendKind;
+how adapter descriptors define capability/service/result/cancellation/stream expectations without executing anything;
+how an adapter registry validates and exposes adapter descriptors;
+how a backend adapter plan checks a capability service plan against matching adapter metadata;
+how backend adapter contracts remain metadata-only and non-executing.
+```
+
+This is the next substrate step after the action envelope, capability registry, bus skeleton, capability router contract, and capability service contract branches:
+
+```text
+action envelope -> bus intake -> router plan -> service contract -> backend adapter contract -> executor
+```
+
+---
+
+## Namespace decision
+
+Backend adapter contracts live under:
+
+```text
+runtime/backends/
+```
+
+They were intentionally not added under `runtime/bus/`.
+
+Reason:
+
+```text
+runtime/bus/ is the controlled action boundary and remains bus-related.
+Backend adapters are downstream replaceable execution mechanisms selected after bus/router/service approval.
+runtime/backends/ keeps the modular substrate layers readable before future executor work exists.
+```
+
+---
+
+## Files added
+
+```text
+runtime/backends/backendAdapterCommon.mjs
+runtime/backends/backendAdapterDefinition.mjs
+runtime/backends/backendAdapterRegistry.mjs
+runtime/backends/backendAdapterPlan.mjs
+runtime/backends/backendAdapterContract.mjs
+tests/smokeTestBackendAdapterContract.mjs
+docs/dev-notes.39
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, observability, scheduler, or public API files were modified.
+
+---
+
+## Modular design shape
+
+The branch follows the split service-contract pattern:
+
+```text
+backendAdapterCommon.mjs          shared constants/copy/prefix/guard helpers
+backendAdapterDefinition.mjs      adapter metadata definition validation
+backendAdapterRegistry.mjs        adapter registry validation and lookup helpers
+backendAdapterPlan.mjs            service-plan-to-adapter-plan validation
+backendAdapterContract.mjs        small public barrel/export surface
+```
+
+The public import surface is the barrel:
+
+```js
+import {
+    assertBackendAdapterDefinition,
+    assertBackendAdapterRegistry,
+    assertBackendAdapterPlan
+} from "./runtime/backends/backendAdapterContract.mjs";
+```
+
+---
+
+## Contract-only guardrails
+
+Backend adapter descriptors are metadata-only. They reject:
+
+```text
+modelPath/baseModel/mmprojPath/projectorPath fields
+backendOptions/adapterArgs/rawBackendPayload fields
+toolProcess/command/shell/exec/spawn/cwd/env/stdio fields
+function/handler/execute/executeAction/invoke fields
+path-like metadata values
+unknown top-level and nested fields
+prototype-pollution keys
+```
+
+The plan helper returns a descriptor:
+
+```js
+const backendAdapterPlan = {
+    contractVersion: "backend-adapter.v1",
+    servicePlan,
+    adapter
+};
+```
+
+It does not call a service, call a backend, enqueue a request, emit runtime events, stream tokens, or touch native/model execution.
+
+---
+
+## Validation coverage
+
+New smoke test:
+
+```bash
+node ./tests/smokeTestBackendAdapterContract.mjs
+```
+
+Coverage includes:
+
+```text
+valid adapter descriptor normalization/copying;
+unknown top-level and nested field rejection;
+prototype-pollution and execution/process/payload key rejection;
+model/projector/path-like key and value rejection;
+invalid/unselectable status rejection;
+registry duplicate adapterId rejection;
+multiple adapters for the same backendKind with different adapterId values;
+copy-on-read list/get behavior;
+valid service plan + matching adapter plan;
+missing backend adapter rejection;
+backendKind/capability/service compatibility rejection;
+modelBundleId/hardwareProfileId adapter requirement rejection;
+streaming/cancellation/timeout compatibility rejection;
+error-normalization compatibility rejection;
+descriptor-only plan output checks.
+```
+
+---
+
+## Tests run in sandbox
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: passed in the sandbox candidate mirror.
+
+---
+
+## Explicit non-goals
+
+Not included:
+
+```text
+executeAction()
+Capability Bus executor
+service execution implementation
+backend execution implementation
+nativeWorkerBackend implementation
+adapter invocation
+runtime.mjs public API changes
+prompt() routing through the bus
+workerBridge changes
+llama_worker changes
+runtime lifecycle/request/stream/config changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+policy engine implementation
+tool execution
+memory/retrieval execution
+Cognitive Graph Runtime implementation
+service namespace migration to runtime/capabilities/
+cleanup-only refactors
+optimization changes
+```
+
+---
+
+## Real-runtime requirement
+
+No real-runtime test is required for this branch if the final diff remains contract-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## Verification status
+
+Current staged status:
+
+```text
+Staged locally.
+Syntax-checked in sandbox.
+Contract-smoke-tested in sandbox.
+Helper-checked in sandbox.
+Artifact-guarded in sandbox.
+Not repo-verified on GitHub yet.
+Not checkpointed beyond these branch notes.
+```
