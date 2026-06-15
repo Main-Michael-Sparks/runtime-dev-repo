@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15  
 **Branch:** `backend-adapter-contract-v1`  
-**Status:** Staged locally from the main mirror; syntax-checked, contract-smoke-tested, helper-checked, and artifact-guarded in sandbox. Not repo-verified on GitHub yet. No real-runtime test required if the branch remains contract-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Repo-verified for the declared contract-only scope after upload; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, and Michael-run local checks passed. No real-runtime test required because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -214,11 +214,11 @@ No real-runtime test is required for this branch if the final diff remains contr
 Current staged status:
 
 ```text
-Staged locally.
-Syntax-checked in sandbox.
-Contract-smoke-tested in sandbox.
-Helper-checked in sandbox.
-Artifact-guarded in sandbox.
-Not repo-verified on GitHub yet.
-Not checkpointed beyond these branch notes.
+Repo-verified on GitHub branch.
+Michael-run local checks passed.
+Syntax-checked.
+Contract-smoke-tested.
+Helper-checked.
+Artifact-guarded.
+No real-runtime test required for declared contract-only scope.
 ```
