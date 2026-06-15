@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15  
 **Branch:** `capability-service-contract-v1`  
-**Status:** Staged in sandbox; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, and Michael-run targeted tests passed. Not GitHub repo-verified until Michael uploads/pushes the branch and provides a repo link.
+**Status:** Repo-verified on branch and main for the declared contract-only scope; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, and Michael-run targeted tests passed. No real-runtime test required because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
