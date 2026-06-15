@@ -32,6 +32,14 @@ node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 ## Parent runtime layout
 
 ```text
+runtime/bus/
+  contractValidation.mjs
+  capabilityTaxonomy.mjs
+  contextRefs.mjs
+  actionEnvelope.mjs
+  resultEnvelope.mjs
+  actionEvent.mjs
+
 runtime/config/
   config.mjs
   configOverride.mjs
@@ -61,6 +69,8 @@ runtime/stream/
   normalizer.mjs
   streamController.mjs
 ```
+
+`runtime/bus/` is contract-only in `runtime-action-envelope-contract-v1`. It records the action/result/event/context surface shape for future Capability Bus branches, but it does not execute actions, route capabilities, call backends, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 

@@ -47,6 +47,8 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.30` | Worker Layout Option C finalize | historical/current guard background |
 | `dev-notes.31` | runtime public entrypoint contract | current final guard for the modularization arc |
 | `dev-notes.32` | runtime consolidation cleanup v1 | current cleanup branch |
+| `dev-notes.33` | runtime system blueprint v1 | current design/checkpoint background |
+| `dev-notes.34` | runtime action envelope contract v1 | current contract branch |
 
 ## Reading order for new feature work
 
