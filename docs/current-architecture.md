@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-09
+Date: 2026-06-15
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -45,6 +45,11 @@ runtime/bus/
   capabilityRouterRegistry.mjs
   capabilityRoutePlan.mjs
   capabilityRouterContract.mjs
+  capabilityServiceCommon.mjs
+  capabilityServiceDefinition.mjs
+  capabilityServiceRegistry.mjs
+  capabilityServicePlan.mjs
+  capabilityServiceContract.mjs
   contextRefs.mjs
   actionEnvelope.mjs
   resultEnvelope.mjs
@@ -80,7 +85,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only through `runtime-capability-router-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, and capability router metadata/plan validation helpers for future Capability Bus branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-only through `capability-service-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, capability router metadata/plan validation helpers, and capability service metadata/registry/plan validation helpers for future Capability Bus branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 
