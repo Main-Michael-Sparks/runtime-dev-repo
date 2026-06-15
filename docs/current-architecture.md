@@ -37,6 +37,9 @@ runtime/bus/
   capabilityTaxonomy.mjs
   capabilityDefinition.mjs
   capabilityRegistryContract.mjs
+  capabilityBusContract.mjs
+  capabilityBusResult.mjs
+  capabilityBusEvents.mjs
   contextRefs.mjs
   actionEnvelope.mjs
   resultEnvelope.mjs
@@ -72,7 +75,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only through `runtime-capability-registry-contract-v1`. It records the action/result/event/context surface shape plus capability definition and registry metadata for future Capability Bus branches, but it does not execute actions, route capabilities, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-only through `runtime-capability-bus-skeleton-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, and bus skeleton intake/result/event helpers for future Capability Bus branches, but it does not execute actions, route capabilities, call backends, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 

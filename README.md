@@ -31,7 +31,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, and capability registry metadata for future Capability Bus work; it is not wired into `runtime.mjs`, prompt execution, routing, backend adapters, or worker behavior in this branch.
+`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, capability registry metadata, and bus skeleton intake/result/event helpers for future Capability Bus work; it is not wired into `runtime.mjs`, prompt execution, routing, backend adapters, or worker behavior in this branch.
 
 ## Public API
 
@@ -63,6 +63,7 @@ node ./tests/tools/checkWorkerImportCycles.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 node ./tests/smokeTestActionEnvelopeContract.mjs
 node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
 ```
 
 Broader static/mock checks used by recent branches include:

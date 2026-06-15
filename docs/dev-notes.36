@@ -1,0 +1,385 @@
+# Dev Notes 36 — Runtime Capability Bus Skeleton v1
+
+**Date:** 2026-06-15  
+**Branch:** `runtime-capability-bus-skeleton-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Staged in sandbox; syntax-checked and contract-smoke-tested locally in the assistant sandbox. Not GitHub-verified until Michael uploads/pushes the branch and provides a repo link.
+
+---
+
+## Purpose
+
+Add the first non-executing Capability Bus skeleton contract around the existing Runtime Dev bus contracts.
+
+This branch answers, in code and tests:
+
+```text
+how a bus intake helper validates an action envelope against a capability registry
+how a bus intake helper confirms the requested capability exists in the registry
+how deprecated capability definitions are rejected at bus intake
+how bus-level result helpers return contract-valid failed / policy-denied skeleton outcomes
+how bus-level event helpers return contract-valid accepted / failed / policy-denied skeleton events
+how the bus skeleton stays modular and bus-local without runtime or worker execution wiring
+```
+
+This remains contract-only. It does not make any capability executable.
+
+---
+
+## Files added
+
+```text
+runtime/bus/capabilityBusContract.mjs
+runtime/bus/capabilityBusResult.mjs
+runtime/bus/capabilityBusEvents.mjs
+tests/smokeTestCapabilityBusContract.mjs
+docs/dev-notes.36
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+Docs changes are limited to source-shape/index/test-command propagation for the new contract-only bus skeleton modules.
+
+---
+
+## Modular design shape
+
+The `runtime/bus/` namespace remains a contract namespace:
+
+```text
+contractValidation.mjs              shared validation result/error helpers and safe object checks
+capabilityTaxonomy.mjs              frozen v1 capability/status/event/source-kind constants
+capabilityDefinition.mjs            capability definition metadata contract
+capabilityRegistryContract.mjs      registry validation, creation, lookup, and listing contract helpers
+capabilityBusContract.mjs           non-executing bus intake validation against action + registry contracts
+capabilityBusResult.mjs             bus-level skeleton result-envelope constructors
+capabilityBusEvents.mjs             bus-level skeleton action-event constructors
+contextRefs.mjs                     context reference validation and normalization
+actionEnvelope.mjs                  action request contract validation/normalization
+resultEnvelope.mjs                  normalized result/error contract validation/creation
+actionEvent.mjs                     action event contract validation/creation
+```
+
+New bus skeleton modules import only existing `runtime/bus/**` contract helpers.
+
+No `runtime.mjs`, `workerBridge.mjs`, `runtime/lifecycle/**`, `runtime/request/**`, `runtime/stream/**`, `runtime/observability/**`, or `llama_worker/**` imports were introduced.
+
+---
+
+## Contract behavior summary
+
+### Capability Bus intake
+
+`runtime/bus/capabilityBusContract.mjs` exports:
+
+```text
+CAPABILITY_BUS_CONTRACT_VERSION
+normalizeCapabilityBusAction()
+validateCapabilityBusAction()
+assertCapabilityBusAction()
+```
+
+Normalized shape:
+
+```js
+const busAction = {
+    contractVersion: "capability-bus.v1",
+    action: normalizedActionEnvelope,
+    capabilityDefinition: normalizedCapabilityDefinition
+};
+```
+
+Validation behavior:
+
+```text
+validates the action envelope through actionEnvelope.mjs
+validates the registry through capabilityRegistryContract.mjs
+prefixes action validation paths/codes with action / bus_action
+prefixes registry validation paths/codes with registry / bus_registry
+rejects when the requested capability is not defined in the registry
+rejects deprecated capability definitions at bus intake
+returns a normalized non-executing wrapper when valid
+```
+
+This helper does not dispatch, route, enqueue, stream, call a backend, or touch worker/native code.
+
+### Capability Bus result helpers
+
+`runtime/bus/capabilityBusResult.mjs` exports:
+
+```text
+createCapabilityNotImplementedResult()
+createCapabilityUnsupportedResult()
+createCapabilityPolicyDeniedResult()
+createCapabilityValidationFailedResult()
+```
+
+These helpers create contract-valid result envelopes using existing result-envelope semantics:
+
+```text
+not implemented      -> status: failed,        error.kind: runtime,    code: capability_not_implemented
+unsupported          -> status: failed,        error.kind: validation, code: capability_unsupported
+policy denied        -> status: policy_denied, error.kind: policy,     code: capability_policy_denied
+validation failed    -> status: failed,        error.kind: validation, code: capability_bus_validation_failed
+```
+
+They copy only safe action identity fields from the action envelope:
+
+```text
+actionId
+runId
+capability
+```
+
+They do not include backend options, raw backend payloads, model paths, tool process fields, command fields, environment fields, or adapter args.
+
+### Capability Bus event helpers
+
+`runtime/bus/capabilityBusEvents.mjs` exports:
+
+```text
+createCapabilityBusAcceptedEvent()
+createCapabilityBusRejectedEvent()
+createCapabilityBusNotImplementedEvent()
+createCapabilityBusPolicyDeniedEvent()
+```
+
+Event behavior:
+
+```text
+accepted             -> type: action.accepted
+rejected             -> type: action.failed
+not implemented      -> type: action.failed
+policy denied        -> type: action.policyDenied
+```
+
+The helpers require caller-supplied `eventId` and `timestamp`. They do not call `Date.now()` and do not generate hidden event IDs. This keeps the skeleton contract deterministic and avoids introducing event-sink/runtime-time behavior in this branch.
+
+---
+
+## Explicit non-goals
+
+This branch does not include runtime execution surfaces.
+
+Detailed non-goals:
+
+```text
+executeAction()
+Capability Bus executor
+Capability Router
+Capability Service implementation
+Backend Adapter contracts or implementations
+nativeWorkerBackend adapter
+MCP inbound/outbound adapters
+Knowledge DB / memory backend implementation
+Cognitive Graph Runtime implementation
+graph node contracts
+graph scheduler
+runtime.mjs public API changes
+prompt() routing through bus
+workerBridge changes
+llama_worker changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+request lifecycle changes
+init/reset/shutdown behavior changes
+observer/event sink wiring
+streaming behavior changes
+cleanup unrelated to this contract branch
+optimization changes
+```
+
+---
+
+## Architecture boundaries preserved
+
+```text
+queue-based concurrency remains unchanged
+worker remains the model/native execution boundary
+parent runtime still owns request lifecycle
+parent-side stream shaping remains unchanged
+config remains the tuning surface
+prompt/output semantics are unchanged
+model identity/path is not made overrideable
+worker protocol shape is unchanged
+init/reset/shutdown behavior is unchanged
+Capability Bus skeleton remains bus-local and non-executing
+```
+
+---
+
+## Propagation review
+
+Confirmed in the staged candidate:
+
+```text
+runtime.mjs unchanged
+workerBridge.mjs unchanged
+runtime/config/** unchanged
+runtime/lifecycle/** unchanged
+runtime/request/** unchanged
+runtime/stream/** unchanged
+runtime/observability/** unchanged
+llama_worker/** unchanged
+existing fixture helper manifest unchanged
+public runtime exports unchanged
+```
+
+Docs propagation:
+
+```text
+README.md updates runtime/bus/ description and fast checks
+docs/current-architecture.md lists bus skeleton modules
+docs/README.md indexes dev-notes.36
+```
+
+Expected fixture propagation:
+
+```text
+No runtime fixture manifest updates required because runtime.mjs does not import the new bus modules.
+```
+
+---
+
+## Validation performed
+
+Assistant sandbox validation:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Observed result in assistant sandbox:
+
+```text
+All action envelope contract smoke checks finished.
+All capability registry contract smoke checks finished.
+All capability bus skeleton contract smoke checks finished.
+[OK] runtime fixture coverage passed for 39 file(s); local arrays: 0.
+[OK] worker import hygiene passed for 18 worker file(s).
+All runtime public entrypoint contract checks finished.
+```
+
+---
+
+## Real-runtime note
+
+Real-runtime testing is not required for this branch if it remains contract-only and does not touch runtime execution, worker behavior, init/reset/shutdown, cancellation boundaries, context creation, prompt streaming, or native/model execution.
+
+If future slices wire capability contracts into `runtime.mjs`, `workerBridge.mjs`, capability execution, prompt routing, cancellation, streaming, or backend adapters, real-runtime testing should be reconsidered for merge readiness.
+
+---
+
+## GitHub verification status
+
+Not yet GitHub-verified. After Michael uploads/pushes this candidate, directly inspect the branch source files and latest commits before calling it repo-verified.
+
+Expected changed files:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/dev-notes.36
+runtime/bus/capabilityBusContract.mjs
+runtime/bus/capabilityBusResult.mjs
+runtime/bus/capabilityBusEvents.mjs
+tests/smokeTestCapabilityBusContract.mjs
+```
+
+Expected unchanged sensitive files:
+
+```text
+runtime.mjs
+workerBridge.mjs
+runtime/config/**
+runtime/lifecycle/**
+runtime/request/**
+runtime/stream/**
+runtime/observability/**
+llama_worker/**
+tests/helpers/runtimeFixtureFiles.mjs
+```
+
+---
+
+## Caveats / known risks
+
+### Finding: This is still a bus skeleton, not a bus executor.
+
+Affected surface: Future Capability Bus / Router / Service branches.
+
+Why it matters: Passing this branch proves bus-local validation/result/event skeleton behavior only. It does not prove action execution, routing, backend selection, cancellation propagation, stream binding, policy enforcement, event sink behavior, or graph integration.
+
+Smallest safe correction: Keep execution work in a separate reviewed bus/router/backend branch.
+
+What still needs verification: Future execution branches must prove behavior with targeted tests and, when runtime execution surfaces are touched, real-runtime checks as applicable.
+
+---
+
+### Finding: Event helpers require explicit event identity/time.
+
+Affected surface: Future event sink / trace event branches.
+
+Why it matters: This branch deliberately avoids hidden `Date.now()` / ID generation behavior. A future event sink may want generated IDs/timestamps, but that should be introduced with explicit ownership and tests.
+
+Smallest safe correction: Keep generated event identity/time out of this skeleton branch.
+
+What still needs verification: Future event branches should define the event ID/timestamp owner and event ordering semantics.
+
+---
+
+### Finding: Deprecated capability definitions reject at bus intake.
+
+Affected surface: Future registry/versioning/router selection.
+
+Why it matters: This is the simplest v1 intake rule. If future compatibility work needs deprecated definitions for migration or fallback, that should be a separate policy/router decision.
+
+Smallest safe correction: Keep deprecated rejection in the v1 bus intake skeleton.
+
+What still needs verification: Future router branches should decide whether deprecated capability support is ever allowed and under what policy.
+
+---
+
+## Future work not included
+
+Recommended future branches:
+
+```text
+runtime-capability-router-v1
+runtime-backend-adapter-contracts-v1
+runtime-model-bundle-registry-v1
+runtime-text-generate-capability-native-worker-adapter-v1
+runtime-embedding-capability-v1
+runtime-rerank-capability-v1
+runtime-retrieval-capability-v1
+runtime-memory-storage-surfaces-plan-spec-v1
+runtime-mcp-inbound-adapter-plan-spec-v1
+runtime-mcp-outbound-backend-plan-spec-v1
+cognitive-graph-runtime-control-layer-plan-spec-v1
+```
+
+---
+
+## Recommended next step
+
+Michael should apply/upload this staged candidate to branch:
+
+```text
+runtime-capability-bus-skeleton-v1
+```
+
+Then run the validation command set locally and provide the GitHub branch URL for direct repo verification.
