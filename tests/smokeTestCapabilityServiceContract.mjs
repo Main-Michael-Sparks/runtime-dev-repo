@@ -22,7 +22,7 @@ import {
 import {
     CAPABILITY_ROUTER_CONTRACT_VERSION,
     assertCapabilityRoutePlan
-} from "../runtime/bus/capabilityRouterContract.mjs";
+} from "../runtime/router/capabilityRouterContract.mjs";
 import {
     CAPABILITY_SERVICE_CONTRACT_VERSION,
     CAPABILITY_SERVICE_REGISTRY_SCHEMA_VERSION,
