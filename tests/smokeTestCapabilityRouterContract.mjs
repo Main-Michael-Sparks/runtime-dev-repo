@@ -33,7 +33,7 @@ import {
     validateCapabilityRouteDefinition,
     validateCapabilityRoutePlan,
     validateCapabilityRouterRegistry
-} from "../runtime/bus/capabilityRouterContract.mjs";
+} from "../runtime/router/capabilityRouterContract.mjs";
 import {
     CAPABILITY_CONTRACT_REFS
 } from "../runtime/bus/capabilityDefinition.mjs";
@@ -168,14 +168,47 @@ function createValidRouterRegistry(routes = [createValidRoute()]) {
     };
 }
 
+const ROUTER_IMPLEMENTATION_FILES = [
+    "runtime/router/capabilityRouterContract.mjs",
+    "runtime/router/capabilityRouterCommon.mjs",
+    "runtime/router/capabilityRouteDefinition.mjs",
+    "runtime/router/capabilityRouterRegistry.mjs",
+    "runtime/router/capabilityRoutePlan.mjs"
+];
+
+const ROUTER_COMPATIBILITY_BARRELS = [
+    "runtime/bus/capabilityRouterContract.mjs",
+    "runtime/bus/capabilityRouterCommon.mjs",
+    "runtime/bus/capabilityRouteDefinition.mjs",
+    "runtime/bus/capabilityRouterRegistry.mjs",
+    "runtime/bus/capabilityRoutePlan.mjs"
+];
+
+async function assertRouterImplementationNamespace() {
+    for (const relativePath of ROUTER_IMPLEMENTATION_FILES) {
+        await readSource(relativePath);
+    }
+
+    ok("capability router implementation modules live under runtime/router/");
+}
+
+async function assertBusCompatibilityBarrels() {
+    for (const relativePath of ROUTER_COMPATIBILITY_BARRELS) {
+        const source = (await readSource(relativePath)).trim();
+        const expectedTarget = relativePath
+            .replace("runtime/bus/", "../router/");
+        const expected = `export * from "${expectedTarget}";`;
+
+        assert(
+            source === expected,
+            `${relativePath} should be a re-export-only compatibility barrel`
+        );
+    }
+
+    ok("runtime/bus capability router compatibility files are re-export-only barrels");
+}
+
 async function assertNoRuntimeWiringImports() {
-    const routerFiles = [
-        "runtime/bus/capabilityRouterContract.mjs",
-        "runtime/bus/capabilityRouterCommon.mjs",
-        "runtime/bus/capabilityRouteDefinition.mjs",
-        "runtime/bus/capabilityRouterRegistry.mjs",
-        "runtime/bus/capabilityRoutePlan.mjs"
-    ];
     const forbiddenMarkers = [
         "runtime.mjs",
         "workerBridge",
@@ -188,7 +221,7 @@ async function assertNoRuntimeWiringImports() {
         "prompt("
     ];
 
-    for (const relativePath of routerFiles) {
+    for (const relativePath of ROUTER_IMPLEMENTATION_FILES) {
         const source = await readSource(relativePath);
 
         for (const marker of forbiddenMarkers) {
@@ -198,7 +231,7 @@ async function assertNoRuntimeWiringImports() {
         }
     }
 
-    ok("capability router contract modules avoid runtime/worker execution imports");
+    ok("capability router implementation modules avoid runtime/worker execution imports");
 }
 
 function testRouterConstants() {
@@ -470,6 +503,8 @@ async function main() {
     testRoutePlanMissingDisabledDeprecatedRoutes();
     testRoutePlanCompatibilityRejections();
     testRoutePlanBusActionShapeRejections();
+    await assertRouterImplementationNamespace();
+    await assertBusCompatibilityBarrels();
     await assertNoRuntimeWiringImports();
 
     console.log("All capability router contract smoke checks finished.");
