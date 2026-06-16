@@ -120,7 +120,7 @@ capabilityDefinition.mjs
 capabilityTaxonomy.mjs
 ```
 
-The old router paths under `runtime/bus/` are compatibility barrels only:
+The old router paths under `runtime/bus/` are compatibility barrels only. Collectively, those files re-export their matching implementation modules from `runtime/router/`:
 
 ```js
 export * from "../router/capabilityRouterCommon.mjs";
@@ -129,6 +129,8 @@ export * from "../router/capabilityRouterRegistry.mjs";
 export * from "../router/capabilityRoutePlan.mjs";
 export * from "../router/capabilityRouterContract.mjs";
 ```
+
+Each compatibility barrel contains only its own matching single re-export.
 
 `runtime/bus/capabilityServicePlan.mjs` imports router validation helpers directly from `runtime/router/` so the service-plan implementation depends on the router namespace instead of the bus compatibility path.
 
@@ -276,7 +278,7 @@ router smoke test contains namespace/barrel/no-runtime-wiring guards
 docs describe runtime/router/ as the canonical router namespace
 ```
 
-A docs-only follow-up corrected the previous stale `docs/dev-notes.40` status language from "not yet repo-verified" to the current repo-verified status.
+The current `docs/dev-notes.40` content contains the corrected repo-verified status language and no longer records GitHub verification as pending.
 
 ---
 
@@ -295,7 +297,7 @@ A hard move would break older path imports and create unnecessary branch frictio
 Keep the compatibility barrels for this branch. Consider removing them only in a later explicitly approved breaking cleanup branch.
 
 ### What still needs verification
-After the docs-only status correction is uploaded, direct GitHub source inspection should confirm that `docs/dev-notes.40` now contains the corrected repo-verified status line and no unintended scope changes.
+No additional verification is required for this branch scope unless further commits are added before merge.
 
 ---
 
