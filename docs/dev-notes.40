@@ -123,7 +123,11 @@ capabilityTaxonomy.mjs
 The old router paths under `runtime/bus/` are compatibility barrels only:
 
 ```js
-export * from "../router/<same-file>.mjs";
+export * from "../router/capabilityRouterCommon.mjs";
+export * from "../router/capabilityRouteDefinition.mjs";
+export * from "../router/capabilityRouterRegistry.mjs";
+export * from "../router/capabilityRoutePlan.mjs";
+export * from "../router/capabilityRouterContract.mjs";
 ```
 
 `runtime/bus/capabilityServicePlan.mjs` imports router validation helpers directly from `runtime/router/` so the service-plan implementation depends on the router namespace instead of the bus compatibility path.
