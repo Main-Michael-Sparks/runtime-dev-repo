@@ -1,0 +1,262 @@
+# Runtime Dev Branch Notes — Capability Executor Contract v1
+
+**Date:** 2026-06-16  
+**Branch:** `capability-executor-contract-v1`  
+**Status:** Final candidate prepared from `/mnt/data/runtime-dev-repo-main.zip`; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, package-extracted/rechecked, and Michael-run local checks passed. Pending GitHub upload/direct repo verification. No real-runtime test required for the declared contract-only scope.
+
+---
+
+## Purpose
+
+This branch adds a contract-only Capability Executor layer under `runtime/execution/`.
+
+The branch answers, in code and tests:
+
+```text
+how an approved backend adapter plan becomes a metadata-only execution descriptor;
+how the current substrate chain reaches its final pre-execution contract seam;
+how action, route, service, and backend metadata are copied into a future invocation descriptor;
+how the execution contract rejects executable backend payloads and runtime/worker wiring;
+how the execution namespace stays modular rather than collapsing into a single executor file.
+```
+
+This is the next substrate step after the action envelope, capability registry, bus skeleton, capability router contract, capability service contract, backend adapter contract, and router namespace cleanup branches:
+
+```text
+action envelope -> bus intake -> router plan -> service contract -> backend adapter contract -> execution descriptor
+```
+
+---
+
+## Namespace decision
+
+Capability execution contracts live under:
+
+```text
+runtime/execution/
+```
+
+They were intentionally not added under `runtime/bus/`, `runtime/router/`, or `runtime/backends/`.
+
+Reason:
+
+```text
+runtime/bus/ is the controlled action boundary;
+runtime/router/ resolves route metadata;
+runtime/backends/ validates backend adapter metadata;
+runtime/execution/ records the final descriptor seam before future executeAction/backend invocation work.
+```
+
+This branch is descriptor-only. It does not execute anything.
+
+---
+
+## Files added
+
+```text
+runtime/execution/capabilityExecutionCommon.mjs
+runtime/execution/capabilityExecutionPlan.mjs
+runtime/execution/capabilityExecutorContract.mjs
+tests/smokeTestCapabilityExecutorContract.mjs
+docs/dev-notes.41
+```
+
+## Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, observability, scheduler, or public API files were modified.
+
+---
+
+## Modular design shape
+
+The branch follows a deliberately small execution namespace split:
+
+```text
+capabilityExecutionCommon.mjs       shared version/copy/prefix/guard helpers
+capabilityExecutionPlan.mjs         backend-plan-to-execution-descriptor validation
+capabilityExecutorContract.mjs      thin public barrel/export surface
+```
+
+The public import surface is the barrel:
+
+```js
+import {
+    assertCapabilityExecutionPlan,
+    normalizeCapabilityExecutionPlan,
+    validateCapabilityExecutionPlan
+} from "./runtime/execution/capabilityExecutorContract.mjs";
+```
+
+The public barrel remains thin. It does not hide implementation logic.
+
+---
+
+## Contract-only guardrails
+
+Execution plans are metadata-only descriptors. They reject:
+
+```text
+modelPath/baseModel/mmprojPath/projectorPath fields
+backendOptions/adapterArgs/rawBackendPayload fields
+toolProcess/command/shell/exec/spawn/cwd/env/stdio fields
+function/handler/execute/executeAction/invoke fields
+workerBridge/llama_worker/nodeLlamaCpp fields
+path-like metadata values for execution metadata IDs
+unknown execution-plan and invocation fields
+prototype-pollution keys through the shared contract-validation traversal
+```
+
+The plan helper returns a descriptor:
+
+```js
+const capabilityExecutionPlan = {
+    contractVersion: "capability-executor.v1",
+    backendPlan,
+    invocation: {
+        actionId,
+        runId,
+        capability,
+        serviceId,
+        adapterId,
+        backendKind,
+        routeId,
+        modelBundleId,
+        hardwareProfileId,
+        stream,
+        timeoutMs,
+        resultContract,
+        eventContract
+    }
+};
+```
+
+It does not call a service, call a backend, enqueue a request, emit runtime events, stream tokens, or touch native/model execution.
+
+---
+
+## Validation coverage
+
+New smoke test:
+
+```bash
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+```
+
+Coverage includes:
+
+```text
+contract version export;
+valid action -> bus action -> route plan -> service plan -> backend adapter plan -> execution plan;
+invocation metadata for actionId/runId/capability/serviceId/adapterId/backendKind;
+route/modelBundleId/hardwareProfileId metadata propagation;
+stream/timeout/result/event contract metadata propagation;
+validation of already-normalized execution descriptors;
+unsupported execution plan and backend adapter plan contract versions;
+unknown execution-plan field rejection;
+invalid backend adapter plan rejection;
+upstream backend compatibility rejection through the backend adapter contract path;
+forbidden model path / backend payload / executable handler key rejection;
+copy isolation for nested backend plan and invocation metadata;
+source guards for runtime/worker import boundaries;
+source guard that the public contract barrel stays thin;
+source guard that common helpers do not import plan/contract modules.
+```
+
+---
+
+## Tests run
+
+### Assistant sandbox
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: passed in the assistant sandbox candidate mirror and passed again after extracting the packaged candidate.
+
+### Michael-run local validation
+
+Michael ran the same command set from the extracted candidate repo root on Windows/MINGW64.
+
+Result: all listed checks passed, including `smokeTestCapabilityExecutorContract.mjs`, fixture coverage, worker import hygiene, and the runtime public entrypoint contract guard.
+
+---
+
+## Explicit non-goals
+
+Not included:
+
+```text
+executeAction()
+Capability Bus executor
+service execution implementation
+backend execution implementation
+nativeWorkerBackend implementation
+adapter invocation
+runtime.mjs public API changes
+prompt() routing through the bus
+workerBridge changes
+llama_worker changes
+runtime lifecycle/request/stream/config changes
+configOverride expansion
+model path/model identity changes
+scheduler changes
+policy engine implementation
+tool execution
+memory/retrieval execution
+Cognitive Graph Runtime implementation
+service namespace migration to runtime/capabilities/
+cleanup-only refactors
+optimization changes
+```
+
+---
+
+## Real-runtime requirement
+
+No real-runtime test is required for this branch if the final diff remains contract-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## Artifact/package verification
+
+The final candidate package was rebuilt after documentation status updates, extracted, and rechecked.
+
+Artifact guard/package checks cover the declared added and modified branch files and syntax-check the new execution/test modules.
+
+## Verification status
+
+Current final-candidate status:
+
+```text
+Final candidate prepared.
+Syntax-checked in assistant sandbox.
+Contract-smoke-tested in assistant sandbox.
+Helper-checked in assistant sandbox.
+Artifact-guarded/package-extracted/rechecked in assistant sandbox.
+Michael-run local checks passed on the extracted candidate.
+Not repo-verified on GitHub yet.
+No real-runtime test required for declared contract-only scope.
+```
+
+Recommended next workflow step:
+
+```text
+Upload/push to GitHub branch capability-executor-contract-v1, then perform direct repo verification against the uploaded branch files before considering merge readiness.
+```
