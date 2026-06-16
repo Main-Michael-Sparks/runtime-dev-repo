@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-16  
 **Branch:** `capability-executor-contract-v1`  
-**Status:** Final candidate prepared from `/mnt/data/runtime-dev-repo-main.zip`; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, package-extracted/rechecked, and Michael-run local checks passed. Pending GitHub upload/direct repo verification. No real-runtime test required for the declared contract-only scope.
+**Status:** Repo-verified on `capability-executor-contract-v1` for the declared contract-only scope after upload; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, package-extracted/rechecked, and Michael-run local checks passed. No real-runtime test required for the declared contract-only scope. Main-branch verification remains pending until after merge.
 
 ---
 
@@ -242,7 +242,7 @@ Artifact guard/package checks cover the declared added and modified branch files
 
 ## Verification status
 
-Current final-candidate status:
+### Candidate/package status
 
 ```text
 Final candidate prepared.
@@ -251,12 +251,43 @@ Contract-smoke-tested in assistant sandbox.
 Helper-checked in assistant sandbox.
 Artifact-guarded/package-extracted/rechecked in assistant sandbox.
 Michael-run local checks passed on the extracted candidate.
-Not repo-verified on GitHub yet.
 No real-runtime test required for declared contract-only scope.
+```
+
+### Repository status
+
+```text
+GitHub branch upload: completed.
+Direct branch verification: repo-verified on capability-executor-contract-v1 for the declared contract-only scope.
+Main-branch verification after merge: pending.
+Merge readiness: pending Michael review / merge decision and post-merge main verification.
+```
+
+Direct GitHub branch verification checked:
+
+```text
+runtime/execution/capabilityExecutionCommon.mjs
+runtime/execution/capabilityExecutionPlan.mjs
+runtime/execution/capabilityExecutorContract.mjs
+tests/smokeTestCapabilityExecutorContract.mjs
+README.md
+docs/current-architecture.md
+docs/README.md
+docs/dev-notes.41
+```
+
+Direct source review confirmed:
+
+```text
+runtime/execution/ contains the three expected modular execution contract files;
+capabilityExecutorContract.mjs remains a thin public barrel/export surface;
+README.md and docs/current-architecture.md describe runtime/execution/ as contract-only and metadata-only;
+docs/README.md lists dev-notes.41 as the current capability executor contract branch;
+docs/dev-notes.41 records the expected added/modified files, tests, non-goals, and no-real-runtime rationale.
 ```
 
 Recommended next workflow step:
 
 ```text
-Upload/push to GitHub branch capability-executor-contract-v1, then perform direct repo verification against the uploaded branch files before considering merge readiness.
+Reupload the docs/status refresh if desired, then proceed with Michael review / merge decision. After merge, directly verify main branch contents and update/checkpoint post-merge notes if needed.
 ```
