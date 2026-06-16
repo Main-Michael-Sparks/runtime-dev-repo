@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-15
+Date: 2026-06-16
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -69,6 +69,11 @@ runtime/backends/
   backendAdapterPlan.mjs
   backendAdapterContract.mjs
 
+runtime/execution/
+  capabilityExecutionCommon.mjs
+  capabilityExecutionPlan.mjs
+  capabilityExecutorContract.mjs
+
 runtime/config/
   config.mjs
   configOverride.mjs
@@ -104,6 +109,8 @@ runtime/stream/
 `runtime/router/` is contract-only through `capability-router-namespace-cleanup-v1`. It owns capability router metadata/registry/plan validation helpers for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
 `runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
+
+`runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 Parent-side responsibilities:
 
