@@ -10,8 +10,8 @@ import { CAPABILITY_BUS_CONTRACT_VERSION } from "./capabilityBusContract.mjs";
 import { validateCapabilityDefinition } from "./capabilityDefinition.mjs";
 import {
     validateCapabilityRouteDefinition
-} from "./capabilityRouteDefinition.mjs";
-import { CAPABILITY_ROUTER_CONTRACT_VERSION } from "./capabilityRouterContract.mjs";
+} from "../router/capabilityRouteDefinition.mjs";
+import { CAPABILITY_ROUTER_CONTRACT_VERSION } from "../router/capabilityRouterContract.mjs";
 import {
     validateCapabilityServiceRegistry
 } from "./capabilityServiceRegistry.mjs";
