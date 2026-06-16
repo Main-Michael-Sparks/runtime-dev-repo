@@ -13,6 +13,7 @@ runtime/                    parent runtime modules
   bus/                      contract-only action/result/event/context, capability registry, bus, service helpers, and router compatibility barrels
   router/                   contract-only capability router metadata, registry, and route-plan helpers
   backends/                 contract-only backend adapter metadata, registry, and plan helpers
+  execution/                contract-only capability execution descriptor helpers
   config/                   base config, config override validation, retry/profile helpers
   lifecycle/                init/reset/shutdown/native-boundary coordinators
   observability/            trace helpers
@@ -38,6 +39,8 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, and route-plan validation helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior in this branch.
 
 `runtime/backends/` is currently a contract-only namespace. It defines backend adapter metadata, registry, and service-plan compatibility helpers for future backend adapter selection work; it does not implement `nativeWorkerBackend`, call services, execute adapters, enqueue requests, stream tokens, or touch worker behavior in this branch.
+
+`runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior in this branch.
 
 ## Public API
 
@@ -73,6 +76,7 @@ node ./tests/smokeTestCapabilityBusContract.mjs
 node ./tests/smokeTestCapabilityRouterContract.mjs
 node ./tests/smokeTestCapabilityServiceContract.mjs
 node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
 ```
 
 Broader static/mock checks used by recent branches include:
