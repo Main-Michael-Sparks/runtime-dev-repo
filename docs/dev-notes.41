@@ -288,9 +288,7 @@ docs/dev-notes.41 records the expected added/modified files, tests, non-goals, a
 
 Recommended next workflow step:
 
-```markdown
-Recommended next workflow step:
 
 ```text
 Checkpoint the completed capability-executor-contract-v1 branch state and prepare next-session bootstrap notes. Future work should start from main with a fresh context review/preflight before any new branch plan/spec.
-
+```
