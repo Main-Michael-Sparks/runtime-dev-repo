@@ -1,0 +1,259 @@
+# Dev Notes 40 — Capability Router Namespace Cleanup v1
+
+**Date:** 2026-06-15  
+**Branch:** `capability-router-namespace-cleanup-v1`  
+**Status:** Staged candidate; syntax-checked, contract-smoke-tested, helper-checked, and artifact-guarded in sandbox. Not yet repo-verified on GitHub.
+
+---
+
+## 1. Purpose
+
+This branch performs a narrow namespace cleanup for the contract-only Capability Router helpers.
+
+The router implementation modules move out of:
+
+```text
+runtime/bus/
+```
+
+and into:
+
+```text
+runtime/router/
+```
+
+The old `runtime/bus/` router paths remain as compatibility barrels so existing import paths do not hard-break.
+
+---
+
+## 2. Scope
+
+In scope:
+
+```text
+move capability router implementation files to runtime/router/
+keep runtime/bus router files as re-export-only compatibility barrels
+update direct router imports in service/backend/router smoke tests
+update service-plan import paths to the router namespace
+update current docs for the new runtime/router namespace
+add guard checks that router implementation lives under runtime/router/
+add guard checks that runtime/bus router files are re-export-only barrels
+```
+
+Out of scope:
+
+```text
+executor contract
+executeAction()
+runtime.mjs public API changes
+prompt() routing through Capability Bus
+service execution
+backend execution
+nativeWorkerBackend implementation
+workerBridge changes
+llama_worker changes
+lifecycle/request/stream/config changes
+scheduler changes
+configOverride expansion
+model path/model identity changes
+tool execution
+memory/retrieval execution
+Cognitive Graph Runtime implementation
+service namespace migration
+optimization work
+unrelated cleanup
+```
+
+---
+
+## 3. Files added
+
+```text
+runtime/router/capabilityRouterCommon.mjs
+runtime/router/capabilityRouteDefinition.mjs
+runtime/router/capabilityRouterRegistry.mjs
+runtime/router/capabilityRoutePlan.mjs
+runtime/router/capabilityRouterContract.mjs
+docs/dev-notes.40
+```
+
+---
+
+## 4. Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+runtime/bus/capabilityRouterCommon.mjs
+runtime/bus/capabilityRouteDefinition.mjs
+runtime/bus/capabilityRouterRegistry.mjs
+runtime/bus/capabilityRoutePlan.mjs
+runtime/bus/capabilityRouterContract.mjs
+runtime/bus/capabilityServicePlan.mjs
+tests/smokeTestCapabilityRouterContract.mjs
+tests/smokeTestCapabilityServiceContract.mjs
+tests/smokeTestBackendAdapterContract.mjs
+```
+
+---
+
+## 5. Implementation summary
+
+The implementation modules now live under:
+
+```text
+runtime/router/capabilityRouterCommon.mjs
+runtime/router/capabilityRouteDefinition.mjs
+runtime/router/capabilityRouterRegistry.mjs
+runtime/router/capabilityRoutePlan.mjs
+runtime/router/capabilityRouterContract.mjs
+```
+
+Router modules now import shared bus contract primitives from `runtime/bus/` where needed:
+
+```text
+contractValidation.mjs
+actionEnvelope.mjs
+capabilityBusContract.mjs
+capabilityDefinition.mjs
+capabilityTaxonomy.mjs
+```
+
+The old router paths under `runtime/bus/` are compatibility barrels only:
+
+```js
+export * from "../router/<same-file>.mjs";
+```
+
+`runtime/bus/capabilityServicePlan.mjs` imports router validation helpers directly from `runtime/router/` so the service-plan implementation depends on the router namespace instead of the bus compatibility path.
+
+---
+
+## 6. Guard additions
+
+`tests/smokeTestCapabilityRouterContract.mjs` now checks:
+
+```text
+runtime/router/ contains the router implementation files
+runtime/bus/ router files are re-export-only compatibility barrels
+runtime/router/ router implementation files avoid runtime/worker execution imports
+```
+
+This is intentionally guard-style cleanup, not behavior expansion.
+
+---
+
+## 7. Architecture boundaries preserved
+
+Preserved boundaries:
+
+```text
+queue-based concurrency
+worker remains model/native execution boundary
+parent runtime owns request lifecycle
+parent-side stream shaping
+config remains primary tuning surface
+careful init/reset/shutdown behavior
+prompt/output semantics unchanged
+model identity/path guardrails unchanged
+worker protocol shape unchanged
+```
+
+No runtime, worker, lifecycle, request, stream, config, scheduler, public API, backend execution, or service execution behavior was changed.
+
+---
+
+## 8. Tests run in sandbox
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: all passed in sandbox.
+
+No real-runtime test is required for this branch scope because it is a contract-only namespace cleanup and does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 9. Artifact/package verification
+
+Candidate package:
+
+```text
+capability-router-namespace-cleanup-v1-candidate.zip
+```
+
+Artifact guard status:
+
+```text
+Artifact-guarded in sandbox; expected router namespace files, compatibility barrels, docs, and contract-smoke updates only.
+```
+
+---
+
+## 10. GitHub verification
+
+Not yet performed for this branch candidate.
+
+Expected branch after upload:
+
+```text
+https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/capability-router-namespace-cleanup-v1
+```
+
+Direct GitHub verification should check:
+
+```text
+runtime/router/
+runtime/bus/capabilityRouter*.mjs compatibility barrels
+runtime/bus/capabilityRoute*.mjs compatibility barrels
+runtime/bus/capabilityServicePlan.mjs
+README.md
+docs/current-architecture.md
+docs/README.md
+docs/dev-notes.40
+tests/smokeTestCapabilityRouterContract.mjs
+tests/smokeTestCapabilityServiceContract.mjs
+tests/smokeTestBackendAdapterContract.mjs
+```
+
+---
+
+## 11. Caveats / known risks
+
+### Finding
+The old `runtime/bus/` router files remain as compatibility barrels.
+
+### Affected surface
+Any current or future imports from the old router path.
+
+### Why it matters
+A hard move would break older path imports and create unnecessary branch friction before the executor contract branch.
+
+### Smallest safe correction
+Keep the compatibility barrels for this branch. Consider removing them only in a later explicitly approved breaking cleanup branch.
+
+### What still needs verification
+After upload, direct GitHub source inspection should confirm the moved implementation files and re-export-only compatibility barrels.
+
+---
+
+## 12. Recommended next step
+
+After this cleanup branch is uploaded, tested locally by Michael, and repo-verified, proceed to:
+
+```text
+capability-executor-contract-v1
+```
+
+That branch should use `runtime/router/` as the canonical router contract import path and remain descriptor/contract-only.

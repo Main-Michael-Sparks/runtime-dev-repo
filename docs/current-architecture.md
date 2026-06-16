@@ -40,20 +40,27 @@ runtime/bus/
   capabilityBusContract.mjs
   capabilityBusResult.mjs
   capabilityBusEvents.mjs
-  capabilityRouterCommon.mjs
-  capabilityRouteDefinition.mjs
-  capabilityRouterRegistry.mjs
-  capabilityRoutePlan.mjs
-  capabilityRouterContract.mjs
   capabilityServiceCommon.mjs
   capabilityServiceDefinition.mjs
   capabilityServiceRegistry.mjs
   capabilityServicePlan.mjs
   capabilityServiceContract.mjs
+  capabilityRouterCommon.mjs       compatibility barrel to runtime/router/
+  capabilityRouteDefinition.mjs    compatibility barrel to runtime/router/
+  capabilityRouterRegistry.mjs     compatibility barrel to runtime/router/
+  capabilityRoutePlan.mjs          compatibility barrel to runtime/router/
+  capabilityRouterContract.mjs     compatibility barrel to runtime/router/
   contextRefs.mjs
   actionEnvelope.mjs
   resultEnvelope.mjs
   actionEvent.mjs
+
+runtime/router/
+  capabilityRouterCommon.mjs
+  capabilityRouteDefinition.mjs
+  capabilityRouterRegistry.mjs
+  capabilityRoutePlan.mjs
+  capabilityRouterContract.mjs
 
 runtime/backends/
   backendAdapterCommon.mjs
@@ -92,7 +99,9 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only through `capability-service-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, capability router metadata/plan validation helpers, and capability service metadata/registry/plan validation helpers for future Capability Bus branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-only through `capability-router-namespace-cleanup-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+
+`runtime/router/` is contract-only through `capability-router-namespace-cleanup-v1`. It owns capability router metadata/registry/plan validation helpers for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
 `runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
