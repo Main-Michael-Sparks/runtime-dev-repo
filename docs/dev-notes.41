@@ -259,9 +259,9 @@ No real-runtime test required for declared contract-only scope.
 ```text
 GitHub branch upload: completed.
 Direct branch verification: repo-verified on capability-executor-contract-v1 for the declared contract-only scope.
-Main-branch verification after merge: pending.
-Merge readiness: pending Michael review / merge decision and post-merge main verification.
-```
+Merge to main: completed.
+Direct main verification after merge: repo-verified on main for the declared contract-only scope.
+Merge readiness: completed for this declared contract-only branch scope.
 
 Direct GitHub branch verification checked:
 
@@ -288,6 +288,9 @@ docs/dev-notes.41 records the expected added/modified files, tests, non-goals, a
 
 Recommended next workflow step:
 
+```markdown
+Recommended next workflow step:
+
 ```text
-Reupload the docs/status refresh if desired, then proceed with Michael review / merge decision. After merge, directly verify main branch contents and update/checkpoint post-merge notes if needed.
-```
+Checkpoint the completed capability-executor-contract-v1 branch state and prepare next-session bootstrap notes. Future work should start from main with a fresh context review/preflight before any new branch plan/spec.
+
