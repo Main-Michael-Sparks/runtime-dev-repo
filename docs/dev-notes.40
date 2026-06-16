@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15  
 **Branch:** `capability-router-namespace-cleanup-v1`  
-**Status:** Staged candidate; syntax-checked, contract-smoke-tested, helper-checked, and artifact-guarded in sandbox. Not yet repo-verified on GitHub.
+**Status:** Repo-verified on `capability-router-namespace-cleanup-v1` for the declared namespace-cleanup scope; syntax-checked, contract-smoke-tested, helper-checked, artifact-guarded, package-extracted/rechecked, and Michael-run local checks passed. No real-runtime test required for this branch scope.
 
 ---
 
@@ -164,7 +164,9 @@ No runtime, worker, lifecycle, request, stream, config, scheduler, public API, b
 
 ---
 
-## 8. Tests run in sandbox
+## 8. Tests run
+
+Sandbox / staged-tree checks:
 
 ```bash
 find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
@@ -181,16 +183,48 @@ node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 
 Result: all passed in sandbox.
 
+Package-extracted checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: all passed against the extracted candidate package.
+
+Michael-run local checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: all passed locally on Michael's machine.
+
 No real-runtime test is required for this branch scope because it is a contract-only namespace cleanup and does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
 ## 9. Artifact/package verification
 
-Candidate package:
+Candidate packages:
 
 ```text
 capability-router-namespace-cleanup-v1-candidate.zip
+capability-router-namespace-cleanup-v1-final-candidate.zip
 ```
 
 Artifact guard status:
@@ -199,19 +233,19 @@ Artifact guard status:
 Artifact-guarded in sandbox; expected router namespace files, compatibility barrels, docs, and contract-smoke updates only.
 ```
 
+The final candidate package was extracted and rechecked before upload.
+
 ---
 
 ## 10. GitHub verification
 
-Not yet performed for this branch candidate.
-
-Expected branch after upload:
+Direct GitHub branch checked:
 
 ```text
 https://github.com/Main-Michael-Sparks/runtime-dev-repo/tree/capability-router-namespace-cleanup-v1
 ```
 
-Direct GitHub verification should check:
+Repo-verified branch contents include:
 
 ```text
 runtime/router/
@@ -226,6 +260,19 @@ tests/smokeTestCapabilityRouterContract.mjs
 tests/smokeTestCapabilityServiceContract.mjs
 tests/smokeTestBackendAdapterContract.mjs
 ```
+
+Direct source verification confirmed:
+
+```text
+runtime/router/ contains the five router implementation modules
+old runtime/bus router files are re-export-only compatibility barrels
+capabilityServicePlan imports router helpers from runtime/router/
+router smoke test imports from runtime/router/
+router smoke test contains namespace/barrel/no-runtime-wiring guards
+docs describe runtime/router/ as the canonical router namespace
+```
+
+A docs-only follow-up corrected the previous stale `docs/dev-notes.40` status language from "not yet repo-verified" to the current repo-verified status.
 
 ---
 
@@ -244,13 +291,13 @@ A hard move would break older path imports and create unnecessary branch frictio
 Keep the compatibility barrels for this branch. Consider removing them only in a later explicitly approved breaking cleanup branch.
 
 ### What still needs verification
-After upload, direct GitHub source inspection should confirm the moved implementation files and re-export-only compatibility barrels.
+After the docs-only status correction is uploaded, direct GitHub source inspection should confirm that `docs/dev-notes.40` now contains the corrected repo-verified status line and no unintended scope changes.
 
 ---
 
 ## 12. Recommended next step
 
-After this cleanup branch is uploaded, tested locally by Michael, and repo-verified, proceed to:
+After this cleanup branch is merged or otherwise accepted, proceed to:
 
 ```text
 capability-executor-contract-v1
