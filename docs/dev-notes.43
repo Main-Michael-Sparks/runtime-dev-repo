@@ -1,0 +1,289 @@
+# Dev Notes 43 — Runtime Model Bundle Registry v1
+
+**Date:** 2026-06-17  
+**Branch:** `runtime-model-bundle-registry-v1`  
+**Status:** Final candidate package prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle contract smoke, existing contract-chain smokes, fixture helper checks, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, package recheck, and Michael-run local Windows/MINGW64 checks passed. Not repo-verified after upload, not merged, and not main-verified.
+
+---
+
+## 1. Purpose
+
+This branch adds the first contract-only model bundle registry namespace under:
+
+```text
+runtime/models/
+```
+
+The namespace validates static model bundle metadata for future routing/backend execution work. It makes the model-bundle boundary explicit:
+
+```text
+requests and plans select configured model bundles by modelBundleId
+registry/config-like metadata owns model artifact layout details
+runtime/model/worker code does not accept request-time raw model paths
+```
+
+This is not model execution. It does not load models, check filesystem paths, call backends, call services, enqueue runtime requests, stream tokens, route `prompt()` through the Capability Bus, or expose a public `executeAction()` API.
+
+---
+
+## 2. Files added
+
+```text
+runtime/models/modelBundleCommon.mjs
+runtime/models/modelBundleDefinition.mjs
+runtime/models/modelBundleRegistry.mjs
+runtime/models/modelBundleContract.mjs
+tests/smokeTestModelBundleRegistryContract.mjs
+docs/dev-notes.43
+```
+
+## 3. Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, router, backend adapter, execution descriptor, bus execute-action, scheduler, public API, or native/model execution files were modified.
+
+---
+
+## 4. Modular design shape
+
+The new namespace is intentionally split into small contract modules:
+
+```text
+modelBundleCommon.mjs        shared constants, copy helpers, field/key/path guard helpers
+modelBundleDefinition.mjs    single bundle validation/normalization/assert helpers
+modelBundleRegistry.mjs      registry validation, creation, listing, lookup helpers
+modelBundleContract.mjs      thin re-export barrel
+```
+
+`runtime/models/` is a metadata contract namespace, not a runtime loader and not a backend execution namespace.
+
+---
+
+## 5. Contract behavior
+
+The new contract exposes:
+
+```js
+validateModelBundleDefinition(bundle)
+normalizeModelBundleDefinition(bundle)
+assertModelBundleDefinition(bundle)
+validateModelBundleRegistry(registry)
+normalizeModelBundleRegistry(registry)
+assertModelBundleRegistry(registry)
+createModelBundleRegistry(bundles)
+listModelBundles(registry)
+getModelBundle(registry, bundleId)
+hasModelBundle(registry, bundleId)
+listModelBundlesForCapability(registry, capability)
+listModelBundlesForBackendKind(registry, backendKind)
+```
+
+Bundle definitions include:
+
+```text
+bundleId
+status
+label
+capabilities
+backendKind
+backendId
+defaultHardwareProfileId
+artifactLayout
+requirements
+metadata
+```
+
+Supported artifact layout kinds:
+
+```text
+gguf-text
+gguf-mmproj
+hf-multimodal
+server-managed
+native-vision
+```
+
+`defaultHardwareProfileId` is validated only as a metadata string in this branch. Hardware profile schema and existence validation remain future work.
+
+---
+
+## 6. Guardrails preserved
+
+The branch preserves these boundaries:
+
+```text
+runtime.mjs public export set unchanged
+prompt() behavior unchanged
+workerBridge unchanged
+llama_worker unchanged
+runtime/config unchanged
+configOverride unchanged
+scheduler unchanged
+request lifecycle unchanged
+stream shaping unchanged
+runtime/router unchanged
+runtime/backends unchanged
+runtime/execution unchanged
+runtime/bus/executeAction unchanged
+```
+
+The new modules avoid imports of:
+
+```text
+runtime.mjs
+workerBridge
+llama_worker
+node-llama-cpp
+worker_threads
+child_process
+runtime lifecycle modules
+runtime request modules
+runtime stream modules
+```
+
+The contract allows artifact reference metadata only inside `artifactLayout`. Request/execution payload keys remain rejected, including:
+
+```text
+backendOptions
+adapterArgs
+rawBackendPayload
+toolProcess
+command
+shell
+exec
+spawn
+cwd
+env
+function
+handler
+execute
+executeAction
+invoke
+workerBridge
+llama_worker
+nodeLlamaCpp
+configOverride
+```
+
+Path-like values outside `artifactLayout` are rejected.
+
+---
+
+## 7. Targeted smoke coverage
+
+New targeted smoke:
+
+```bash
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+```
+
+Validated:
+
+```text
+contract/schema constants
+known/selectable statuses
+known artifact layout kinds
+requirement support-level helper
+valid gguf-text bundle
+valid gguf-mmproj bundle
+valid hf-multimodal bundle
+valid server-managed bundle
+valid native-vision metadata bundle
+string normalization
+unknown status rejection
+unknown capability rejection
+duplicate capability rejection
+unknown top-level field rejection
+unknown artifactLayout field rejection
+missing artifactLayout kind rejection
+unknown artifactLayout kind rejection
+layout-specific missing required field rejection
+requirement support-level rejection
+path-like metadata rejection
+forbidden executable/request key rejection
+artifact path key outside artifactLayout rejection
+registry schemaVersion defaulting
+unsupported schemaVersion rejection
+bundles-array validation
+duplicate bundleId rejection
+nested bundle error prefixing
+create/list/get/has helpers
+capability/backendKind lookup helpers
+copy-return behavior for list/get helpers
+thin barrel guard for modelBundleContract.mjs
+runtime.mjs public export guard
+new module import-shape guard
+```
+
+---
+
+## 8. Tests and checks completed in assistant sandbox mirror
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: passed in the assistant sandbox mirror, passed again after extracting the final candidate package, and passed in Michael-run local Windows/MINGW64 validation from the extracted candidate repo root.
+
+Artifact guard passed against a manifest requiring exactly the expected modified source files and candidate-only files.
+
+No real-runtime test was required because the diff stayed contract-only and avoided runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 9. Propagation review
+
+Updated docs:
+
+```text
+README.md lists runtime/models/ as a contract-only model bundle metadata/registry namespace and adds the new smoke test to the fast local checks.
+docs/current-architecture.md lists runtime/models/ and records the model-bundle guardrail.
+docs/README.md lists dev-notes.43.
+```
+
+No fixture manifest update was required because the new modules are not reachable from `runtime.mjs` or `llama_worker/llama.mjs`; `checkRuntimeFixtureCoverage.mjs` passed unchanged.
+
+---
+
+## 10. Caveats / future work not included
+
+Not included in this branch:
+
+```text
+hardware profile registry
+model bundle validation threaded into router/service/backend/execution plans
+public executeAction API
+Capability Bus executor implementation
+nativeWorkerBackend implementation
+model loading or path resolution
+filesystem existence checks for model artifacts
+configOverride expansion
+worker or lifecycle changes
+Cognitive Graph Runtime implementation
+```
+
+Recommended next follow-up branches:
+
+```text
+runtime-hardware-profile-registry-v1
+runtime-model-bundle-route-validation-v1
+runtime-capability-bus-executor-skeleton-v1
+runtime-native-worker-backend-contract-v1
+```

@@ -46,17 +46,18 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.29` | Worker Layout Option C test contract cleanup | historical/current guard background |
 | `dev-notes.30` | Worker Layout Option C finalize | historical/current guard background |
 | `dev-notes.31` | runtime public entrypoint contract | current final guard for the modularization arc |
-| `dev-notes.32` | runtime consolidation cleanup v1 | current cleanup branch |
+| `dev-notes.32` | runtime consolidation cleanup v1 | current cleanup checkpoint |
 | `dev-notes.33` | runtime system blueprint v1 | current design/checkpoint background |
-| `dev-notes.34` | runtime action envelope contract v1 | current contract branch |
-| `dev-notes.35` | runtime capability registry contract v1 | current contract branch |
-| `dev-notes.36` | runtime capability bus skeleton v1 | current contract branch |
-| `dev-notes.37` | runtime capability router contract v1 | current contract branch |
-| `dev-notes.38` | runtime capability service contract v1 | current contract branch |
-| `dev-notes.39` | runtime backend adapter contract v1 | current contract branch |
-| `dev-notes.40` | capability router namespace cleanup v1 | current namespace cleanup branch |
-| `dev-notes.41` | capability executor contract v1 | current contract branch |
-| `dev-notes.42` | capability bus execute-action contract v1 | current contract branch |
+| `dev-notes.34` | runtime action envelope contract v1 | current contract checkpoint |
+| `dev-notes.35` | runtime capability registry contract v1 | current contract checkpoint |
+| `dev-notes.36` | runtime capability bus skeleton v1 | current contract checkpoint |
+| `dev-notes.37` | runtime capability router contract v1 | current contract checkpoint |
+| `dev-notes.38` | runtime capability service contract v1 | current contract checkpoint |
+| `dev-notes.39` | runtime backend adapter contract v1 | current contract checkpoint |
+| `dev-notes.40` | capability router namespace cleanup v1 | current namespace cleanup checkpoint |
+| `dev-notes.41` | capability executor contract v1 | current contract checkpoint |
+| `dev-notes.42` | capability bus execute-action contract v1 | current contract checkpoint |
+| `dev-notes.43` | runtime model bundle registry v1 | current contract checkpoint |
 
 ## Reading order for new feature work
 
