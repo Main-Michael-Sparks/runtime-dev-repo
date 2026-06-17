@@ -15,6 +15,7 @@ runtime/                    parent runtime modules
   backends/                 contract-only backend adapter metadata, registry, and plan helpers
   execution/                contract-only capability execution descriptor helpers
   models/                   contract-only model bundle metadata and registry helpers
+  profiles/                 contract-only hardware profile metadata and registry helpers
   config/                   base config, config override validation, retry/profile helpers
   lifecycle/                init/reset/shutdown/native-boundary coordinators
   observability/            trace helpers
@@ -44,6 +45,8 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 `runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
 
 `runtime/models/` is currently a contract-only namespace. It defines model bundle metadata and registry validation helpers for future routing/backend execution work. Requests and plans should refer to model bundles by `modelBundleId`; raw model paths, projector paths, backend process details, and config override payloads remain out of request-facing surfaces. This namespace does not load models, check filesystem paths, change `configOverride`, call backends, or touch worker behavior.
+
+`runtime/profiles/` is currently a contract-only namespace. It defines hardware profile metadata and registry validation helpers for future routing/backend/model-bundle planning work. Requests and plans should refer to configured profiles by `hardwareProfileId`; runtime hardware probing, init retry/degraded config behavior, executable route selection, and backend admission remain separate future/runtime surfaces. This namespace does not probe hardware, change `configOverride`, call backends, validate model-bundle/profile existence, or touch worker behavior.
 
 ## Public API
 
@@ -82,6 +85,7 @@ node ./tests/smokeTestBackendAdapterContract.mjs
 node ./tests/smokeTestCapabilityExecutorContract.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 ```
 
 Broader static/mock checks used by recent branches include:
