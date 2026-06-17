@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-17  
 **Branch:** `runtime-hardware-profile-registry-v1`  
-**Status:** Repo-verified on `runtime-hardware-profile-registry-v1` for the declared contract-only scope; assistant sandbox syntax checks, targeted hardware-profile contract smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection remains a post-merge gate. No real-runtime test is required for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Merged to `main` and main-inspected for the declared contract-only scope; assistant sandbox syntax checks, targeted hardware-profile contract smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test is required for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -300,9 +300,9 @@ node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 
 Result: passed in the assistant sandbox mirror and passed again after extracting the candidate package.
 
-Artifact guard passed against a manifest requiring the expected modified docs, new contract files, new smoke test, and dev notes. Michael-run local validation and direct GitHub verification are still pending.
+Artifact guard passed against a manifest requiring the expected modified docs, new contract files, new smoke test, and dev notes. Michael-run local Windows/MINGW64 candidate validation, direct GitHub branch verification, and direct GitHub `main` inspection passed.
 
-No real-runtime test is expected because the diff stays contract-only and avoids runtime/worker/lifecycle/native execution surfaces.
+No real-runtime test is required for the declared contract-only scope because the diff stays contract-only and avoids runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -320,7 +320,7 @@ No fixture manifest update was required because the new modules are not reachabl
 
 ---
 
-## 10. Direct GitHub branch verification
+## 10. Direct GitHub branch and main verification
 
 Direct GitHub branch inspection confirmed:
 
@@ -350,6 +350,17 @@ tests/smokeTestHardwareProfileRegistryContract.mjs
 ```
 
 No runtime, worker, lifecycle, request, stream, config, router, backend adapter, execution descriptor, bus execute-action, scheduler, public API, native/model execution, or model-bundle files were identified as changed by the branch diff.
+
+Direct GitHub `main` inspection after merge confirmed:
+
+```text
+main commit history includes merge pull request #23 from runtime-hardware-profile-registry-v1
+README.md documents runtime/profiles/ as contract-only
+docs/current-architecture.md documents runtime/profiles/ as contract-only
+docs/dev-notes.44 exists on main
+```
+
+This finalized dev-notes version updates the post-merge status line and Section 8 wording so the document no longer says direct GitHub or Michael-run validation is pending.
 
 ---
 
