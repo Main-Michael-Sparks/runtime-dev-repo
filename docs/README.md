@@ -11,7 +11,7 @@ feature-readiness.md         cleanup/readiness notes for future features such as
 
 ## Historical branch notes
 
-The `dev-notes.*` files are preserved as branch-history checkpoints. They are intentionally not renamed in this cleanup branch to avoid noisy path churn and broken historical references.
+The `dev-notes.*` files are preserved as branch-history checkpoints. They are intentionally not renamed to avoid noisy path churn and broken historical references.
 
 | File | Topic | Status |
 | --- | --- | --- |
