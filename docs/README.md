@@ -56,6 +56,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.39` | runtime backend adapter contract v1 | current contract branch |
 | `dev-notes.40` | capability router namespace cleanup v1 | current namespace cleanup branch |
 | `dev-notes.41` | capability executor contract v1 | current contract branch |
+| `dev-notes.42` | capability bus execute-action contract v1 | current contract branch |
 
 ## Reading order for new feature work
 
