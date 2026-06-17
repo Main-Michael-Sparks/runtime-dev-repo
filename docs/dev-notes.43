@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-17  
 **Branch:** `runtime-model-bundle-registry-v1`  
-**Status:** Final candidate package prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle contract smoke, existing contract-chain smokes, fixture helper checks, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, package recheck, Michael-run local Windows/MINGW64 checks, and direct GitHub branch inspection of the uploaded candidate scope passed. This replacement package applies docs-only finalization corrections after that branch inspection. Not merged and not main-verified.
+**Status:** Final candidate package prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle contract smoke, existing contract-chain smokes, fixture helper checks, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, package recheck, Michael-run local Windows/MINGW64 checks, and direct GitHub branch inspection of the uploaded candidate scope passed. Docs-only finalization corrections were applied after direct GitHub branch inspection of the uploaded candidate scope. Not merged and not main-verified.
 
 ---
 
