@@ -1,0 +1,349 @@
+# Dev Notes 44 — Runtime Hardware Profile Registry v1
+
+**Date:** 2026-06-17  
+**Branch:** `runtime-hardware-profile-registry-v1`  
+**Status:** Staged in assistant sandbox for the declared contract-only scope; assistant sandbox syntax checks, targeted hardware-profile contract smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, and package recheck passed. Michael-run local checks, direct GitHub branch inspection, and direct GitHub `main` inspection are still pending. No real-runtime test is expected for the declared contract-only scope unless branch scope expands.
+
+---
+
+## 1. Purpose
+
+This branch adds a contract-only hardware profile registry namespace under:
+
+```text
+runtime/profiles/
+```
+
+The namespace validates static hardware profile metadata for future routing, backend selection, model-bundle planning, capability admission, and hardware-aware compatibility work.
+
+It makes the hardware-profile boundary explicit:
+
+```text
+requests and plans may select configured hardware profiles by hardwareProfileId
+profile registry metadata describes hardware class, backend preferences, limits, media, and tuning hints
+runtime/config hardware probing and init retry behavior remain separate runtime/lifecycle surfaces
+```
+
+This is not runtime execution. It does not probe hardware, load models, validate current machine capacity, call backends, call services, enqueue runtime requests, stream tokens, route `prompt()` through the Capability Bus, expose a public `executeAction()` API, or validate model-bundle/profile existence across registries.
+
+---
+
+## 2. Files added
+
+```text
+runtime/profiles/hardwareProfileCommon.mjs
+runtime/profiles/hardwareProfileDefinition.mjs
+runtime/profiles/hardwareProfileRegistry.mjs
+runtime/profiles/hardwareProfileContract.mjs
+tests/smokeTestHardwareProfileRegistryContract.mjs
+docs/dev-notes.44
+```
+
+## 3. Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, router, backend adapter, execution descriptor, bus execute-action, scheduler, public API, native/model execution, or model-bundle files were modified.
+
+---
+
+## 4. Modular design shape
+
+The new namespace is intentionally split into small contract modules:
+
+```text
+hardwareProfileCommon.mjs        shared constants, copy helpers, field/key/path guard helpers, numeric guard helpers
+hardwareProfileDefinition.mjs    single profile validation/normalization/assert helpers
+hardwareProfileRegistry.mjs      registry validation, creation, listing, lookup, filtering helpers
+hardwareProfileContract.mjs      thin re-export barrel
+```
+
+`runtime/profiles/` is a metadata contract namespace, not a runtime hardware probe namespace, not an init retry profile namespace, and not a backend execution namespace.
+
+---
+
+## 5. Contract behavior
+
+The new contract exposes:
+
+```js
+validateHardwareProfileDefinition(profile)
+normalizeHardwareProfileDefinition(profile)
+assertHardwareProfileDefinition(profile)
+copyHardwareProfileDefinition(profile)
+validateHardwareProfileRegistry(registry)
+normalizeHardwareProfileRegistry(registry)
+assertHardwareProfileRegistry(registry)
+createHardwareProfileRegistry(profiles)
+listHardwareProfiles(registry)
+getHardwareProfile(registry, profileId)
+hasHardwareProfile(registry, profileId)
+listHardwareProfilesForCapability(registry, capability)
+listHardwareProfilesForBackendKind(registry, backendKind)
+listHardwareProfilesForHardwareClass(registry, hardwareClass)
+listSelectableHardwareProfiles(registry)
+copyHardwareProfileRegistry(registry)
+```
+
+Profile definitions include:
+
+```text
+profileId
+status
+label
+hardwareClass
+capabilities
+backendKinds
+processModes
+limits
+tuning
+media
+metadata
+```
+
+Supported statuses:
+
+```text
+contract-only
+planned
+experimental
+configured
+disabled
+deprecated
+```
+
+Selectable statuses:
+
+```text
+contract-only
+planned
+experimental
+configured
+```
+
+Supported hardware classes:
+
+```text
+cpu-laptop
+cpu-desktop
+gpu-consumer
+gpu-workstation
+server-managed
+external-service
+unknown
+```
+
+Supported process modes:
+
+```text
+in-process-worker
+managed-worker
+oneshot-cli
+service
+external-service
+metadata-only
+```
+
+`backendKinds` are validated as metadata strings in this registry contract version. Existing backend-adapter registry entries are not required. Model-bundle `defaultHardwareProfileId` existence validation remains future work.
+
+---
+
+## 6. Guardrails preserved
+
+The branch preserves these boundaries:
+
+```text
+runtime.mjs public export set unchanged
+prompt() behavior unchanged
+workerBridge unchanged
+llama_worker unchanged
+runtime/config unchanged
+hardwareProbe unchanged
+retryProfiles unchanged
+configOverride unchanged
+scheduler unchanged
+request lifecycle unchanged
+stream shaping unchanged
+runtime/models unchanged
+runtime/router unchanged
+runtime/backends unchanged
+runtime/execution unchanged
+runtime/bus/executeAction unchanged
+```
+
+The new modules avoid imports of:
+
+```text
+runtime.mjs
+workerBridge
+llama_worker
+node-llama-cpp
+worker_threads
+child_process
+runtime/config modules
+runtime lifecycle modules
+runtime request modules
+runtime stream modules
+runtime router modules
+runtime backend modules
+runtime execution modules
+```
+
+The contract allows static metadata only. Request/execution payload keys remain rejected, including:
+
+```text
+modelPath
+baseModel
+mmprojPath
+projectorPath
+backendOptions
+adapterArgs
+rawBackendPayload
+toolProcess
+command
+shell
+exec
+spawn
+cwd
+env
+function
+handler
+execute
+executeAction
+invoke
+workerBridge
+llama_worker
+nodeLlamaCpp
+configOverride
+```
+
+Path-like values and raw model artifact references are rejected.
+
+---
+
+## 7. Targeted smoke coverage
+
+New targeted smoke:
+
+```bash
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Validated:
+
+```text
+contract/schema constants
+known/selectable statuses
+known hardware classes
+known process modes
+valid hardware profile definition
+valid auto/bounded tuning metadata
+string normalization
+unknown status rejection
+unknown hardware class rejection
+unknown capability rejection
+duplicate capability rejection
+duplicate backendKind rejection
+unknown process mode rejection
+unknown top-level field rejection
+limits validation
+unknown limit field rejection
+gpuLayers validation
+threads validation
+batchSize validation
+contextSize validation
+contextSize range validation
+media imageResize boolean validation
+media imageResize dimension validation
+unknown imageResize field rejection
+path-like metadata rejection
+forbidden executable/request key rejection
+forbidden model artifact key rejection
+registry schemaVersion defaulting
+unsupported schemaVersion rejection
+profiles-array validation
+duplicate profileId rejection
+nested profile error prefixing
+create/list/get/has helpers
+capability/backendKind/hardwareClass lookup helpers
+selectable profile lookup helper
+copy-return behavior for list/get helpers
+thin barrel guard for hardwareProfileContract.mjs
+runtime.mjs public export guard
+new module import-shape guard
+```
+
+---
+
+## 8. Tests and checks completed in assistant sandbox mirror
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Result: passed in the assistant sandbox mirror and passed again after extracting the candidate package.
+
+Artifact guard passed against a manifest requiring the expected modified docs, new contract files, new smoke test, and dev notes. Michael-run local validation and direct GitHub verification are still pending.
+
+No real-runtime test is expected because the diff stays contract-only and avoids runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 9. Propagation review
+
+Updated docs:
+
+```text
+README.md lists runtime/profiles/ as a contract-only hardware profile metadata/registry namespace and adds the new smoke test to the fast local checks.
+docs/current-architecture.md lists runtime/profiles/ and records the hardware-profile guardrail.
+docs/README.md lists dev-notes.44.
+```
+
+No fixture manifest update was required because the new modules are not reachable from `runtime.mjs` or `llama_worker/llama.mjs`; `checkRuntimeFixtureCoverage.mjs` passed unchanged.
+
+---
+
+## 10. Caveats / future work not included
+
+Not included in this contract version:
+
+```text
+model-bundle defaultHardwareProfileId existence validation
+hardware profile validation threaded into router/service/backend/execution plans
+runtime hardware probing changes
+init retry profile changes
+configOverride expansion
+public executeAction API
+Capability Bus executor implementation
+nativeWorkerBackend implementation
+model loading or path resolution
+filesystem or live hardware capacity checks
+worker or lifecycle changes
+Cognitive Graph Runtime implementation
+```
+
+Recommended next follow-up branches:
+
+```text
+runtime-model-bundle-route-validation-v1
+runtime-capability-bus-executor-skeleton-v1
+runtime-native-worker-backend-contract-v1
+runtime-storage-backend-registry-v1
+```
