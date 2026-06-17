@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-16
+Date: 2026-06-17
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -85,6 +85,12 @@ runtime/models/
   modelBundleRegistry.mjs
   modelBundleContract.mjs
 
+runtime/profiles/
+  hardwareProfileCommon.mjs
+  hardwareProfileDefinition.mjs
+  hardwareProfileRegistry.mjs
+  hardwareProfileContract.mjs
+
 runtime/config/
   config.mjs
   configOverride.mjs
@@ -124,6 +130,8 @@ runtime/stream/
 `runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 `runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
+
+`runtime/profiles/` is contract-only through `runtime-hardware-profile-registry-v1`. It records hardware profile metadata, definition validation, registry validation, and lookup helpers for future routing/backend/model-bundle planning work. Hardware profile definitions are static metadata only: requests and plans should use `hardwareProfileId`, while runtime hardware probing and init retry/degraded configuration remain in runtime/config and lifecycle surfaces. This namespace does not probe hardware, change public runtime APIs, expand `configOverride`, validate model-bundle/profile existence, execute backends, or touch worker behavior.
 
 Parent-side responsibilities:
 
