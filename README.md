@@ -10,7 +10,7 @@ The current codebase is organized around a stable public runtime entrypoint, a p
 runtime.mjs                 public runtime API / composition root
 workerBridge.mjs            stable worker bridge to ./llama_worker/llama.mjs
 runtime/                    parent runtime modules
-  bus/                      contract-only action/result/event/context, capability registry, bus, service helpers, and router compatibility barrels
+  bus/                      contract-only action/result/event/context, capability registry, bus, execute-action, service helpers, and router compatibility barrels
   router/                   contract-only capability router metadata, registry, and route-plan helpers
   backends/                 contract-only backend adapter metadata, registry, and plan helpers
   execution/                contract-only capability execution descriptor helpers
@@ -34,7 +34,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, capability registry metadata, bus skeleton intake/result/event helpers, split capability service metadata/registry/plan validation helpers, and compatibility barrels for the capability router contract paths; it is not wired into `runtime.mjs`, prompt execution, executable routing, backend adapters, service execution, or worker behavior in this branch.
+`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, capability registry metadata, bus skeleton intake/result/event helpers, a bus-facing execute-action contract seam under `runtime/bus/executeAction/`, split capability service metadata/registry/plan validation helpers, and compatibility barrels for the capability router contract paths; it is not wired into `runtime.mjs`, prompt execution, executable routing, backend adapters, service execution, or worker behavior in this branch.
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, and route-plan validation helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior in this branch.
 
@@ -77,6 +77,7 @@ node ./tests/smokeTestCapabilityRouterContract.mjs
 node ./tests/smokeTestCapabilityServiceContract.mjs
 node ./tests/smokeTestBackendAdapterContract.mjs
 node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 ```
 
 Broader static/mock checks used by recent branches include:
