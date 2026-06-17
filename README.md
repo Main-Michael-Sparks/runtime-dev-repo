@@ -14,6 +14,7 @@ runtime/                    parent runtime modules
   router/                   contract-only capability router metadata, registry, and route-plan helpers
   backends/                 contract-only backend adapter metadata, registry, and plan helpers
   execution/                contract-only capability execution descriptor helpers
+  models/                   contract-only model bundle metadata and registry helpers
   config/                   base config, config override validation, retry/profile helpers
   lifecycle/                init/reset/shutdown/native-boundary coordinators
   observability/            trace helpers
@@ -34,13 +35,15 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, capability registry metadata, bus skeleton intake/result/event helpers, a bus-facing execute-action contract seam under `runtime/bus/executeAction/`, split capability service metadata/registry/plan validation helpers, and compatibility barrels for the capability router contract paths; it is not wired into `runtime.mjs`, prompt execution, executable routing, backend adapters, service execution, or worker behavior in this branch.
+`runtime/bus/` is currently a contract-only namespace. It defines validation helpers, capability taxonomy, context references, action envelopes, result envelopes, action events, capability definitions, capability registry metadata, bus skeleton intake/result/event helpers, a bus-facing execute-action contract seam under `runtime/bus/executeAction/`, split capability service metadata/registry/plan validation helpers, and compatibility barrels for the capability router contract paths; it is not wired into `runtime.mjs`, prompt execution, executable routing, backend adapters, service execution, or worker behavior.
 
-`runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, and route-plan validation helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior in this branch.
+`runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, and route-plan validation helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/backends/` is currently a contract-only namespace. It defines backend adapter metadata, registry, and service-plan compatibility helpers for future backend adapter selection work; it does not implement `nativeWorkerBackend`, call services, execute adapters, enqueue requests, stream tokens, or touch worker behavior in this branch.
+`runtime/backends/` is currently a contract-only namespace. It defines backend adapter metadata, registry, and service-plan compatibility helpers for future backend adapter selection work; it does not implement `nativeWorkerBackend`, call services, execute adapters, enqueue requests, stream tokens, or touch worker behavior.
 
-`runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior in this branch.
+`runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
+
+`runtime/models/` is currently a contract-only namespace. It defines model bundle metadata and registry validation helpers for future routing/backend execution work. Requests and plans should refer to model bundles by `modelBundleId`; raw model paths, projector paths, backend process details, and config override payloads remain out of request-facing surfaces. This namespace does not load models, check filesystem paths, change `configOverride`, call backends, or touch worker behavior.
 
 ## Public API
 
@@ -78,6 +81,7 @@ node ./tests/smokeTestCapabilityServiceContract.mjs
 node ./tests/smokeTestBackendAdapterContract.mjs
 node ./tests/smokeTestCapabilityExecutorContract.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
 ```
 
 Broader static/mock checks used by recent branches include:

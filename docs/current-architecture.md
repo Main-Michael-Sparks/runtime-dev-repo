@@ -79,6 +79,12 @@ runtime/execution/
   capabilityExecutionPlan.mjs
   capabilityExecutorContract.mjs
 
+runtime/models/
+  modelBundleCommon.mjs
+  modelBundleDefinition.mjs
+  modelBundleRegistry.mjs
+  modelBundleContract.mjs
+
 runtime/config/
   config.mjs
   configOverride.mjs
@@ -116,6 +122,8 @@ runtime/stream/
 `runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 `runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
+
+`runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
 
 Parent-side responsibilities:
 
