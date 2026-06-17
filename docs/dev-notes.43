@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-17  
 **Branch:** `runtime-model-bundle-registry-v1`  
-**Status:** Final candidate package prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle contract smoke, existing contract-chain smokes, fixture helper checks, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, package recheck, Michael-run local Windows/MINGW64 checks, direct GitHub branch inspection, and direct GitHub main inspection passed. Merged to main for the declared contract-only scope.
+**Status:** Merged to `main` and main-inspected for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle contract smoke, existing contract-chain smokes, fixture helper checks, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, package recheck, Michael-run local Windows/MINGW64 checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test required for the declared contract-only scope.
 
 ---
 
