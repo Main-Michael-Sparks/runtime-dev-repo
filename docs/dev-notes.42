@@ -1,0 +1,354 @@
+# Dev Notes 42 — Capability Bus Execute Action Contract v1
+
+**Date:** 2026-06-16  
+**Branch:** `capability-bus-execute-action-contract-v1`  
+**Status:** Final candidate package validated for `capability-bus-execute-action-contract-v1`: assistant sandbox checks, contract-smoke checks, helper checks, artifact guard, package extraction/recheck, and Michael-run local checks passed. This candidate document intentionally does not assert branch-upload, repo-verification, merge, or main-verification status; record those separately after direct GitHub verification. No real-runtime test required while the diff remains contract-only and avoids runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 1. Purpose
+
+This branch adds the first contract-only Capability Bus execute-action seam under:
+
+```text
+runtime/bus/executeAction/
+```
+
+The branch defines how a validated action envelope flows through the existing contract chain and becomes an accepted metadata-only execute-action descriptor:
+
+```text
+action envelope
+  -> Capability Bus intake
+  -> Capability Router route plan
+  -> Capability Service plan
+  -> Backend Adapter plan
+  -> Capability Execution descriptor
+  -> Capability Bus execute-action accepted descriptor/result/event metadata
+```
+
+This is not real execution. It does not invoke services, call backend adapters, enqueue runtime requests, stream tokens, route `prompt()` through the bus, or expose `executeAction()` through `runtime.mjs`.
+
+---
+
+## 2. Source-truth notes
+
+Current working source for this final candidate package is the staged candidate tree built from the uploaded `runtime-dev-repo-main.zip` mirror and refreshed after Michael-run local validation.
+
+Project source truth before branch upload remains GitHub `main` unless Michael provides a newer mirror or branch URL.
+
+Known carry-forward nuance from the previous branch:
+
+```text
+docs/dev-notes.41 may show stale top-line status wording in some raw GitHub views.
+Treat that as docs-only/status wording unless it contradicts branch gates in a decision-relevant way.
+```
+
+---
+
+## 3. Files added
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionPlan.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionResult.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityBusExecuteActionContract.mjs
+docs/dev-notes.42
+```
+
+## 4. Files modified
+
+```text
+README.md
+docs/current-architecture.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, observability, scheduler, public API, router implementation, backend implementation, or execution descriptor implementation files were modified.
+
+---
+
+## 5. Modular design shape
+
+The execute-action namespace is intentionally split into small modules:
+
+```text
+capabilityBusExecuteActionCommon.mjs       shared contract version/copy/prefix helpers
+capabilityBusExecuteActionPlan.mjs         action + registries -> accepted execute-action descriptor validation
+capabilityBusExecuteActionResult.mjs       accepted result/event and validation-failed result metadata helpers
+capabilityBusExecuteActionContract.mjs     thin public barrel/export surface
+```
+
+The namespace lives under `runtime/bus/executeAction/` because this is a bus/action boundary, not a backend execution implementation.
+
+`runtime/execution/` remains the metadata-only execution descriptor namespace and was not broadened into a god executor surface.
+
+---
+
+## 6. Contract behavior
+
+The new contract exposes:
+
+```js
+validateCapabilityBusExecuteActionPlan(actionEnvelope, registries)
+normalizeCapabilityBusExecuteActionPlan(actionEnvelope, registries)
+assertCapabilityBusExecuteActionPlan(actionEnvelope, registries)
+createCapabilityBusExecuteActionAcceptedResult(plan, details)
+createCapabilityBusExecuteActionAcceptedEvent(plan, fields)
+createCapabilityBusExecuteActionValidationFailedResult(actionEnvelope, validationResult, details)
+```
+
+Expected registry input shape:
+
+```js
+const registries = {
+    capabilityRegistry,
+    routerRegistry,
+    serviceRegistry,
+    backendAdapterRegistry
+};
+```
+
+Accepted plan shape:
+
+```js
+const plan = {
+    contractVersion: "capability-bus-execute-action.v1",
+    status: "accepted",
+    action: {
+        actionId,
+        runId,
+        capability
+    },
+    busAction,
+    routePlan,
+    servicePlan,
+    backendPlan,
+    executionPlan
+};
+```
+
+Accepted result/event helpers produce metadata only:
+
+```text
+status: accepted
+event type: action.accepted
+```
+
+They do not claim execution started, streamed, completed, failed, or touched a backend.
+
+---
+
+## 7. Contract-only guardrails
+
+The branch preserves these boundaries:
+
+```text
+runtime.mjs public export set unchanged
+prompt() behavior unchanged
+workerBridge unchanged
+llama_worker unchanged
+scheduler unchanged
+request lifecycle unchanged
+stream shaping unchanged
+config/configOverride unchanged
+model identity/path guardrails unchanged
+runtime/execution/ remains descriptor-only
+```
+
+The new execute-action modules avoid imports of:
+
+```text
+runtime.mjs
+workerBridge
+llama_worker
+node-llama-cpp
+worker_threads
+child_process
+scheduler/request internals
+ReadableStream
+```
+
+Validation failures are propagated through the existing contract validators with execute-action-specific prefixes.
+
+Forbidden executable/backend-private payloads continue to be rejected through upstream contract validators, including payloads such as:
+
+```text
+modelPath/baseModel/mmprojPath/projectorPath
+backendOptions/adapterArgs/rawBackendPayload
+toolProcess/command/shell/exec/spawn/cwd/env/stdio
+function/handler/execute/executeAction/invoke
+workerBridge/llama_worker/nodeLlamaCpp
+```
+
+---
+
+## 8. Tests and checks completed
+
+Command set:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Result: passed in the assistant sandbox against the uploaded source mirror, passed after package extraction/recheck, and passed in Michael-run local validation on Windows/MINGW64 from the extracted candidate repo root.
+
+New targeted smoke validated:
+
+```text
+valid chain produces accepted execute-action descriptor
+accepted plan carries busAction, routePlan, servicePlan, backendPlan, and executionPlan
+accepted plan uses the existing capability executor descriptor contract version
+accepted result validates with resultEnvelope.v1
+accepted event validates with actionEvent.v1
+invalid action envelope reports prefixed validation errors
+missing capability definition fails
+missing route fails
+missing service fails
+missing adapter fails
+forbidden executable payloads fail through existing validators
+public execute-action barrel remains thin
+runtime.mjs public exports remain unchanged
+new modules avoid runtime/worker execution imports
+runtime/execution/capabilityExecutorContract.mjs remains thin
+```
+
+---
+
+## 9. Real-runtime requirement
+
+No real-runtime test is required for this final candidate while the final diff remains contract-only and avoids:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime lifecycle modules
+request scheduler/settlement behavior
+stream shaping
+config/configOverride
+native/model execution surfaces
+```
+
+If later edits touch any of those surfaces, real-runtime testing should be reconsidered before merge readiness.
+
+---
+
+## 10. Propagation review
+
+Updated docs:
+
+```text
+README.md now lists runtime/bus/executeAction/ as a contract-only bus execute-action seam and includes the new smoke test.
+docs/current-architecture.md lists the new folder/module layout and updates runtime/bus/ contract status through this branch.
+docs/README.md lists dev-notes.42.
+```
+
+No fixture manifest update was required because the new modules are not reachable from `runtime.mjs` or `llama_worker/llama.mjs`; `checkRuntimeFixtureCoverage.mjs` passed unchanged.
+
+---
+
+## 11. Explicit non-goals preserved
+
+Not included:
+
+```text
+public executeAction() API
+runtime.mjs export change
+prompt() routing through the Capability Bus
+Capability Bus executor implementation
+service execution implementation
+backend adapter invocation
+nativeWorkerBackend implementation
+workerBridge changes
+llama_worker changes
+runtime lifecycle/request/stream/config changes
+scheduler changes
+policy engine implementation
+approval workflow implementation
+tool execution
+memory/retrieval execution
+Cognitive Graph Runtime implementation
+cleanup-only refactors
+optimization changes
+```
+
+---
+
+## 12. Artifact/package status
+
+Final candidate artifact/package gates:
+
+```text
+artifact guard: passed
+package extraction/recheck: passed
+Michael-run local validation: passed
+final candidate package: rebuilt after documentation status refresh
+```
+
+The package hash should be reported externally with the candidate ZIP because embedding a ZIP hash inside the ZIP contents would change the ZIP hash.
+
+---
+
+## 13. GitHub verification status
+
+This candidate document intentionally does not assert branch-upload, branch repo-verification, merge, or main-verification status. Those gates require direct GitHub inspection after upload/merge and should be recorded separately in checkout/checkpoint notes rather than by rewriting this candidate status line.
+
+After upload, verify direct GitHub branch source for:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionPlan.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionResult.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityBusExecuteActionContract.mjs
+README.md
+docs/current-architecture.md
+docs/README.md
+docs/dev-notes.42
+```
+
+Use cache-busted raw GitHub URLs for status-sensitive markdown if needed.
+
+---
+
+## 14. Caveats / known risks
+
+### Finding
+
+The phrase `executeAction` can imply real execution.
+
+### Affected surface
+
+Capability Bus contract semantics and future public API expectations.
+
+### Why it matters
+
+A real executor branch would touch service/backend/runtime/worker boundaries. This branch intentionally does not.
+
+### Smallest safe correction
+
+Keep this branch named and documented as `capability-bus-execute-action-contract-v1`, keep modules under `runtime/bus/executeAction/`, and avoid exporting from `runtime.mjs`.
+
+### What still needs verification
+
+After branch upload, direct GitHub branch source should confirm that no public API or runtime/worker files were modified.
+
+---
+
+## 15. Recommended next step
+
+Upload/push the final candidate to the `capability-bus-execute-action-contract-v1` branch, then run direct GitHub branch verification before considering merge readiness.
+
+This dev note status line should not need a post-upload wording edit because it records candidate/package validation only and leaves repo-verification gates to direct GitHub verification/checkpoint notes.
