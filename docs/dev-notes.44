@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-17  
 **Branch:** `runtime-hardware-profile-registry-v1`  
-**Status:** Staged in assistant sandbox for the declared contract-only scope; assistant sandbox syntax checks, targeted hardware-profile contract smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction, and package recheck passed. Michael-run local checks, direct GitHub branch inspection, and direct GitHub `main` inspection are still pending. No real-runtime test is expected for the declared contract-only scope unless branch scope expands.
+**Status:** Repo-verified on `runtime-hardware-profile-registry-v1` for the declared contract-only scope; assistant sandbox syntax checks, targeted hardware-profile contract smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection remains a post-merge gate. No real-runtime test is required for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -320,7 +320,40 @@ No fixture manifest update was required because the new modules are not reachabl
 
 ---
 
-## 10. Caveats / future work not included
+## 10. Direct GitHub branch verification
+
+Direct GitHub branch inspection confirmed:
+
+```text
+runtime-hardware-profile-registry-v1 exists
+branch comparison shows 3 commits / 9 files changed
+runtime/profiles/ contains the four expected contract modules
+README.md documents runtime/profiles/ as contract-only
+docs/current-architecture.md documents runtime/profiles/ as contract-only
+docs/README.md lists dev-notes.44
+docs/dev-notes.44 exists
+tests/smokeTestHardwareProfileRegistryContract.mjs exists
+```
+
+The expected changed file set is:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/dev-notes.44
+runtime/profiles/hardwareProfileCommon.mjs
+runtime/profiles/hardwareProfileDefinition.mjs
+runtime/profiles/hardwareProfileRegistry.mjs
+runtime/profiles/hardwareProfileContract.mjs
+tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+No runtime, worker, lifecycle, request, stream, config, router, backend adapter, execution descriptor, bus execute-action, scheduler, public API, native/model execution, or model-bundle files were identified as changed by the branch diff.
+
+---
+
+## 11. Caveats / future work not included
 
 Not included in this contract version:
 
