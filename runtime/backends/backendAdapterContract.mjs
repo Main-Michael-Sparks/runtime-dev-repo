@@ -27,6 +27,20 @@ export {
     validateBackendAdapterPlan
 } from "./backendAdapterPlan.mjs";
 export {
+    BACKEND_ADAPTER_INVOCATION_BOUNDARY,
+    BACKEND_ADAPTER_INVOCATION_CONTRACT_VERSION,
+    BACKEND_ADAPTER_INVOCATION_EXECUTABLE,
+    BACKEND_ADAPTER_INVOCATION_NATIVE_EXECUTION,
+    BACKEND_ADAPTER_INVOCATION_RUNTIME_WIRING,
+    BACKEND_ADAPTER_INVOCATION_STATUS,
+    copyBackendAdapterInvocationDescriptor
+} from "./backendAdapterInvocationCommon.mjs";
+export {
+    assertBackendAdapterInvocationDescriptor,
+    normalizeBackendAdapterInvocationDescriptor,
+    validateBackendAdapterInvocationDescriptor
+} from "./backendAdapterInvocationDescriptor.mjs";
+export {
     NATIVE_WORKER_BACKEND_ADAPTER_CONTRACT_VERSION,
     NATIVE_WORKER_BACKEND_ADAPTER_ID,
     NATIVE_WORKER_BACKEND_ADAPTER_STATUS,
