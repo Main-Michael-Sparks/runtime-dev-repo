@@ -98,6 +98,7 @@ function validateRouteRequirements(requirements, errors) {
 
 export {
     CAPABILITY_ROUTER_CONTRACT_VERSION,
+    CAPABILITY_ROUTE_MODEL_BUNDLE_PLAN_CONTRACT_VERSION,
     CAPABILITY_ROUTE_STATUSES
 } from "./capabilityRouterCommon.mjs";
 

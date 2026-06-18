@@ -7,6 +7,7 @@ import {
 } from "../bus/contractValidation.mjs";
 
 export const CAPABILITY_ROUTER_CONTRACT_VERSION = "capability-router.v1";
+export const CAPABILITY_ROUTE_MODEL_BUNDLE_PLAN_CONTRACT_VERSION = "capability-route-model-bundle-plan.v1";
 
 export const CAPABILITY_ROUTE_STATUSES = Object.freeze([
     "contract-only",
