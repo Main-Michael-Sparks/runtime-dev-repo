@@ -300,7 +300,9 @@ async function assertNoRuntimeWiringImports() {
         "runtime/backends/backendAdapterDefinition.mjs",
         "runtime/backends/backendAdapterRegistry.mjs",
         "runtime/backends/backendAdapterPlan.mjs",
-        "runtime/backends/backendAdapterContract.mjs"
+        "runtime/backends/backendAdapterContract.mjs",
+        "runtime/backends/nativeWorker/nativeWorkerBackendAdapterDefinition.mjs",
+        "runtime/backends/nativeWorker/nativeWorkerBackendContract.mjs"
     ];
 
     const forbiddenMarkers = [

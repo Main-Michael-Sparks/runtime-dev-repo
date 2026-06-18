@@ -12,7 +12,7 @@ workerBridge.mjs            stable worker bridge to ./llama_worker/llama.mjs
 runtime/                    parent runtime modules
   bus/                      contract-only action/result/event/context, capability registry, bus, execute-action, service helpers, and router compatibility barrels
   router/                   contract-only capability router metadata, registry, and route-plan helpers
-  backends/                 contract-only backend adapter metadata, registry, and plan helpers
+  backends/                 contract-only backend adapter metadata, registry, plan helpers, and nativeWorker descriptor contracts
   execution/                contract-only capability execution descriptor helpers
   models/                   contract-only model bundle metadata and registry helpers
   profiles/                 contract-only hardware profile metadata and registry helpers
@@ -40,7 +40,7 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/backends/` is currently a contract-only namespace. It defines backend adapter metadata, registry, and service-plan compatibility helpers for future backend adapter selection work; it does not implement `nativeWorkerBackend`, call services, execute adapters, enqueue requests, stream tokens, or touch worker behavior.
+`runtime/backends/` is currently a contract-only namespace. It defines generic backend adapter metadata, registry, service-plan compatibility helpers, and the canonical `native-worker.default` descriptor contract under `runtime/backends/nativeWorker/` for future native worker backend selection work; it does not execute adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, or touch worker behavior.
 
 `runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
 
@@ -83,6 +83,7 @@ node ./tests/smokeTestCapabilityRouterContract.mjs
 node ./tests/smokeTestModelBundleRouteValidation.mjs
 node ./tests/smokeTestCapabilityServiceContract.mjs
 node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
 node ./tests/smokeTestCapabilityExecutorContract.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
