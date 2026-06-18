@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-18  
 **Branch:** `runtime-backend-adapter-execution-interface-v1`  
-**Status:** Repo-verified on `runtime-backend-adapter-execution-interface-v1` for the declared contract/interface-only scope; assistant sandbox syntax checks, targeted backend-adapter execution-interface smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Post-merge `main` inspection remains a future gate. No real-runtime test is required for the declared contract/interface-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Merged to `main` and main-inspected for the declared contract/interface-only scope; assistant sandbox syntax checks, targeted backend-adapter execution-interface smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test is required for the declared contract/interface-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -223,7 +223,7 @@ node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 
 Michael-run local Windows/MINGW64 candidate checks passed with the full command set listed above.
 
-Real-runtime testing was not required for this branch because the staged/uploaded set is contract/interface-only and does not touch runtime/worker/lifecycle/native execution behavior.
+Real-runtime testing was not required for this branch because the staged/uploaded/merged set is contract/interface-only and does not touch runtime/worker/lifecycle/native execution behavior.
 
 ---
 
@@ -297,10 +297,29 @@ docs/current-architecture.md
 Branch identity note:
 
 ```text
-An earlier typo branch named `untime-backend-adapter-execution-interface-v1` existed during inspection. The corrected branch `runtime-backend-adapter-execution-interface-v1` now resolves and contains the expected candidate content.
+An earlier typo branch named `untime-backend-adapter-execution-interface-v1` existed during inspection. The corrected branch `runtime-backend-adapter-execution-interface-v1` resolved and contained the expected candidate content.
 ```
 
-Post-merge `main` inspection remains a future gate.
+Direct `main` inspection passed after merge.
+
+Post-merge `main` commit context included:
+
+```text
+d391461 — Merge pull request #28 from Main-Michael-Sparks/runtime-backend-adapter-execution-interface-v1
+```
+
+Expected merged `main` content was confirmed:
+
+```text
+runtime/backends/backendAdapterInvocationCommon.mjs
+runtime/backends/backendAdapterInvocationDescriptor.mjs
+runtime/backends/backendAdapterContract.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+docs/dev-notes.49
+README.md
+docs/README.md
+docs/current-architecture.md
+```
 
 ---
 
@@ -308,17 +327,13 @@ Post-merge `main` inspection remains a future gate.
 
 No code/source blocker is known for the declared contract/interface-only scope.
 
+No package, branch-inspection, local-check, or post-merge main-inspection gate remains known for the declared contract/interface-only scope.
+
 No real-runtime test was required because this branch did not touch runtime/worker/lifecycle/native execution surfaces.
 
 The branch remains intentionally non-executable. It defines a backend adapter invocation descriptor target for a future behavior-wiring branch.
 
 Future behavior-wiring branches that actually invoke backend adapters, wire `executeAction()`, touch `workerBridge`, touch `llama_worker`, enqueue runtime requests, stream tokens, schedule/cancel work, load models, or alter lifecycle behavior must define new gates and may require real-runtime testing.
-
-Known remaining gate before final closure:
-
-```text
-post-merge main inspection after merge
-```
 
 ---
 
