@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-17
+Date: 2026-06-18
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -81,6 +81,8 @@ runtime/backends/
 runtime/execution/
   capabilityExecutionCommon.mjs
   capabilityExecutionPlan.mjs
+  capabilityExecutorSkeletonCommon.mjs
+  capabilityExecutorSkeletonPlan.mjs
   capabilityExecutorContract.mjs
 
 runtime/models/
@@ -131,7 +133,7 @@ runtime/stream/
 
 `runtime/backends/` is contract-only through `runtime-native-worker-backend-contract-v1`. It records generic backend adapter descriptor, registry, and service-plan compatibility metadata plus the canonical `native-worker.default` native worker backend descriptor contract under `runtime/backends/nativeWorker/`. The native worker backend contract identifies the current built-in text-generation worker path by metadata only; it does not implement backend execution, call services, call `workerBridge`, import `llama_worker`, enqueue runtime requests, load models, change public runtime APIs, or touch worker behavior.
 
-`runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
+`runtime/execution/` is contract-only through `runtime-capability-bus-executor-skeleton-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans plus executor skeleton handoff descriptors for future behavior-wiring branches. It does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 `runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Route/model-bundle compatibility validation consumes this metadata from `runtime/router/` without moving model-bundle ownership into the router. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
 

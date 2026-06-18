@@ -1,0 +1,220 @@
+# Dev Notes 48 — Runtime Capability Bus Executor Skeleton v1
+
+**Date:** 2026-06-18  
+**Branch:** `runtime-capability-bus-executor-skeleton-v1`  
+**Status:** Staged candidate for the declared contract/skeleton-only scope; assistant sandbox syntax checks, targeted executor-skeleton smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, and public-entrypoint guard passed. Real-runtime testing is not expected for this branch if the staged set remains contract/skeleton-only because it does not touch runtime/worker/lifecycle/native execution surfaces. Direct GitHub branch inspection and post-upload package verification remain required before merge readiness.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow executor skeleton handoff seam after the existing Capability Bus execute-action descriptor chain.
+
+The descriptor chain is now:
+
+```text
+actionEnvelope
+  -> capability bus action
+  -> router route plan
+  -> service plan
+  -> backend adapter plan
+  -> capability execution plan
+  -> executor skeleton handoff descriptor
+```
+
+The new executor skeleton descriptor is metadata-only. It makes the future executor handoff boundary explicit without executing services, invoking backend adapters, calling the runtime, calling the worker bridge, or touching worker behavior.
+
+---
+
+## 2. Scope
+
+Added:
+
+```text
+runtime/execution/capabilityExecutorSkeletonCommon.mjs
+runtime/execution/capabilityExecutorSkeletonPlan.mjs
+tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+docs/dev-notes.48
+```
+
+Modified:
+
+```text
+runtime/execution/capabilityExecutorContract.mjs
+tests/smokeTestCapabilityExecutorContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+No bus execute-action behavior was changed. The execute-action plan remains accepted at the existing execution-plan layer; the executor skeleton lives under `runtime/execution/` as a future handoff descriptor seam.
+
+---
+
+## 3. New contract identity
+
+```text
+contractVersion: capability-executor-skeleton.v1
+status: planned
+```
+
+Boundary metadata:
+
+```js
+{
+    executor: "skeleton-only",
+    executable: false,
+    adapterInvocation: "not-implemented",
+    runtimeWiring: "not-wired"
+}
+```
+
+The descriptor embeds a validated capability execution plan and copies the normalized invocation metadata:
+
+```text
+actionId
+runId
+capability
+serviceId
+adapterId
+backendKind
+routeId
+modelBundleId
+hardwareProfileId
+stream
+timeoutMs
+resultContract
+eventContract
+```
+
+---
+
+## 4. Contract behavior
+
+The executor skeleton plan helpers:
+
+```js
+validateCapabilityExecutorSkeletonPlan(value)
+normalizeCapabilityExecutorSkeletonPlan(value)
+assertCapabilityExecutorSkeletonPlan(value)
+```
+
+Behavior:
+
+```text
+accepts a current capability execution plan or an existing skeleton descriptor;
+validates the embedded execution plan through the current capability execution plan validator;
+copies invocation metadata from the execution plan;
+requires the boundary block to remain skeleton-only and non-executable;
+rejects unknown top-level, invocation, and boundary fields;
+rejects forbidden executable/raw backend/model-path keys;
+rejects mismatched invocation metadata;
+returns copy-isolated normalized descriptors.
+```
+
+---
+
+## 5. Architecture boundaries preserved
+
+This branch does not:
+
+```text
+change runtime.mjs public APIs
+add executeAction() public API
+implement executeAction() behavior
+call capability services
+invoke backend adapters
+call workerBridge
+import llama_worker
+load models
+enqueue runtime requests
+stream tokens
+change scheduler/request/stream behavior
+change cancellation or timeout behavior
+change lifecycle/init/reset/shutdown behavior
+expand configOverride
+add request-time raw model paths or projector paths
+implement memory/storage behavior
+implement Cognitive Graph Runtime behavior
+implement multimodal/vision execution
+```
+
+The executor skeleton remains a contract-only handoff descriptor for a later behavior-wiring branch.
+
+---
+
+## 6. Propagation review
+
+Propagation included:
+
+```text
+capabilityExecutorContract.mjs re-exports skeleton constants/helpers as a thin barrel;
+smokeTestCapabilityExecutorContract.mjs source guards include the new execution modules;
+new targeted smoke validates the accepted execute-action chain through executor skeleton handoff;
+README fast-check list includes the new executor skeleton smoke;
+docs/current-architecture.md lists the new execution files and contract-only boundary;
+docs/README.md lists this dev note.
+```
+
+No compatibility barrel outside `runtime/execution/capabilityExecutorContract.mjs` was added.
+
+---
+
+## 7. Tests run
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Real-runtime testing was not run and is not expected for this declared contract/skeleton-only branch unless later edits touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 8. Caveats / next gates
+
+Remaining gates before merge readiness:
+
+```text
+package/artifact guard if preparing upload ZIP;
+extract generated package and rerun syntax + targeted smokes;
+direct GitHub branch inspection after upload;
+Michael local Windows/MINGW64 checks if requested;
+post-merge direct GitHub main inspection and final docs status refresh.
+```
+
+---
+
+## 9. Future work not included
+
+Not included in this branch:
+
+```text
+real executeAction() implementation
+service invocation
+backend adapter execution
+native worker backend behavior wiring
+scheduler lane work
+runtime public API expansion
+memory/storage backend work
+multimodal/vision execution
+Cognitive Graph Runtime implementation
+cleanup or optimization pass
+```
