@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-17  
 **Branch:** `runtime-memory-module-blueprint-reconciliation-v1`  
-**Status:** Repo-verified on `runtime-memory-module-blueprint-reconciliation-v1` for the declared docs-only blueprint-reconciliation scope; direct GitHub branch inspection confirmed the expected 3 commits / 3 files changed, the expected changed file set, and the expected Runtime Memory Module blueprint content. Assistant sandbox markdown/content checks, artifact guard, package extraction/recheck, and syntax checks passed with no production code changes. No real-runtime test is required because this branch changes documentation only and does not touch runtime/worker/lifecycle/native execution surfaces. Direct GitHub `main` inspection remains a post-merge gate.
+**Status:** Merged to main and main-inspected for the declared docs-only blueprint-reconciliation scope.
 
 ---
 
