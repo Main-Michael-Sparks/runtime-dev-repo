@@ -26,3 +26,17 @@ export {
     normalizeBackendAdapterPlan,
     validateBackendAdapterPlan
 } from "./backendAdapterPlan.mjs";
+export {
+    NATIVE_WORKER_BACKEND_ADAPTER_CONTRACT_VERSION,
+    NATIVE_WORKER_BACKEND_ADAPTER_ID,
+    NATIVE_WORKER_BACKEND_ADAPTER_STATUS,
+    NATIVE_WORKER_BACKEND_ADAPTER_VERSION,
+    NATIVE_WORKER_BACKEND_CAPABILITIES,
+    NATIVE_WORKER_BACKEND_KIND,
+    NATIVE_WORKER_BACKEND_RESULT_OUTPUT_FIELDS,
+    NATIVE_WORKER_BACKEND_RESULT_SCHEMA,
+    NATIVE_WORKER_BACKEND_SERVICES,
+    assertNativeWorkerBackendAdapterDefinition,
+    createNativeWorkerBackendAdapterDefinition,
+    validateNativeWorkerBackendAdapterDefinition
+} from "./nativeWorker/nativeWorkerBackendContract.mjs";

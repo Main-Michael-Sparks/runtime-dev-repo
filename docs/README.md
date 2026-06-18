@@ -62,6 +62,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.44` | runtime hardware profile registry v1 | current contract checkpoint |
 | `dev-notes.45` | runtime memory module blueprint reconciliation v1 | current design/checkpoint background |
 | `dev-notes.46` | runtime model-bundle route validation v1 | current contract checkpoint |
+| `dev-notes.47` | runtime native worker backend contract v1 | current contract checkpoint |
 
 ## Reading order for new feature work
 

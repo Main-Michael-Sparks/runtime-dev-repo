@@ -74,6 +74,9 @@ runtime/backends/
   backendAdapterRegistry.mjs
   backendAdapterPlan.mjs
   backendAdapterContract.mjs
+  nativeWorker/
+    nativeWorkerBackendAdapterDefinition.mjs
+    nativeWorkerBackendContract.mjs
 
 runtime/execution/
   capabilityExecutionCommon.mjs
@@ -126,7 +129,7 @@ runtime/stream/
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
+`runtime/backends/` is contract-only through `runtime-native-worker-backend-contract-v1`. It records generic backend adapter descriptor, registry, and service-plan compatibility metadata plus the canonical `native-worker.default` native worker backend descriptor contract under `runtime/backends/nativeWorker/`. The native worker backend contract identifies the current built-in text-generation worker path by metadata only; it does not implement backend execution, call services, call `workerBridge`, import `llama_worker`, enqueue runtime requests, load models, change public runtime APIs, or touch worker behavior.
 
 `runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
