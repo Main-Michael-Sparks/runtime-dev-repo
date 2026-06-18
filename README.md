@@ -13,7 +13,7 @@ runtime/                    parent runtime modules
   bus/                      contract-only action/result/event/context, capability registry, bus, execute-action, service helpers, and router compatibility barrels
   router/                   contract-only capability router metadata, registry, and route-plan helpers
   backends/                 contract-only backend adapter metadata, registry, plan helpers, and nativeWorker descriptor contracts
-  execution/                contract-only capability execution descriptor helpers
+  execution/                contract-only capability execution descriptor and executor skeleton handoff helpers
   models/                   contract-only model bundle metadata and registry helpers
   profiles/                 contract-only hardware profile metadata and registry helpers
   config/                   base config, config override validation, retry/profile helpers
@@ -42,7 +42,7 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 
 `runtime/backends/` is currently a contract-only namespace. It defines generic backend adapter metadata, registry, service-plan compatibility helpers, and the canonical `native-worker.default` descriptor contract under `runtime/backends/nativeWorker/` for future native worker backend selection work; it does not execute adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, or touch worker behavior.
 
-`runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
+`runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans and executor skeleton handoff descriptors for future execution wiring; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
 
 `runtime/models/` is currently a contract-only namespace. It defines model bundle metadata and registry validation helpers for future routing/backend execution work. Requests and plans should refer to model bundles by `modelBundleId`; raw model paths, projector paths, backend process details, and config override payloads remain out of request-facing surfaces. This namespace does not load models, check filesystem paths, change `configOverride`, call backends, or touch worker behavior.
 
@@ -85,6 +85,7 @@ node ./tests/smokeTestCapabilityServiceContract.mjs
 node ./tests/smokeTestBackendAdapterContract.mjs
 node ./tests/smokeTestNativeWorkerBackendContract.mjs
 node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
 node ./tests/smokeTestHardwareProfileRegistryContract.mjs

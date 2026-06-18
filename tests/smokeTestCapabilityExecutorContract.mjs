@@ -293,6 +293,8 @@ async function assertExecutionModuleBoundaries() {
     const executionFiles = [
         "runtime/execution/capabilityExecutionCommon.mjs",
         "runtime/execution/capabilityExecutionPlan.mjs",
+        "runtime/execution/capabilityExecutorSkeletonCommon.mjs",
+        "runtime/execution/capabilityExecutorSkeletonPlan.mjs",
         "runtime/execution/capabilityExecutorContract.mjs"
     ];
 
@@ -342,7 +344,7 @@ async function assertExecutionModuleBoundaries() {
         .map((line) => line.trim())
         .filter(Boolean);
 
-    assert(contractNonEmptyLines.length <= 18, "capabilityExecutorContract.mjs should remain a thin public barrel");
+    assert(contractNonEmptyLines.length <= 48, "capabilityExecutorContract.mjs should remain a thin public barrel");
     assert(!/\bfunction\b/.test(contractSource), "capabilityExecutorContract.mjs should not define functions");
     assert(!/\bconst\b|\blet\b|=>/.test(contractSource), "capabilityExecutorContract.mjs should not contain hidden implementation logic");
 
