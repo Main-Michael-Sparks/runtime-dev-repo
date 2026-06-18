@@ -65,6 +65,7 @@ runtime/router/
   capabilityRouteDefinition.mjs
   capabilityRouterRegistry.mjs
   capabilityRoutePlan.mjs
+  capabilityRouteModelBundlePlan.mjs
   capabilityRouterContract.mjs
 
 runtime/backends/
@@ -123,15 +124,15 @@ runtime/stream/
 
 `runtime/bus/` is contract-only through `capability-bus-execute-action-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, the bus-facing execute-action contract seam under `runtime/bus/executeAction/`, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/router/` is contract-only through `capability-router-namespace-cleanup-v1`. It owns capability router metadata/registry/plan validation helpers for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
 `runtime/backends/` is contract-only through `backend-adapter-contract-v1`. It records backend adapter descriptor, registry, and service-plan compatibility metadata for future backend adapter selection, but it does not implement backend execution, call services, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 `runtime/execution/` is contract-only through `capability-executor-contract-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans, but it does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
-`runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
+`runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Route/model-bundle compatibility validation consumes this metadata from `runtime/router/` without moving model-bundle ownership into the router. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
 
-`runtime/profiles/` is contract-only through `runtime-hardware-profile-registry-v1`. It records hardware profile metadata, definition validation, registry validation, and lookup helpers for future routing/backend/model-bundle planning work. Hardware profile definitions are static metadata only: requests and plans should use `hardwareProfileId`, while runtime hardware probing and init retry/degraded configuration remain in runtime/config and lifecycle surfaces. This namespace does not probe hardware, change public runtime APIs, expand `configOverride`, validate model-bundle/profile existence, execute backends, or touch worker behavior.
+`runtime/profiles/` is contract-only through `runtime-hardware-profile-registry-v1`. It records hardware profile metadata, definition validation, registry validation, and lookup helpers for future routing/backend/model-bundle planning work. Hardware profile definitions are static metadata only: requests and plans should use `hardwareProfileId`, while runtime hardware probing and init retry/degraded configuration remain in runtime/config and lifecycle surfaces. Cross-registry route/profile existence and compatibility validation now lives in `runtime/router/`; this namespace does not probe hardware, change public runtime APIs, expand `configOverride`, execute backends, or touch worker behavior.
 
 Parent-side responsibilities:
 

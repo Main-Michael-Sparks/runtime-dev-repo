@@ -1,0 +1,250 @@
+# Dev Notes 46 — Runtime Model-Bundle Route Validation v1
+
+**Date:** 2026-06-17  
+**Branch:** `runtime-model-bundle-route-validation-v1`  
+**Status:** Final upload candidate prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle route-validation smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, and Michael-run local Windows/MINGW64 candidate checks passed. Direct GitHub branch inspection and direct GitHub `main` inspection remain post-upload/post-merge gates. No real-runtime test is expected for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow, contract-only route validation seam that checks whether a selected capability route can legally pair with declared model bundle and hardware profile metadata.
+
+The branch fills the gap left after:
+
+```text
+runtime-model-bundle-registry-v1
+runtime-hardware-profile-registry-v1
+```
+
+Those branches created static registries and lookup helpers. They intentionally did not validate cross-registry existence or compatibility. This branch adds the cross-registry compatibility seam without executing backends or changing runtime behavior.
+
+---
+
+## 2. Scope
+
+In scope:
+
+```text
+route-selected modelBundleId existence checks
+route-selected or bundle-default hardwareProfileId existence checks
+selectable model bundle and hardware profile status checks
+route capability vs model bundle capability compatibility
+route capability vs hardware profile capability compatibility
+route backendKind vs model bundle backendKind compatibility
+route backendKind vs hardware profile backendKinds compatibility
+route/backend bundle backendId agreement when both are declared
+metadata-only future vision route validation without execution
+```
+
+Out of scope:
+
+```text
+model loading
+filesystem model/projector path checks
+image/video execution
+llama-mtmd-cli execution
+llama-server execution
+workerBridge calls
+runtime.mjs public API changes
+configOverride expansion
+runtime hardware probing
+native/model execution
+Capability Bus executor integration
+memory/storage backend work
+Cognitive Graph Runtime work
+cleanup or optimization outside the declared files
+```
+
+---
+
+## 3. Files added
+
+```text
+runtime/router/capabilityRouteModelBundlePlan.mjs
+tests/smokeTestModelBundleRouteValidation.mjs
+docs/dev-notes.46
+```
+
+---
+
+## 4. Files modified
+
+```text
+runtime/router/capabilityRouterCommon.mjs
+runtime/router/capabilityRouteDefinition.mjs
+runtime/router/capabilityRouterContract.mjs
+tests/smokeTestCapabilityRouterContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, backend execution, public API, native/model execution, or graph files were modified.
+
+---
+
+## 5. Implementation summary
+
+Added `runtime/router/capabilityRouteModelBundlePlan.mjs` as the modular route/model/profile compatibility helper.
+
+New contract version:
+
+```js
+CAPABILITY_ROUTE_MODEL_BUNDLE_PLAN_CONTRACT_VERSION = "capability-route-model-bundle-plan.v1"
+```
+
+New public router contract exports:
+
+```js
+validateCapabilityRouteModelBundlePlan(routePlan, {
+    modelBundleRegistry,
+    hardwareProfileRegistry
+});
+
+assertCapabilityRouteModelBundlePlan(routePlan, registries);
+normalizeCapabilityRouteModelBundlePlan(routePlan, registries);
+```
+
+Accepted result shape:
+
+```js
+{
+    contractVersion: "capability-route-model-bundle-plan.v1",
+    routePlan,
+    modelBundle,
+    hardwareProfile,
+    effectiveHardwareProfileId
+}
+```
+
+The helper treats `routePlan` as the output of the existing route-plan contract. It validates the plan descriptor shape, then performs only metadata compatibility checks.
+
+---
+
+## 6. Validation rules added
+
+Model bundle checks when `route.modelBundleId` is present:
+
+```text
+modelBundleRegistry is required
+bundle must exist
+bundle status must be selectable
+route capability must be included in bundle.capabilities
+route backendKind must match bundle.backendKind
+route backendId and bundle.backendId must match when both are declared
+```
+
+Hardware profile checks when an effective profile ID exists:
+
+```text
+effectiveHardwareProfileId = route.hardwareProfileId ?? modelBundle.defaultHardwareProfileId
+hardwareProfileRegistry is required
+profile must exist
+profile status must be selectable
+route capability must be included in profile.capabilities
+route backendKind must be included in profile.backendKinds
+```
+
+If a route has no model bundle ID and no effective hardware profile ID, the helper does not invent one and does not require registries. Existing route/service/backend validators continue to own required-presence checks.
+
+---
+
+## 7. Architecture boundaries preserved
+
+```text
+Model Bundle Registry remains metadata-only.
+Hardware Profile Registry remains metadata-only.
+Capability Router remains a planning/validation surface.
+Backend adapters are not executed.
+No model files are loaded or checked.
+No runtime hardware probing is performed.
+No public API shape changes.
+No worker/native/model execution surfaces are touched.
+```
+
+Future vision metadata is allowed as metadata only. The smoke test confirms a `vision.chat` route can validate against a `gguf-mmproj` model bundle and a CLI-shaped hardware profile without executing any media backend.
+
+---
+
+## 8. Propagation review
+
+Propagation completed in the staged candidate:
+
+```text
+router contract barrel exports the new helper
+router common exposes the new contract-version constant
+route definition re-exports the new constant through the existing public contract path
+capability router smoke includes the new implementation module in namespace/no-runtime-wiring checks
+new targeted smoke covers route/model/profile compatibility
+README fast-check list includes the new smoke
+current architecture doc describes the new router validation seam
+docs index lists dev-notes.46
+```
+
+The older `runtime/bus/capabilityRouterContract.mjs` compatibility barrel remains re-export-only:
+
+```js
+export * from "../router/capabilityRouterContract.mjs";
+```
+
+---
+
+## 9. Tests to run for candidate validation
+
+Assistant sandbox validation run:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+All commands above passed in the assistant sandbox and in Michael's local Windows/MINGW64 candidate checkout. No real-runtime test is expected for this contract-only branch unless the scope changes.
+
+---
+
+## 10. Known caveats
+
+1. The helper is intentionally independent. It is not yet threaded into the bus execute-action plan or executor skeleton.
+2. The helper does not select routes, services, adapters, or bundles. It validates compatibility for an already-selected route plan.
+3. The helper does not check whether artifact paths exist on disk. Artifact layout remains static model-bundle metadata.
+4. Future executor integration should decide where this helper sits in the accepted execution chain.
+
+---
+
+## 11. Future work not included
+
+Not included in this branch:
+
+```text
+runtime-native-worker-backend-contract-v1
+runtime-capability-bus-executor-skeleton-v1
+execute-action integration of route/model/profile validation
+real nativeWorkerBackend execution
+vision CLI/server adapter implementation
+model bundle multimodal expansion family
+Runtime Memory Module / storage backend contracts
+```
+
+---
+
+## 12. Recommended next step
+
+After candidate upload and direct GitHub branch verification, continue the current substrate chain with:
+
+```text
+runtime-native-worker-backend-contract-v1
+```

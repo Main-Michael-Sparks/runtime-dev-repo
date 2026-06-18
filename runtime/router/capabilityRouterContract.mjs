@@ -1,5 +1,6 @@
 export {
     CAPABILITY_ROUTER_CONTRACT_VERSION,
+    CAPABILITY_ROUTE_MODEL_BUNDLE_PLAN_CONTRACT_VERSION,
     CAPABILITY_ROUTE_STATUSES,
     assertCapabilityRouteDefinition,
     isKnownCapabilityRouteStatus,
@@ -22,3 +23,9 @@ export {
     normalizeCapabilityRoutePlan,
     validateCapabilityRoutePlan
 } from "./capabilityRoutePlan.mjs";
+
+export {
+    assertCapabilityRouteModelBundlePlan,
+    normalizeCapabilityRouteModelBundlePlan,
+    validateCapabilityRouteModelBundlePlan
+} from "./capabilityRouteModelBundlePlan.mjs";

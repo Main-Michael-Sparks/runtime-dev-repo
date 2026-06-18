@@ -173,7 +173,8 @@ const ROUTER_IMPLEMENTATION_FILES = [
     "runtime/router/capabilityRouterCommon.mjs",
     "runtime/router/capabilityRouteDefinition.mjs",
     "runtime/router/capabilityRouterRegistry.mjs",
-    "runtime/router/capabilityRoutePlan.mjs"
+    "runtime/router/capabilityRoutePlan.mjs",
+    "runtime/router/capabilityRouteModelBundlePlan.mjs"
 ];
 
 const ROUTER_COMPATIBILITY_BARRELS = [
