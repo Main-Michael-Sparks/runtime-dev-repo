@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-18  
 **Branch:** `runtime-backend-adapter-execution-interface-v1`  
-**Status:** Staged in assistant sandbox for the declared contract/interface-only scope. Assistant syntax checks, targeted backend-adapter execution-interface smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, and package extraction/recheck passed. Direct GitHub branch inspection, Michael local Windows/MINGW64 checks, post-merge main inspection, and final docs refresh remain future gates. No real-runtime test is expected for the declared scope because the branch remains contract/interface-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Repo-verified on `runtime-backend-adapter-execution-interface-v1` for the declared contract/interface-only scope; assistant sandbox syntax checks, targeted backend-adapter execution-interface smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Post-merge `main` inspection remains a future gate. No real-runtime test is required for the declared contract/interface-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -25,7 +25,9 @@ actionEnvelope
 
 The new backend adapter invocation descriptor is minimal and backend-facing. It is derived from a validated capability execution plan or a validated executor skeleton handoff descriptor.
 
-This branch does not execute adapters. It does not call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue runtime requests, stream tokens, load models, or touch worker/lifecycle behavior.
+This branch does not execute adapters.
+
+It does not call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue runtime requests, stream tokens, load models, or touch worker/lifecycle behavior.
 
 ---
 
@@ -37,19 +39,16 @@ Selected input design:
 Use a smaller backend adapter invocation descriptor derived from the validated upstream execution/skeleton chain.
 ```
 
-The backend adapter execution interface does not consume raw action envelopes, raw backend adapter definitions, or raw backend adapter plans directly. Raw backend adapter plans remain upstream source material for capability execution validation, not direct invocation inputs.
+The backend adapter execution interface does not consume raw action envelopes, raw backend adapter definitions, or raw backend adapter plans directly.
+
+Raw backend adapter plans remain upstream source material for capability execution validation, not direct invocation inputs.
 
 This preserves the intended layering:
 
 ```text
-Capability Bus / Router / Service / Executor
-  validate and decide what should happen
-
-Backend Adapter Invocation Descriptor
-  carries only the backend-facing invocation contract
-
-Backend Adapter
-  may execute later in a separate behavior-wiring branch
+Capability Bus / Router / Service / Executor validate and decide what should happen
+Backend Adapter Invocation Descriptor carries only the backend-facing invocation contract
+Backend Adapter may execute later in a separate behavior-wiring branch
 ```
 
 ---
@@ -170,7 +169,7 @@ The backend adapter invocation descriptor remains a contract-only target for a l
 
 ## 6. Propagation review
 
-Propagation staged:
+Propagation completed:
 
 ```text
 backendAdapterContract.mjs re-exports the invocation descriptor constants/helpers as a thin barrel
@@ -222,20 +221,24 @@ node ./tests/smokeTestCapabilityExecutorContract.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 ```
 
-Michael local Windows/MINGW64 checks:
+Michael-run local Windows/MINGW64 candidate checks passed with the full command set listed above.
 
-```text
-Pending.
-```
+Real-runtime testing was not required for this branch because the staged/uploaded set is contract/interface-only and does not touch runtime/worker/lifecycle/native execution behavior.
 
 ---
 
 ## 8. Artifact/package verification
 
-Final upload package prepared:
+Final upload package:
 
 ```text
 runtime-backend-adapter-execution-interface-v1-final-upload.zip
+```
+
+Final upload SHA-256:
+
+```text
+bfea775e705b62e1162ae8352a8eee80d21986d68657b7e81b2063b290495312
 ```
 
 Artifact guard passed on the staged tree and extracted package:
@@ -272,8 +275,29 @@ docs/current-architecture.md
 
 ## 9. GitHub verification
 
+Direct branch inspection passed on:
+
 ```text
-Pending direct branch inspection after upload.
+runtime-backend-adapter-execution-interface-v1
+```
+
+Expected branch content was confirmed:
+
+```text
+runtime/backends/backendAdapterInvocationCommon.mjs
+runtime/backends/backendAdapterInvocationDescriptor.mjs
+runtime/backends/backendAdapterContract.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+docs/dev-notes.49
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+Branch identity note:
+
+```text
+An earlier typo branch named `untime-backend-adapter-execution-interface-v1` existed during inspection. The corrected branch `runtime-backend-adapter-execution-interface-v1` now resolves and contains the expected candidate content.
 ```
 
 Post-merge `main` inspection remains a future gate.
@@ -282,19 +306,18 @@ Post-merge `main` inspection remains a future gate.
 
 ## 10. Caveats / status notes
 
-No code/source blocker is known in the assistant staged sandbox for the declared contract/interface-only scope at the time this document was drafted.
+No code/source blocker is known for the declared contract/interface-only scope.
 
-No real-runtime test is expected for this branch if it remains contract/interface-only because it does not touch runtime/worker/lifecycle/native execution surfaces.
+No real-runtime test was required because this branch did not touch runtime/worker/lifecycle/native execution surfaces.
+
+The branch remains intentionally non-executable. It defines a backend adapter invocation descriptor target for a future behavior-wiring branch.
 
 Future behavior-wiring branches that actually invoke backend adapters, wire `executeAction()`, touch `workerBridge`, touch `llama_worker`, enqueue runtime requests, stream tokens, schedule/cancel work, load models, or alter lifecycle behavior must define new gates and may require real-runtime testing.
 
-Known future gates before merge readiness:
+Known remaining gate before final closure:
 
 ```text
-Michael local Windows/MINGW64 candidate checks
-direct GitHub branch inspection after upload
 post-merge main inspection after merge
-final docs/status refresh after completed gates
 ```
 
 ---
