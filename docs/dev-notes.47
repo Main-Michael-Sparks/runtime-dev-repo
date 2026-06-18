@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-18  
 **Branch:** `runtime-native-worker-backend-contract-v1`  
-**Status:** Final candidate upload for the declared contract-only scope; assistant sandbox syntax checks, targeted/native backend contract smokes, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, and Michael local Windows/MINGW64 candidate checks passed. GitHub branch upload/inspection and post-merge `main` inspection remain future gates. No real-runtime test is expected for the declared contract-only scope because this branch does not touch `runtime.mjs`, `workerBridge.mjs`, `llama_worker/`, lifecycle, request scheduling, prompt execution, model loading, or native execution behavior.
+**Status:** Merged to `main` and main-inspected for the declared contract-only scope; assistant sandbox syntax checks, targeted/native backend contract smokes, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test is expected for the declared contract-only scope because this branch does not touch `runtime.mjs`, `workerBridge.mjs`, `llama_worker/`, lifecycle, request scheduling, prompt execution, model loading, or native execution behavior.
 
 ---
 
@@ -145,7 +145,9 @@ modelBundleRequired must be true
 hardwareProfileRequired must be true
 ```
 
-Invalid descriptor cases are constructed in tests manually. The production factory does not accept arbitrary override payloads.
+Invalid descriptor cases are constructed in tests manually.
+
+The production factory does not accept arbitrary override payloads.
 
 ---
 
@@ -171,13 +173,15 @@ add memory/storage backend behavior
 implement Cognitive Graph Runtime behavior
 ```
 
-Tests validate the intended architecture. The architecture was not shaped around tests.
+Tests validate the intended architecture.
+
+The architecture was not shaped around tests.
 
 ---
 
 ## 6. Propagation review
 
-Propagation completed in the candidate:
+Propagation completed:
 
 ```text
 backendAdapterContract.mjs re-exports native worker backend constants and helpers
@@ -242,7 +246,7 @@ node ./tests/tools/checkWorkerImportCycles.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 ```
 
-Real-runtime testing is not expected for this branch if the final staged set remains contract-only.
+Real-runtime testing is not expected for this branch because the staged/merged set is contract-only and does not touch runtime/worker/lifecycle/native execution behavior.
 
 ---
 
@@ -254,7 +258,13 @@ Final upload package:
 runtime-native-worker-backend-contract-v1-final-upload.zip
 ```
 
-Final artifact guard passed against the uploaded `runtime-dev-repo-main.zip` mirror used as the source folder.
+Final upload SHA-256:
+
+```text
+7975a26c3e3b39c4e0c51f886b96cf4de31bae9e010cf7757ce8572f02b1c04c
+```
+
+Final artifact guard passed against the uploaded `runtime-dev-repo-main.zip` mirror used as the source folder:
 
 ```text
 passed: true
@@ -301,7 +311,41 @@ fc07f0a — Update dev-notes.46
 91cf752 — Merge pull request #25 from Main-Michael-Sparks/runtime-model-bundle-route-validation-v1
 ```
 
-GitHub branch upload and branch-file inspection remain pending.
+Direct GitHub branch inspection passed for:
+
+```text
+runtime-native-worker-backend-contract-v1
+```
+
+Visible branch commits before merge included:
+
+```text
+d608dbb — Add files via upload
+fc47365 — Add files via upload
+e16c349 — Add files via upload
+```
+
+Direct GitHub `main` inspection after merge confirmed:
+
+```text
+a9013a1 — Merge pull request #26 from Main-Michael-Sparks/runtime-native-worker-backend-contract-v1
+e16c349 — Add files via upload
+fc47365 — Add files via upload
+d608dbb — Add files via upload
+```
+
+Confirmed on `main`:
+
+```text
+runtime/backends/nativeWorker/nativeWorkerBackendAdapterDefinition.mjs
+runtime/backends/nativeWorker/nativeWorkerBackendContract.mjs
+tests/smokeTestNativeWorkerBackendContract.mjs
+docs/dev-notes.47
+```
+
+`docs/README.md` lists `dev-notes.47` as the current contract checkpoint for runtime native worker backend contract v1.
+
+One retrieval note: a raw retrieval path showed some files compressed into long lines. That was treated as retrieval formatting behavior, not source-content failure, because the expected files and content were present on `main`.
 
 ---
 
@@ -334,7 +378,7 @@ Keep this branch contract-only. Pick execution placement during runtime-capabili
 What still needs verification:
 
 ```text
-GitHub branch upload inspection and post-merge main inspection if merged.
+Nothing for this completed contract-only branch beyond any normal post-upload formatting review Michael chooses to perform.
 ```
 
 ---
@@ -359,10 +403,12 @@ Cognitive Graph Runtime implementation
 
 ## 12. Recommended next step
 
-Upload the final candidate package to the GitHub branch:
+Proceed to checkpoint/bootstrap for the next session.
+
+Recommended next branch remains:
 
 ```text
-runtime-native-worker-backend-contract-v1
+runtime-capability-bus-executor-skeleton-v1
 ```
 
-Then inspect branch contents directly and consider merge readiness only after the GitHub branch content matches this final candidate and all named gates are complete.
+Keep the same source-truth rule: direct-check GitHub `main`, create a sandbox plan/spec, and preserve the contract-only/execution-boundary distinction until a behavior-wiring branch is explicitly approved.
