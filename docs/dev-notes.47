@@ -1,0 +1,368 @@
+# Dev Notes 47 — Runtime Native Worker Backend Contract v1
+
+**Date:** 2026-06-18  
+**Branch:** `runtime-native-worker-backend-contract-v1`  
+**Status:** Final candidate upload for the declared contract-only scope; assistant sandbox syntax checks, targeted/native backend contract smokes, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, and Michael local Windows/MINGW64 candidate checks passed. GitHub branch upload/inspection and post-merge `main` inspection remain future gates. No real-runtime test is expected for the declared contract-only scope because this branch does not touch `runtime.mjs`, `workerBridge.mjs`, `llama_worker/`, lifecycle, request scheduling, prompt execution, model loading, or native execution behavior.
+
+---
+
+## 1. Purpose
+
+This branch adds the first native worker backend descriptor contract under:
+
+```text
+runtime/backends/nativeWorker/
+```
+
+The branch assigns a real canonical backend adapter identity for the built-in native worker text-generation path:
+
+```text
+backendKind: nativeWorkerBackend
+adapterId: native-worker.default
+```
+
+This is a metadata contract only. It does not implement backend execution and does not call the runtime or worker.
+
+The purpose is to make the native worker backend path explicit as a backend adapter contract seam for later Capability Bus / Router / Service / Executor integration work.
+
+---
+
+## 2. Architecture decision
+
+The native worker backend receives a real canonical adapter ID because backend adapter descriptors require stable identity.
+
+Canonical v1 identity:
+
+```text
+native-worker.default
+```
+
+Rules:
+
+```text
+`native-worker.default` is the stored canonical adapter ID.
+plain `default` is not accepted as the stored canonical ID in this branch.
+no alias routing is added in this branch.
+no arbitrary second nativeWorkerBackend adapter IDs are accepted by the native-worker-specific contract.
+```
+
+Reason:
+
+```text
+native-worker = backend family / concrete runtime path
+.default = canonical built-in local native worker adapter
+```
+
+This keeps the contract precise without inventing multi-backend routing semantics.
+
+---
+
+## 3. Implementation summary
+
+Added:
+
+```text
+runtime/backends/nativeWorker/nativeWorkerBackendAdapterDefinition.mjs
+runtime/backends/nativeWorker/nativeWorkerBackendContract.mjs
+tests/smokeTestNativeWorkerBackendContract.mjs
+docs/dev-notes.47
+```
+
+Modified:
+
+```text
+runtime/backends/backendAdapterContract.mjs
+tests/smokeTestBackendAdapterContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+The new native worker backend descriptor exports:
+
+```js
+NATIVE_WORKER_BACKEND_ADAPTER_CONTRACT_VERSION
+NATIVE_WORKER_BACKEND_KIND
+NATIVE_WORKER_BACKEND_ADAPTER_ID
+NATIVE_WORKER_BACKEND_ADAPTER_VERSION
+NATIVE_WORKER_BACKEND_ADAPTER_STATUS
+NATIVE_WORKER_BACKEND_CAPABILITIES
+NATIVE_WORKER_BACKEND_SERVICES
+NATIVE_WORKER_BACKEND_RESULT_SCHEMA
+NATIVE_WORKER_BACKEND_RESULT_OUTPUT_FIELDS
+createNativeWorkerBackendAdapterDefinition()
+validateNativeWorkerBackendAdapterDefinition(adapter)
+assertNativeWorkerBackendAdapterDefinition(adapter)
+```
+
+The canonical descriptor is:
+
+```js
+{
+    adapterId: "native-worker.default",
+    backendKind: "nativeWorkerBackend",
+    version: "v1",
+    status: "contract-only",
+    capabilities: ["text.generate"],
+    services: ["text.generate.default"],
+    result: {
+        schema: "text.generate.result.v1",
+        outputFields: ["text"],
+        streamingDeltas: "supported",
+        errorNormalization: "supported"
+    },
+    requirements: {
+        streaming: "supported",
+        cancellation: "supported",
+        timeout: "supported"
+    },
+    compatibility: {
+        backendKind: "nativeWorkerBackend",
+        modelBundleRequired: true,
+        hardwareProfileRequired: true
+    }
+}
+```
+
+---
+
+## 4. Contract behavior
+
+The generic backend adapter contract remains the shared descriptor/registry/plan surface.
+
+The native-worker-specific contract is stricter than the generic contract and validates the canonical native worker descriptor:
+
+```text
+adapterId must be native-worker.default
+backendKind must be nativeWorkerBackend
+version must be v1
+status must be contract-only
+capabilities must be exactly text.generate
+services must be exactly text.generate.default
+result schema/output/support metadata must match the text.generate result contract
+streaming/cancellation/timeout support must remain supported
+modelBundleRequired must be true
+hardwareProfileRequired must be true
+```
+
+Invalid descriptor cases are constructed in tests manually. The production factory does not accept arbitrary override payloads.
+
+---
+
+## 5. Architecture boundaries preserved
+
+This branch does not:
+
+```text
+change runtime.mjs public APIs
+import or call workerBridge
+import llama_worker modules
+load models
+spawn workers or child processes
+execute backend adapters
+call capability services
+modify scheduler/request/stream behavior
+change lifecycle/init/reset/shutdown behavior
+change configOverride behavior
+add request-time raw model path support
+add default alias routing
+add multimodal/vision/video execution
+add memory/storage backend behavior
+implement Cognitive Graph Runtime behavior
+```
+
+Tests validate the intended architecture. The architecture was not shaped around tests.
+
+---
+
+## 6. Propagation review
+
+Propagation completed in the candidate:
+
+```text
+backendAdapterContract.mjs re-exports native worker backend constants and helpers
+backend adapter no-runtime-wiring smoke includes the new nativeWorker files
+new targeted native worker backend smoke validates canonical identity and descriptor shape
+README fast-check list includes the new native worker backend smoke
+current architecture doc lists runtime/backends/nativeWorker/ and its contract-only boundary
+docs index lists dev-notes.47
+```
+
+No compatibility barrel was added outside `runtime/backends/backendAdapterContract.mjs`.
+
+No runtime or worker import path was added.
+
+---
+
+## 7. Tests run
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Package extraction/recheck passed with the same syntax check and targeted smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+```
+
+Michael-run local Windows/MINGW64 candidate checks passed with the same command set:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Real-runtime testing is not expected for this branch if the final staged set remains contract-only.
+
+---
+
+## 8. Artifact/package verification
+
+Final upload package:
+
+```text
+runtime-native-worker-backend-contract-v1-final-upload.zip
+```
+
+Final artifact guard passed against the uploaded `runtime-dev-repo-main.zip` mirror used as the source folder.
+
+```text
+passed: true
+source file count: 171
+candidate file count: 175
+required file count: 9
+new file count: 4
+changed file count: 5
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Final candidate-only files:
+
+```text
+runtime/backends/nativeWorker/nativeWorkerBackendAdapterDefinition.mjs
+runtime/backends/nativeWorker/nativeWorkerBackendContract.mjs
+tests/smokeTestNativeWorkerBackendContract.mjs
+docs/dev-notes.47
+```
+
+Final modified files:
+
+```text
+runtime/backends/backendAdapterContract.mjs
+tests/smokeTestBackendAdapterContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+---
+
+## 9. GitHub verification
+
+Preflight source truth used GitHub `main` plus the uploaded `runtime-dev-repo-main.zip` mirror.
+
+Direct GitHub `main` commit context checked before staging included:
+
+```text
+9b9410d — Add files via upload
+fc07f0a — Update dev-notes.46
+91cf752 — Merge pull request #25 from Main-Michael-Sparks/runtime-model-bundle-route-validation-v1
+```
+
+GitHub branch upload and branch-file inspection remain pending.
+
+---
+
+## 10. Caveats / known risks
+
+Finding:
+
+```text
+This branch defines the native worker backend descriptor but does not integrate it into execute-action or executor behavior.
+```
+
+Affected surface:
+
+```text
+Future Capability Bus / Router / Service / Executor integration.
+```
+
+Why it matters:
+
+```text
+The canonical backend descriptor exists, but no runtime request will execute through it until a later behavior branch wires the execution path intentionally.
+```
+
+Smallest safe correction:
+
+```text
+Keep this branch contract-only. Pick execution placement during runtime-capability-bus-executor-skeleton-v1 or a dedicated nativeWorkerBackend execution integration branch.
+```
+
+What still needs verification:
+
+```text
+GitHub branch upload inspection and post-merge main inspection if merged.
+```
+
+---
+
+## 11. Future work not included
+
+```text
+runtime-capability-bus-executor-skeleton-v1
+native worker backend execution integration
+executeAction() behavior wiring
+adapter execution interfaces
+scheduler lane work
+runtime/model/worker lifecycle changes
+model bundle execution routing
+hardware profile admission behavior
+vision / multimodal execution
+memory/storage backend contracts
+Cognitive Graph Runtime implementation
+```
+
+---
+
+## 12. Recommended next step
+
+Upload the final candidate package to the GitHub branch:
+
+```text
+runtime-native-worker-backend-contract-v1
+```
+
+Then inspect branch contents directly and consider merge readiness only after the GitHub branch content matches this final candidate and all named gates are complete.
