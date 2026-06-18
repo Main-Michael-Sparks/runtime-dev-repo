@@ -1,8 +1,8 @@
 # Dev Notes 46 — Runtime Model-Bundle Route Validation v1
 
-**Date:** 2026-06-17  
+**Date:** 2026-06-18  
 **Branch:** `runtime-model-bundle-route-validation-v1`  
-**Status:** Final upload candidate prepared for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle route-validation smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, and Michael-run local Windows/MINGW64 candidate checks passed. Direct GitHub branch inspection and direct GitHub `main` inspection remain post-upload/post-merge gates. No real-runtime test is expected for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Merged to `main` and main-inspected for the declared contract-only scope; assistant sandbox syntax checks, targeted model-bundle route-validation smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, package extraction/recheck, Michael-run local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test required for the declared contract-only scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
