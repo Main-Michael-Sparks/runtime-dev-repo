@@ -1,0 +1,316 @@
+# Dev Notes 45 — Runtime Memory Module Blueprint Reconciliation v1
+
+**Date:** 2026-06-17  
+**Branch:** `runtime-memory-module-blueprint-reconciliation-v1`  
+**Status:** Final candidate prepared in the assistant sandbox for the declared docs-only blueprint-reconciliation scope; direct GitHub `main` preflight confirmed the source baseline before candidate preparation, markdown/content checks passed, artifact guard passed, package extraction/recheck passed, and sandbox syntax checks passed with no production code changes. No real-runtime test is required because this branch changes documentation only and does not touch runtime/worker/lifecycle/native execution surfaces. GitHub branch verification remains pending until Michael uploads the candidate branch.
+
+---
+
+## 1. Purpose
+
+This docs-only branch reconciles the planned Runtime Memory Module into the existing Runtime System Blueprint v1.
+
+The branch makes the memory/state direction explicit while preserving the existing architecture boundary:
+
+```text
+Runtime Dev remains the execution substrate.
+The Runtime Memory Module is a Runtime Dev substrate module.
+The Cognitive Graph Runtime remains a future control-layer track.
+Runtime Dev stays graph-compatible without becoming graph-dependent.
+```
+
+This is design documentation only. It does not implement memory storage, SQLite, PostgreSQL, Qdrant, JanusGraph, retrieval, promotion, checkpointing, context packing, graph/control behavior, capability execution, backend adapters, public APIs, runtime wiring, worker behavior, or tests.
+
+---
+
+## 2. Files added
+
+```text
+docs/dev-notes.45
+```
+
+## 3. Files modified
+
+```text
+docs/runtime-system-blueprint-v1.md
+docs/README.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, router, backend adapter, execution descriptor, model-bundle, hardware-profile, scheduler, public API, native/model execution, or test files were modified.
+
+---
+
+## 4. Blueprint changes
+
+The blueprint now recognizes a first-class Runtime Memory Module as the Runtime Dev substrate family for:
+
+```text
+working state
+canonical memory
+knowledge records
+retrieval
+storage projections
+checkpoints
+memory promotion
+hydration
+context-pack inputs
+inspection surfaces
+```
+
+The selected long-term memory/state composition is documented as:
+
+```text
+SQLite WAL       local working continuity, task/session state, scratch/checkpoint state, promotion candidates
+PostgreSQL      canonical memory and knowledge source of truth
+Qdrant          rebuildable vector recall projection over canonical/promoted memory IDs
+JanusGraph      rebuildable relationship projection for structural traversal
+```
+
+The blueprint states the core memory invariant:
+
+```text
+SQLite WAL operates.
+PostgreSQL remembers.
+Qdrant recalls.
+JanusGraph relates.
+Reranker prioritizes.
+Context packer feeds.
+```
+
+It also states that PostgreSQL owns canonical truth; SQLite owns local working continuity; Qdrant and JanusGraph are rebuildable projections; and vector/graph projection results must hydrate through PostgreSQL before becoming trusted model context.
+
+---
+
+## 5. Memory promotion and retrieval guardrails
+
+The blueprint now documents the critical memory flow:
+
+```text
+1. Runtime activity writes local working state to SQLite WAL.
+2. Scratch/checkpoint state may become a promotion candidate.
+3. Promotion guards validate scope, source, confidence, lifecycle, and promotion reason.
+4. Approved records write to PostgreSQL canonical memory/knowledge.
+5. PostgreSQL emits memory_events/outbox records.
+6. Projection workers update Qdrant and JanusGraph.
+7. Retrieval from Qdrant/JanusGraph returns IDs/candidates only.
+8. PostgreSQL hydrates and validates canonical records.
+9. Reranker ranks useful candidates.
+10. Context packer builds bounded model input.
+```
+
+Hard rules added to the blueprint:
+
+```text
+No vector or graph projection is canonical truth.
+No scratch state becomes long-term memory without promotion.
+No stale/superseded/expired memory enters critical context without explicit override.
+Qdrant and JanusGraph must not directly feed trusted context without PostgreSQL hydration.
+The reranker decides relevance and priority, not truth.
+Capability services and backend adapters do not interpret cognitive meaning.
+```
+
+The wording also clarifies that the Runtime Memory Module owns storage-level promotion mechanics, while a future Cognitive Graph Runtime may request or decide control-layer promotion only through Runtime Memory Module promotion surfaces and guards.
+
+---
+
+## 6. Backend and module-layout guidance
+
+The blueprint now names memory-specific backend candidates:
+
+```text
+workingStateBackend
+canonicalMemoryBackend
+knowledgeStoreBackend
+vectorStoreBackend
+graphStoreBackend
+checkpointStoreBackend
+eventLogStoreBackend
+artifactStoreBackend
+```
+
+It also records future layout guidance:
+
+```text
+runtime/state/
+  workingStateContract.mjs
+  workingStateEvents.mjs
+  workingStateSnapshot.mjs
+  workingStateLifecycle.mjs
+  sqliteWalWorkingStateBackend.mjs        [future implementation]
+
+runtime/memory/
+  memoryItemContract.mjs
+  knowledgeItemContract.mjs
+  memoryLifecycle.mjs
+  memoryPromotionContract.mjs
+  memoryProjectionStatus.mjs
+  memoryRetrievalContract.mjs
+  contextPackContract.mjs
+
+runtime/memory/backends/
+  postgresCanonicalMemoryBackend.mjs      [future implementation]
+  qdrantVectorStoreBackend.mjs            [future implementation]
+  janusGraphStoreBackend.mjs              [future implementation]
+```
+
+The blueprint explicitly says Runtime Memory Module implementation must not be placed under `runtime/graph/`; `runtime/graph/` remains a future optional hosted Cognitive Graph Runtime/control-layer location.
+
+---
+
+## 7. Future branch-family guidance
+
+The blueprint now separates the current docs-only reconciliation branch from future memory implementation work.
+
+Current docs-only reconciliation branch:
+
+```text
+runtime-memory-module-blueprint-reconciliation-v1
+```
+
+Future Runtime Memory Module branch family:
+
+```text
+runtime-memory-module-plan-spec-v1
+runtime-working-state-contract-v1
+runtime-working-state-sqlite-wal-adapter-v1
+runtime-canonical-memory-contract-v1
+runtime-canonical-memory-postgres-adapter-v1
+runtime-vector-store-contract-v1
+runtime-qdrant-vector-store-adapter-v1
+runtime-graph-store-contract-v1
+runtime-janusgraph-store-adapter-v1
+runtime-hybrid-memory-retrieval-contract-v1
+runtime-context-pack-inputs-contract-v1
+```
+
+The blueprint keeps this branch family separate from the current capability-contract sequence except where typed capability surfaces are required.
+
+---
+
+## 8. Guardrails preserved
+
+The branch preserves these boundaries:
+
+```text
+runtime.mjs public export set unchanged
+prompt() behavior unchanged
+workerBridge unchanged
+llama_worker unchanged
+runtime/config unchanged
+runtime/lifecycle unchanged
+runtime/request unchanged
+runtime/stream unchanged
+runtime/bus unchanged
+runtime/router unchanged
+runtime/backends unchanged
+runtime/execution unchanged
+runtime/models unchanged
+runtime/profiles unchanged
+scheduler unchanged
+tests unchanged
+```
+
+The blueprint continues to preserve:
+
+```text
+queue-based concurrency
+worker as model/native execution boundary
+parent runtime owns request lifecycle
+parent-side stream shaping
+config as primary tuning surface
+prompt/output semantics
+model identity/path guardrails
+graph-compatible but not graph-dependent substrate boundary
+Capability Bus / Router / Services / Backend Adapter separation
+```
+
+---
+
+## 9. Validation and checks
+
+Assistant sandbox checks for this docs-only candidate:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+python /mnt/data/toolbox_v3/vyer-gpt5-toolbox/artifact_guard.py \
+  --source-root /mnt/data/preflight_repo/runtime-dev-repo-main \
+  --candidate-root /mnt/data/runtime-memory-module-blueprint-reconciliation-v1-candidate \
+  --manifest /mnt/data/runtime-memory-module-blueprint-reconciliation-v1-manifest.json \
+  --compare-source \
+  --json /mnt/data/runtime-memory-module-blueprint-reconciliation-v1-artifact-guard.json
+```
+
+Additional content/acceptance checks were run against the staged blueprint to confirm:
+
+```text
+Runtime Memory Module is present.
+SQLite WAL, PostgreSQL, Qdrant, and JanusGraph roles are documented.
+PostgreSQL canonical truth language is present.
+Qdrant and JanusGraph projection-only language is present.
+PostgreSQL hydration before trusted context is present.
+Runtime Memory Module under runtime/graph/ is forbidden.
+Reranker is not treated as a truth authority.
+Forbidden non-engineering memory-module framing is absent.
+Stale child heading numbering was removed.
+The branch plan names runtime-memory-module-blueprint-reconciliation-v1.
+```
+
+Package extraction/recheck passed after the final candidate package was created.
+
+---
+
+## 10. Source-truth and GitHub notes
+
+Direct GitHub `main` preflight before candidate preparation showed the latest visible commit as:
+
+```text
+bd319d0 — Merge pull request #23 from Main-Michael-Sparks/runtime-hardware-profile-registry-v1
+```
+
+The docs-only candidate was prepared from the current uploaded `runtime-dev-repo-main.zip` mirror after confirming it already matched the expected post-hardware-profile registry shape for this branch family.
+
+GitHub branch verification for `runtime-memory-module-blueprint-reconciliation-v1` remains pending until Michael uploads the candidate branch.
+
+---
+
+## 11. Real-runtime note
+
+No real-runtime test is required for this branch because it is documentation-only and does not touch init, reset, shutdown, worker cancellation, context creation, prompt streaming, worker lifecycle, native execution, config override, backend execution, or public runtime APIs.
+
+---
+
+## 12. Future work not included
+
+This branch intentionally does not include:
+
+```text
+Runtime Memory Module implementation
+working-state contract implementation
+SQLite WAL adapter
+canonical memory contract
+PostgreSQL adapter
+Qdrant adapter
+JanusGraph adapter
+hybrid memory retrieval contract
+context-pack input contract
+Capability Bus execution wiring
+memory.search/read/write service implementation
+checkpoint export/import implementation
+Cognitive Graph Runtime implementation
+runtime/graph/ implementation
+production code changes
+```
+
+---
+
+## 13. Recommended next step
+
+After Michael uploads the candidate branch, perform direct GitHub branch inspection for:
+
+```text
+docs/runtime-system-blueprint-v1.md
+docs/README.md
+docs/dev-notes.45
+```
+
+Then compare the uploaded branch against the expected changed file set and, if it matches, complete branch verification and final checkpoint/bootstrap notes.

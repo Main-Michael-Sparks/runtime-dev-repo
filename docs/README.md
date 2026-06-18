@@ -7,6 +7,7 @@ This directory contains current architecture docs plus historical branch notes.
 ```text
 current-architecture.md      current source layout, public entrypoints, boundaries, and tests
 feature-readiness.md         cleanup/readiness notes for future features such as embeddings, tool calling, and multimodal research
+runtime-system-blueprint-v1.md  greater-system blueprint and Runtime Dev substrate direction
 ```
 
 ## Historical branch notes
@@ -59,6 +60,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.42` | capability bus execute-action contract v1 | current contract checkpoint |
 | `dev-notes.43` | runtime model bundle registry v1 | current contract checkpoint |
 | `dev-notes.44` | runtime hardware profile registry v1 | current contract checkpoint |
+| `dev-notes.45` | runtime memory module blueprint reconciliation v1 | current design/checkpoint background |
 
 ## Reading order for new feature work
 

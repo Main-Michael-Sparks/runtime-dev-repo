@@ -5,7 +5,8 @@
 **Artifact type:** Design / blueprint / plan-spec  
 **Status:** Proposed — design-only; not implementation-ready until Michael reviews and approves  
 **Current source basis:** `/mnt/data/runtime-dev-repo-main.zip` inspected locally; GitHub remains active source truth before any branch implementation  
-**Recommended branch name:** `runtime-system-blueprint-v1`
+**Recommended branch name:** `runtime-memory-module-blueprint-reconciliation-v1`  
+**Base blueprint branch:** `runtime-system-blueprint-v1`
 
 ---
 
@@ -17,6 +18,7 @@ The guiding principle is:
 
 ```text
 Runtime Dev is the execution substrate.
+The Runtime Memory Module is the substrate memory/state family.
 The Cognitive Graph Runtime is the future control layer.
 The Capability Bus is the compatibility/action boundary.
 Capabilities are typed abilities.
@@ -32,6 +34,8 @@ Make Runtime Dev graph-compatible without making it graph-dependent.
 The full future system includes the Cognitive Graph Runtime. The current Runtime Dev implementation track should build the substrate and compatibility seams that a future graph/control layer can use. It should not implement the graph kernel, cognitive node contracts, operator kit, graph scheduler, verifier/lock manager, or repair/escalation controller yet.
 
 The Cognitive Graph Runtime is part of the greater Runtime Dev system, but it may be developed as a separate control-layer package, sibling package, future hosted track, or separate repository that consumes Runtime Dev through typed capability surfaces. Its physical hosting location should not change the boundary rule: it must use the Capability Bus and must not import backend, worker, adapter, or tool-process internals.
+
+The Runtime Memory Module belongs to the Runtime Dev substrate. It should own working-state, canonical memory, knowledge records, retrieval, projection, checkpoint, promotion, hydration, and context-pack input surfaces without becoming the Cognitive Graph Runtime. It should remain graph-compatible without being graph-dependent.
 
 ---
 
@@ -158,6 +162,9 @@ Capability Router
 Capability Services
   -> typed abilities
 
+Runtime Memory Module
+  -> substrate working state, canonical memory, projections, retrieval, and context-pack inputs
+
 Backend Adapters
   -> replaceable execution mechanisms
 ```
@@ -228,11 +235,25 @@ Capability Services                  [current Runtime Dev substrate target]
   ├─ vision.chat
   └─ tool.call
 
+Runtime Memory Module                [current/future Runtime Dev substrate family]
+  ├─ working state and task/session continuity
+  ├─ scratch memory and checkpoint snapshots
+  ├─ memory promotion candidates and promotion guards
+  ├─ canonical memory and knowledge records
+  ├─ source references, provenance, lifecycle, and audit metadata
+  ├─ vector recall projections
+  ├─ graph relationship projections
+  ├─ hybrid retrieval inputs
+  └─ bounded context-pack inputs
+
 Backend Adapters                     [current Runtime Dev substrate target]
   ├─ nativeWorkerBackend
   ├─ nativeEmbeddingBackend
   ├─ llamaMtmdCliBackend
   ├─ llamaServerBackend
+  ├─ workingStateBackend              [Runtime Memory Module: local working state]
+  ├─ canonicalMemoryBackend           [Runtime Memory Module: canonical records/lifecycle]
+  ├─ knowledgeStoreBackend            [Runtime Memory Module: facts/rules/decisions]
   ├─ vectorStoreBackend
   ├─ graphStoreBackend
   ├─ checkpointStoreBackend
@@ -263,6 +284,8 @@ Capability Registry
 Capability Services
 Backend Adapter contracts
 Storage Backend Registry / memory DB adapter contracts
+Runtime Memory Module contracts and plan/specs
+working-state, canonical-memory, projection, hydration, and context-pack input surfaces
 Model Bundle Registry
 Hardware Profiles
 Trace / cancellation / timeout / streaming contracts
@@ -281,9 +304,11 @@ verifier/lock manager implementation
 repair/escalation controller implementation
 full graph memory traversal implementation
 real task/hypothesis/constraint graph execution
+Runtime Memory Module implementation inside `runtime/graph/`
+vector/graph projection stores as canonical truth
 ```
 
-These belong to a separate control-layer track within the greater Runtime Dev system. They may be documented as future extension points, but should not be implemented in the current substrate branch family.
+The graph-control items belong to a separate control-layer track within the greater Runtime Dev system and may be documented as future extension points. Runtime Memory Module implementation inside `runtime/graph/` is forbidden for the substrate branch family. Treating vector/graph projections as canonical truth is prohibited.
 
 ---
 
@@ -296,6 +321,7 @@ Cognitive Graph Runtime decides what should be thought or done next.
 Capability Bus decides whether the requested action is allowed.
 Capability Router decides how to fulfill the allowed action.
 Capability Services define the typed ability.
+The Runtime Memory Module stores, promotes, retrieves, hydrates, and prepares context-pack inputs.
 Backend Adapters perform the action.
 ```
 
@@ -460,19 +486,28 @@ artifact.read            [future optional]
 artifact.write           [future optional]
 ```
 
-Memory/store backends are a family, not one database. Runtime Dev may eventually support multiple storage adapters because different memory types need different indexes and persistence behavior.
+Memory/store backends are a family, not one database. Runtime Dev may eventually support multiple storage adapters because different memory types need different indexes and persistence behavior. These adapters should be coordinated under the Runtime Memory Module when they participate in working state, canonical memory, memory promotion, retrieval, projection, checkpointing, hydration, or context-pack input flows.
 
-Candidate backend family:
+Candidate Runtime Memory Module backend family:
 
 ```text
+workingStateBackend
+  local task/session state, SQLite WAL, scratch memory, checkpoint snapshots, promotion candidates
+
+canonicalMemoryBackend
+  canonical memory records, lifecycle/status, source truth, provenance, projection status
+
+knowledgeStoreBackend
+  facts, rules, decisions, invariants, lessons, procedures, source-backed claims
+
 vectorStoreBackend
-  semantic/vector search, embeddings, nearest-neighbor lookup, similarity indexes
+  semantic/vector recall projection, embeddings, nearest-neighbor lookup, similarity candidates
 
 graphStoreBackend
-  graph-shaped nodes/edges/relationships, graph traversal primitives, structural query
+  relationship projection, graph-shaped nodes/edges, traversal, dependency/support/contradiction edges
 
 checkpointStoreBackend
-  graph/runtime snapshots, run checkpoints, restore records, bootstrap/carry-forward state
+  export/import/restore records, task/run checkpoints, bootstrap/carry-forward state
 
 documentStoreBackend
   raw documents, chunks, normalized text, source records, long-form durable content
@@ -481,7 +516,7 @@ artifactStoreBackend
   generated files, media, image/video/audio artifacts, external output references
 
 eventLogStoreBackend
-  append-only action events, trace events, run timelines, audit records
+  append-only action events, trace events, task/run timelines, memory events, audit records
 
 keyValueStateStoreBackend
   lightweight state, cursors, leases, small metadata, cache-like records
@@ -493,11 +528,132 @@ relationalMetadataStoreBackend
 Rule:
 
 ```text
-Runtime Dev stores, indexes, queries, checkpoints, and returns references.
+Runtime Dev stores, indexes, queries, checkpoints, hydrates, and returns references.
+The Runtime Memory Module coordinates memory/storage/retrieval substrate mechanics.
 Cognitive Graph Runtime interprets, traverses, promotes, locks, repairs, and decides meaning.
 ```
 
-A storage backend should not become a cognitive authority. A vector DB, graph DB, checkpoint DB, or other memory DB may recommend candidates or persist state, but the Cognitive Graph Runtime decides how that information is used.
+A storage backend should not become a cognitive authority. A vector DB, graph DB, checkpoint DB, working-state DB, or other memory DB may recommend candidates or persist state, but typed capability surfaces and future control layers decide how that information is used.
+
+### 6.4 Runtime Memory Module
+
+The Runtime Memory Module is the Runtime Dev substrate family for working state, canonical memory, knowledge records, retrieval, memory promotion, storage projections, and context-pack inputs.
+
+It is not the Cognitive Graph Runtime and does not decide cognitive meaning. It provides controlled storage, recall, checkpoint, projection, hydration, and inspection surfaces that direct APIs and future graph/control layers may consume through typed capabilities.
+
+The Runtime Memory Module should remain graph-compatible without being graph-dependent.
+
+Preferred role summary:
+
+```text
+SQLite WAL operates.
+PostgreSQL remembers.
+Qdrant recalls.
+JanusGraph relates.
+Reranker prioritizes.
+Context packer feeds.
+```
+
+Recommended long-term memory/state composition:
+
+```text
+SQLite WAL
+  local working-state store
+  task/session continuity
+  high-write local operational state
+  scratch memory
+  checkpoint snapshots
+  promotion candidates
+  semi-persistent task-local scratch space for active tasks
+  not canonical truth
+
+PostgreSQL
+  canonical memory and knowledge store
+  source of truth
+  source records
+  decisions
+  summaries
+  checkpoints
+  provenance
+  lifecycle
+  audit records
+  memory_events / outbox
+  projection_status
+
+Qdrant
+  vector recall projection
+  semantic search over promoted/canonical memory IDs
+  embedding search
+  similarity candidates
+  no canonical truth ownership
+
+JanusGraph
+  graph relationship projection
+  dependency chains
+  supports / contradicts / depends_on / derived_from relationships
+  structural traversal
+  no canonical truth ownership
+```
+
+Core memory invariant:
+
+```text
+PostgreSQL owns canonical truth.
+SQLite WAL owns local working continuity.
+Qdrant and JanusGraph are rebuildable projections.
+Vector/graph results must hydrate through PostgreSQL before becoming trusted model context.
+```
+
+Critical memory flow:
+
+```text
+1. Runtime activity writes live/local task state to SQLite WAL.
+2. SQLite scratch/checkpoint state may become a promotion candidate.
+3. Promotion guard validates scope, source, confidence, lifecycle, and promotion reason.
+4. Approved records write to PostgreSQL canonical memory/knowledge.
+5. PostgreSQL emits memory_events/outbox records.
+6. Projection workers update Qdrant and JanusGraph.
+7. Retrieval from Qdrant/JanusGraph returns IDs/candidates only.
+8. PostgreSQL hydrates and validates canonical records.
+9. Reranker ranks useful candidates.
+10. Context packer builds bounded model input.
+```
+
+Hard rules:
+
+```text
+No vector or graph projection is canonical truth.
+No scratch state becomes long-term memory without promotion.
+No stale/superseded/expired memory enters critical context without explicit override.
+Qdrant/JanusGraph should not directly feed trusted context without PostgreSQL hydration.
+Reranker decides relevance and priority, not truth.
+Capability services and backend adapters do not interpret cognitive meaning.
+```
+
+Memory capabilities remain typed surfaces:
+
+```text
+memory.search
+memory.read
+memory.write
+checkpoint.export
+checkpoint.import
+retrieval.search
+text.embed
+text.rerank
+```
+
+Capability Services expose typed abilities. The Runtime Memory Module coordinates memory/storage/retrieval architecture. Cognitive Graph Runtime or direct runtime policy decides cognitive relevance. Backends execute storage/query/projection mechanics. Backend adapters do not become cognitive authorities.
+
+Promotion ownership should stay precise:
+
+```text
+Runtime Memory Module owns storage-level promotion mechanics:
+scratch -> promotion candidate -> canonical memory.
+
+Cognitive Graph Runtime may request or decide control-layer promotion,
+but it must use Runtime Memory Module promotion surfaces and guards.
+```
 
 ---
 
@@ -505,7 +661,7 @@ A storage backend should not become a cognitive authority. A vector DB, graph DB
 
 The Cognitive Graph Runtime should be treated as the explicit home of thinking structure, not as a vague orchestrator.
 
-### 6.1 Future CGR responsibilities
+### 7.1 Future CGR responsibilities
 
 #### 1. Graph Kernel
 
@@ -626,7 +782,7 @@ emits typed capability action envelopes
 never directly executes tools/models/backends
 ```
 
-### 6.2 Why this matters for Runtime Dev now
+### 7.2 Why this matters for Runtime Dev now
 
 Runtime Dev should not implement the Cognitive Graph Runtime yet, but it should expose a clean action surface that future graph nodes can use.
 
@@ -665,7 +821,7 @@ The Capability Bus is the controlled action boundary.
 
 It is broader than a command bridge. It carries typed action requests from direct APIs, future graph APIs, and internal runtime flows into validated capability execution.
 
-### 7.1 Bus responsibilities
+### 8.1 Bus responsibilities
 
 ```text
 action envelope validation
@@ -682,7 +838,7 @@ stream binding
 policy audit events
 ```
 
-### 7.2 Action envelope candidate
+### 8.2 Action envelope candidate
 
 ```js
 const actionEnvelope = {
@@ -722,7 +878,7 @@ const actionEnvelope = {
 };
 ```
 
-### 7.3 Result envelope candidate
+### 8.3 Result envelope candidate
 
 ```js
 const resultEnvelope = {
@@ -751,7 +907,7 @@ const resultEnvelope = {
 };
 ```
 
-### 7.4 Direct API action envelope source
+### 8.4 Direct API action envelope source
 
 Direct calls should also route through the same bus once the capability layer exists.
 
@@ -775,7 +931,7 @@ This keeps direct API behavior and future graph-driven behavior on one controlle
 
 The Capability Router is the resolver. It should not think deeply and should not execute backends directly.
 
-### 8.1 Router responsibilities
+### 9.1 Router responsibilities
 
 ```text
 resolve capability service
@@ -788,7 +944,7 @@ check request shape and capability schema
 produce executable capability invocation
 ```
 
-### 8.2 Router non-responsibilities
+### 9.2 Router non-responsibilities
 
 ```text
 no graph reasoning
@@ -805,7 +961,7 @@ no worker lifecycle ownership
 
 Capabilities are stable typed abilities. They should express what can be done, not how a backend does it.
 
-### 9.1 Initial capability taxonomy
+### 10.1 Initial capability taxonomy
 
 ```text
 text.generate
@@ -821,7 +977,7 @@ vision.chat
 tool.call
 ```
 
-### 9.2 Capability service responsibilities
+### 10.2 Capability service responsibilities
 
 Each capability service should own:
 
@@ -833,7 +989,7 @@ capability-specific cancellation/stream expectations
 backend selection constraints passed to the router
 ```
 
-### 9.3 Capability service non-responsibilities
+### 10.3 Capability service non-responsibilities
 
 Capability services should not own:
 
@@ -845,7 +1001,7 @@ raw backend process execution
 model path/config override expansion
 ```
 
-### 9.4 RAG and context assembly note
+### 10.4 RAG, memory retrieval, and context assembly note
 
 `rag.assemble` should not be a primary low-level capability at first.
 
@@ -853,8 +1009,8 @@ Reason:
 
 ```text
 Context assembly is often a cognitive/control decision.
-The Cognitive Graph Runtime should decide why context is relevant,
-which node needs it, what budget applies, and what should be excluded.
+The Cognitive Graph Runtime or direct runtime policy should decide why context is relevant,
+which node or request needs it, what budget applies, and what should be excluded.
 ```
 
 Prefer:
@@ -866,8 +1022,16 @@ Capability Services:
   text.rerank
   memory.search / memory.read / memory.write
 
+Runtime Memory Module:
+  working state
+  canonical memory hydration
+  vector/graph projection candidate retrieval
+  promotion and lifecycle guards
+  context-pack input contracts
+
 Cognitive Graph Runtime:
   context assembler / RAG-style assembler / graph-state assembler
+  meaning, relevance policy, verification, and repair decisions
 ```
 
 A lower-level helper named `rag.assemble` may exist later, but it should not own the main reasoning context policy.
@@ -878,7 +1042,7 @@ A lower-level helper named `rag.assemble` may exist later, but it should not own
 
 Backends are replaceable execution mechanisms.
 
-### 10.1 Candidate backends
+### 11.1 Candidate backends
 
 ```text
 nativeWorkerBackend
@@ -893,14 +1057,23 @@ llamaMtmdCliBackend
 llamaServerBackend
   future server/service backend for multimodal, embeddings, rerank, or OpenAI-compatible routes
 
+workingStateBackend
+  Runtime Memory Module local task/session state, SQLite WAL, scratch memory, checkpoint snapshots, and promotion candidates
+
+canonicalMemoryBackend
+  Runtime Memory Module canonical memory records, lifecycle/status, source truth, provenance, and projection status
+
+knowledgeStoreBackend
+  Runtime Memory Module source-backed facts, rules, decisions, invariants, lessons, procedures, and claims
+
 vectorStoreBackend
-  future vector search storage/index backend
+  semantic recall projection, embedding search, and similarity candidates
 
 graphStoreBackend
-  future graph-shaped memory/state backend
+  relationship projection, traversal, and dependency/support/contradiction edges
 
 checkpointStoreBackend
-  future snapshot/checkpoint/restore backend
+  export/import/restore records and task/run checkpoints
 
 documentStoreBackend
   future document/chunk/source-record backend
@@ -909,7 +1082,7 @@ artifactStoreBackend
   future output/media/file artifact backend
 
 eventLogStoreBackend
-  future append-only trace/action/run event backend
+  future append-only trace/action/task/memory events
 
 keyValueStateStoreBackend
   future lightweight state/cache/metadata backend
@@ -921,7 +1094,9 @@ toolBackend
   future controlled external tool execution backend
 ```
 
-### 10.2 Backend adapter rules
+The memory-specific backend family is defined in more detail in the Runtime Memory Module section. These adapters are mechanics surfaces only; they do not become cognitive authorities.
+
+### 11.2 Backend adapter rules
 
 ```text
 Adapters execute only after Capability Bus and Router approval.
@@ -938,13 +1113,13 @@ Adapters must preserve parent-side stream shaping rules where applicable.
 
 Requests should choose model bundle IDs, not arbitrary file paths.
 
-### 11.1 Why model bundles
+### 12.1 Why model bundles
 
 Model bundle IDs preserve identity and compatibility guardrails.
 
 The current runtime already protects model identity/path by rejecting `modelLoad.baseModel` override in `configOverride`. Future model bundles should keep that spirit: model files and projector files belong in configuration, not ad hoc per-request overrides.
 
-### 11.2 Model bundle candidate schema
+### 12.2 Model bundle candidate schema
 
 ```js
 const modelBundles = {
@@ -991,7 +1166,7 @@ const modelBundles = {
 };
 ```
 
-### 11.3 Artifact layouts
+### 12.3 Artifact layouts
 
 ```text
 gguf-text
@@ -1010,7 +1185,7 @@ native-vision
   reserved future layout if direct native node-llama-cpp vision support becomes available
 ```
 
-### 11.4 Model bundle invariant
+### 12.4 Model bundle invariant
 
 ```text
 Requests select capabilities and model bundle IDs.
@@ -1023,7 +1198,7 @@ Config owns model files, projector files, backend type, and hardware profile.
 
 Hardware should be a configurable profile layer, not a hardcoded assumption.
 
-### 12.1 Hardware profile candidate schema
+### 13.1 Hardware profile candidate schema
 
 ```js
 const hardwareProfiles = {
@@ -1089,7 +1264,7 @@ const hardwareProfiles = {
 };
 ```
 
-### 12.2 Hardware profile rules
+### 13.2 Hardware profile rules
 
 ```text
 Profiles tune admission and backend execution.
@@ -1137,7 +1312,7 @@ Do not change the existing text scheduler in the blueprint branch. This is futur
 
 Vision should be first-class at the capability/model-bundle level, even if the first backend implementation uses `llama-mtmd-cli` or `llama-server`.
 
-### 14.1 Vision capability request candidate
+### 15.1 Vision capability request candidate
 
 ```js
 await visionChat({
@@ -1160,7 +1335,7 @@ visionChat(...)
   -> llamaMtmdCliBackend or llamaServerBackend
 ```
 
-### 14.2 Vision request rules
+### 15.2 Vision request rules
 
 ```text
 Requests pass image input and model bundle ID.
@@ -1169,7 +1344,7 @@ Media input is validated and normalized before backend execution.
 Model bundle config determines whether the backend uses model+mmproj, HF bundle, server-managed model, or future native vision API.
 ```
 
-### 14.3 Video posture
+### 15.3 Video posture
 
 Do not treat video as native live VLM support first.
 
@@ -1192,7 +1367,7 @@ This belongs to a future research/design branch, not the substrate blueprint imp
 
 Embedding, rerank, and retrieval should be designed as typed capabilities that can serve both direct APIs and future graph routing.
 
-### 15.1 Embeddings are not only RAG
+### 16.1 Embeddings are not only RAG
 
 Embeddings may support:
 
@@ -1206,66 +1381,52 @@ similar prior task lookup
 RAG retrieval
 ```
 
-### 15.2 Reranker is advisory, not sovereign
+### 16.2 Reranker is advisory, not sovereign
 
-Future graph flow:
+The reranker is advisory for relevance and prioritization. It does not decide canonical truth. Truth and validity come from PostgreSQL-backed lifecycle, provenance, status metadata, and guard checks.
+
+Future graph or direct-runtime flow:
 
 ```text
-Cognitive Graph Runtime needs candidate memory/thinking nodes
-  -> emits retrieval.search action
+Runtime or future graph/control layer needs candidate memory/context records
+  -> emits retrieval.search / memory.search action
   -> Capability Bus validates
-  -> Router selects retrieval backend
-  -> returns candidates
+  -> Router selects retrieval or memory backend
+  -> vector/graph projection returns candidate IDs
+  -> PostgreSQL hydrates and validates canonical records
 
-Cognitive Graph Runtime wants ranking
+Runtime or future graph/control layer wants ranking
   -> emits text.rerank action
   -> Capability Bus validates
   -> Router selects rerank backend
-  -> returns ranked candidates
+  -> returns relevance/prioritization scores
 
-Cognitive Graph Runtime applies hard gates
+Runtime or future graph/control layer applies hard gates
   -> dependency gate
   -> budget gate
   -> policy gate
-  -> recursion gate
+  -> lifecycle/provenance/status gate
   -> evidence gate
 
-Scheduler chooses next runnable node
+Context packer builds bounded model input
 ```
 
 ---
 
-## 17. Graph memory placeholder
+## 17. Runtime Memory Capability Placeholder
 
-Keep `memory.search / memory.read / memory.write` as a future capability placeholder, but do not implement cognitive graph reasoning in Runtime Dev yet.
+Keep `memory.search`, `memory.read`, and `memory.write` as typed capability surfaces, but do not implement cognitive graph reasoning in Runtime Dev.
 
-### 16.1 Runtime Dev may eventually provide
+The Runtime Memory Module provides storage, promotion, retrieval, hydration, projection, checkpoint, inspection, and context-pack input mechanics through typed capability and backend surfaces.
 
-```text
-memory.search / memory.read / memory.write capability
-graphStoreBackend
-checkpointStoreBackend
-other future memory/storage backends
-memory inspection contracts
-checkpoint-compatible state storage
-```
-
-### 16.2 Cognitive Graph Runtime should eventually own
-
-```text
-how memory is interpreted
-how graph state is traversed
-which nodes are promoted
-which outputs are locked
-which contradictions trigger repair
-which prior decisions are relevant
-```
+The Cognitive Graph Runtime or direct runtime policy decides how memory is interpreted and used. Backend adapters execute storage/query/projection mechanics only.
 
 Rule:
 
 ```text
-Runtime Dev may store/query graph-shaped memory, vector memory, checkpoint state, artifacts, event logs, and other durable memory DB records.
-Cognitive Graph Runtime decides how that memory is interpreted and used.
+Capability Services expose memory abilities.
+Runtime Memory Module provides the mechanics and guards.
+Cognitive Graph Runtime owns interpretation/use when a future graph layer is present.
 ```
 
 ---
@@ -1339,6 +1500,27 @@ runtime/capabilities/checkpoint/
   checkpointExportCapability.mjs
   checkpointImportCapability.mjs
 
+runtime/state/
+  workingStateContract.mjs
+  workingStateEvents.mjs
+  workingStateSnapshot.mjs
+  workingStateLifecycle.mjs
+  sqliteWalWorkingStateBackend.mjs        [future implementation]
+
+runtime/memory/
+  memoryItemContract.mjs
+  knowledgeItemContract.mjs
+  memoryLifecycle.mjs
+  memoryPromotionContract.mjs
+  memoryProjectionStatus.mjs
+  memoryRetrievalContract.mjs
+  contextPackContract.mjs
+
+runtime/memory/backends/
+  postgresCanonicalMemoryBackend.mjs      [future implementation]
+  qdrantVectorStoreBackend.mjs            [future implementation]
+  janusGraphStoreBackend.mjs              [future implementation]
+
 runtime/capabilities/vision/
   visionChatCapability.mjs
   mediaInputNormalizer.mjs
@@ -1354,6 +1536,9 @@ runtime/backends/
   nativeEmbeddingBackend.mjs
   llamaMtmdCliBackend.mjs
   llamaServerBackend.mjs
+  workingStateBackend.mjs              [Runtime Memory Module]
+  canonicalMemoryBackend.mjs           [Runtime Memory Module]
+  knowledgeStoreBackend.mjs            [Runtime Memory Module]
   vectorStoreBackend.mjs
   graphStoreBackend.mjs
   checkpointStoreBackend.mjs
@@ -1388,21 +1573,23 @@ runtime/graph/                       [future optional hosted Cognitive Graph Run
 
 Do not create `runtime/graph/` in the substrate branch family unless a specific future graph-track branch is approved. For now, this layout is only a compatibility map showing how a future hosted graph layer could connect.
 
+Do not put Runtime Memory Module implementation under `runtime/graph/`. The memory module belongs under substrate state/memory/backend surfaces such as `runtime/state/`, `runtime/memory/`, `runtime/memory/backends/`, and typed capability/backend contract namespaces.
+
 ---
 
-## 20. Branch plan: `runtime-system-blueprint-v1`
+## 20. Branch plan: `runtime-memory-module-blueprint-reconciliation-v1`
 
-### 19.1 Purpose
+### 20.1 Purpose
 
-Define the full Runtime + Cognitive Graph architecture and the current Runtime Dev substrate boundary, so future graph/control work can connect through typed capability seams without making Runtime Dev graph-dependent.
+Reconcile the Runtime Memory Module architecture into the existing blueprint while preserving Runtime Dev as the substrate, the Cognitive Graph Runtime as a future control-layer track, and typed capability/backend surfaces as the integration boundary.
 
-### 19.2 Status
+### 20.2 Status
 
 ```text
 Proposed / design-only
 ```
 
-### 19.3 Non-goals
+### 20.3 Non-goals
 
 ```text
 No production code.
@@ -1420,18 +1607,18 @@ No model path/model identity changes.
 No prompt/output semantic changes.
 ```
 
-### 19.4 Likely files affected
+### 20.4 Likely files affected
 
-For the design-only branch:
+For the docs-only reconciliation branch:
 
 ```text
 Added:
-  docs/runtime-system-blueprint-v1.md
-  docs/dev-notes.33
+  docs/dev-notes.45
 
 Modified:
-  docs/README.md
-  possibly README.md, only to link the blueprint
+  docs/runtime-system-blueprint-v1.md
+  docs/README.md if needed
+  README.md if needed
 
 Out of scope:
   runtime.mjs
@@ -1441,13 +1628,17 @@ Out of scope:
   tests/** unless adding docs-only guard is explicitly approved
 ```
 
-### 19.5 Acceptance criteria
+### 20.5 Acceptance criteria
 
 ```text
 Blueprint clearly separates full future architecture from current Runtime Dev substrate scope.
 Blueprint preserves current runtime architecture boundaries.
 Blueprint identifies Capability Bus as the action boundary.
 Blueprint defines explicit graph integration surfaces: action, result, event, context, and memory/storage.
+Blueprint explicitly recognizes the Runtime Memory Module as substrate, not graph/control implementation.
+Blueprint includes SQLite WAL, PostgreSQL, Qdrant, and JanusGraph as recommended long-term memory/state composition.
+Blueprint separates working state, canonical memory, vector projection, graph projection, hydration, reranking, and context-pack inputs.
+Blueprint states PostgreSQL is canonical truth and Qdrant/JanusGraph are rebuildable projections.
 Blueprint defines typed capabilities and backend adapters without implementing them.
 Blueprint reserves the Cognitive Graph Runtime as future control-layer work.
 Blueprint does not imply graph implementation is part of current Runtime Dev substrate branches.
@@ -1461,51 +1652,116 @@ Blueprint includes non-goals and future branch sequence.
 This sequence is tentative and should be reviewed after each branch.
 
 ```text
+Completed / already represented in current substrate contract sequence:
+
 1. runtime-system-blueprint-v1
    Design-only blueprint.
 
 2. runtime-action-envelope-contract-v1
    Define action/result envelope schemas and validation helpers.
-   No runtime behavior change unless wrappers are mock-only.
 
-3. runtime-capability-bus-skeleton-v1
+3. capability-registry-contract-v1
+   Define capability registry metadata and validation helpers.
+
+4. runtime-capability-bus-skeleton-v1
    Add a bus skeleton with validation/policy stubs and trace hooks.
-   Keep direct public APIs behavior-compatible.
 
-4. runtime-model-bundle-registry-v1
-   Add model bundle registry and validation surface.
-   Do not change existing model path behavior yet.
+5. capability-router-contract-v1
+   Define capability route metadata and route-plan helpers.
 
-5. runtime-capability-router-v1
-   Add router and registry plumbing.
-   No new model features yet.
+6. capability-service-contract-v1
+   Define capability service metadata and validation helpers.
 
-6. runtime-text-generation-capability-adapter-v1
-   Wrap existing prompt path as text.generate capability.
-   Must preserve current prompt/cancel/reset/shutdown behavior.
+7. backend-adapter-contract-v1
+   Define backend adapter metadata and planning helpers.
 
-7. runtime-embedding-capability-v1
-   Feature-specific plan/spec first, then implementation if approved.
+8. capability-router-namespace-cleanup-v1
+   Move router namespace surfaces into their cleaner runtime/router shape and preserve contract-only behavior.
 
-8. runtime-rerank-capability-v1
-   Separate from embeddings unless Michael approves combining.
+9. capability-executor-contract-v1
+   Define capability execution descriptor helpers.
 
-9. runtime-retrieval-capability-v1
-   Retrieval/vector store adapter planning and implementation.
+10. capability-bus-execute-action-contract-v1
+    Define execute-action contract/skeleton behavior without real backend execution.
 
-10. runtime-memory-storage-surfaces-plan-spec-v1
-   Plan memory.search/read/write, checkpoint import/export, and storage backend family boundaries before any memory DB implementation.
+11. runtime-model-bundle-registry-v1
+    Add model bundle registry and validation surface.
 
-11. runtime-checkpoint-store-adapter-v1
-   Separate checkpoint storage adapter branch if approved.
+12. runtime-hardware-profile-registry-v1
+    Add hardware profile metadata/registry surface.
 
-12. runtime-vision-cli-adapter-mock-v1
+Near-term substrate continuation candidates:
+
+13. runtime-model-bundle-route-validation-v1
+    Controlled cross-registry validation between model bundles, hardware profiles, and route/service/backend planning surfaces.
+
+14. runtime-native-worker-backend-contract-v1
+    Define nativeWorkerBackend adapter contract without calling workerBridge or runtime execution.
+
+15. runtime-capability-bus-executor-skeleton-v1
+    Start executeAction path only as a narrow skeleton/descriptor branch unless separately approved.
+
+Current docs-only reconciliation branch:
+
+16. runtime-memory-module-blueprint-reconciliation-v1
+    Docs-only update to lock memory/state architecture.
+
+Future Runtime Memory Module branch family:
+
+17. runtime-memory-module-plan-spec-v1
+    Plan Runtime Memory Module boundaries, stores, guards, lifecycle, and promotion flow.
+
+18. runtime-working-state-contract-v1
+    Define working state, task events, snapshots, scratch items, and promotion candidates.
+
+19. runtime-working-state-sqlite-wal-adapter-v1
+    First real memory-adjacent implementation; local-only working continuity.
+
+20. runtime-canonical-memory-contract-v1
+    Define canonical memory/knowledge records, lifecycle, provenance, and projection status.
+
+21. runtime-canonical-memory-postgres-adapter-v1
+    Real source-of-truth memory store.
+
+22. runtime-vector-store-contract-v1
+    Vector projection contract; canonical memory IDs in, candidates out.
+
+23. runtime-qdrant-vector-store-adapter-v1
+    Dedicated semantic recall projection.
+
+24. runtime-graph-store-contract-v1
+    Graph projection contract; nodes/edges/traversal metadata.
+
+25. runtime-janusgraph-store-adapter-v1
+    Dedicated structural projection.
+
+26. runtime-hybrid-memory-retrieval-contract-v1
+    PostgreSQL hydration + Qdrant candidates + JanusGraph expansion + reranker inputs.
+
+27. runtime-context-pack-inputs-contract-v1
+    Define bounded context packet shape; does not own graph cognition.
+
+Other future capability families:
+
+28. runtime-embedding-capability-v1
+    Feature-specific plan/spec first, then implementation if approved.
+
+29. runtime-rerank-capability-v1
+    Separate from embeddings unless Michael approves combining.
+
+30. runtime-retrieval-capability-v1
+    Retrieval/vector store adapter planning and implementation.
+
+31. runtime-checkpoint-store-adapter-v1
+    Separate checkpoint storage adapter branch if approved.
+
+32. runtime-vision-cli-adapter-mock-v1
     Mock vision adapter first to validate contracts without model assets.
 
-13. runtime-vision-cli-adapter-real-v1
+33. runtime-vision-cli-adapter-real-v1
     Real `llama-mtmd-cli` or selected backend after research confirms API/assets.
 
-14. runtime-tool-capability-plan-spec-v1
+34. runtime-tool-capability-plan-spec-v1
     Tool calling requires separate security/policy design.
 ```
 
@@ -1558,7 +1814,7 @@ native/model execution
 
 ## 23. Risks and guardrails
 
-### 22.1 Primary risk
+### 23.1 Primary risk
 
 ```text
 Risk:
@@ -1568,7 +1824,7 @@ Guardrail:
   Explicitly separate full future system architecture from current Runtime Dev substrate scope.
 ```
 
-### 22.2 Architecture bloat risk
+### 23.2 Architecture bloat risk
 
 ```text
 Risk:
@@ -1578,7 +1834,7 @@ Guardrail:
   First implementation branches should be skeleton/contract-focused and then wrap existing text generation before adding new capabilities.
 ```
 
-### 22.3 Lifecycle regression risk
+### 23.3 Lifecycle regression risk
 
 ```text
 Risk:
@@ -1588,7 +1844,7 @@ Guardrail:
   Treat textGenerationCapability as an adapter over existing behavior, not a rewrite.
 ```
 
-### 22.4 Model identity risk
+### 23.4 Model identity risk
 
 ```text
 Risk:
@@ -1598,7 +1854,7 @@ Guardrail:
   Requests select bundle IDs; config owns paths. No ad hoc per-request modelPath/mmprojPath overrides.
 ```
 
-### 22.5 RAG overreach risk
+### 23.5 RAG overreach risk
 
 ```text
 Risk:
@@ -1615,7 +1871,37 @@ Risk:
   Future memory work could be forced into one database shape, such as only vector, only graph, or only checkpoint storage.
 
 Guardrail:
-  Treat memory/storage backends as a family. Vector, graph, checkpoint, document, artifact, event-log, key-value, and relational metadata stores may all be valid for different memory surfaces.
+  Treat memory/storage backends as a family. Working state, canonical memory, knowledge, vector, graph, checkpoint, document, artifact, event-log, key-value, and relational metadata stores may all be valid for different memory surfaces.
+```
+
+### 23.7 Projection-as-truth risk
+
+```text
+Risk:
+  Qdrant or JanusGraph projections could accidentally become treated as canonical memory truth.
+
+Guardrail:
+  PostgreSQL owns canonical truth. Qdrant and JanusGraph return IDs/candidates only, and trusted context requires PostgreSQL hydration plus lifecycle/provenance/status checks.
+```
+
+### 23.8 Scratch-memory promotion risk
+
+```text
+Risk:
+  SQLite scratch state could silently become long-term memory without review.
+
+Guardrail:
+  Scratch/checkpoint state becomes durable memory only through an explicit promotion guard that checks scope, source, confidence, lifecycle, and promotion reason.
+```
+
+### 23.9 Stale-context risk
+
+```text
+Risk:
+  Superseded, expired, or stale memory records could enter critical model context.
+
+Guardrail:
+  Context-pack inputs must be bounded and should exclude stale/superseded/expired records unless an explicit override is part of the request policy.
 ```
 
 ---
@@ -1630,6 +1916,13 @@ It provides stable public direct APIs, typed action envelopes, a Capability Bus,
 a Capability Router, typed Capability Services, replaceable Backend Adapters,
 model bundles, hardware profiles, storage backend registries, tracing, cancellation, streaming, and lifecycle safety.
 
+The Runtime Memory Module is a substrate module, not the graph/control layer.
+SQLite WAL provides local working continuity.
+PostgreSQL owns canonical memory and knowledge.
+Qdrant provides semantic recall projections.
+JanusGraph provides relationship projections.
+Critical memory promotion and retrieval flows pass through guards, hydration, reranking, and context packing.
+
 The Cognitive Graph Runtime is the future control layer.
 It owns thinking structures, graph state, node contracts, scheduling, verification,
 repair, and memory/state traversal.
@@ -1641,19 +1934,19 @@ Runtime Dev should be graph-compatible without being graph-dependent.
 
 ## 25. Recommended next action
 
-Review this blueprint with Michael.
+Review this reconciliation draft with Michael.
 
-If approved, create a docs-only branch:
+If approved, continue the docs-only branch:
 
 ```text
-runtime-system-blueprint-v1
+runtime-memory-module-blueprint-reconciliation-v1
 ```
 
-Then add the final reviewed version as:
+Then preserve the final reviewed version as:
 
 ```text
 docs/runtime-system-blueprint-v1.md
-docs/dev-notes.33
+docs/dev-notes.45
 ```
 
-Do not implement Capability Bus, Capability Router, model bundles, vision, embeddings, retrieval, tools, or graph code in the blueprint branch.
+Do not implement Runtime Memory Module adapters, Capability Bus execution, model bundles, vision, embeddings, retrieval, tools, or graph/control code in the blueprint reconciliation branch.
