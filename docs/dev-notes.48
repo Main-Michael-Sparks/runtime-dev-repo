@@ -184,25 +184,108 @@ node ./tests/tools/checkWorkerImportCycles.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 ```
 
-Real-runtime testing was not run and is not expected for this declared contract/skeleton-only branch unless later edits touch runtime/worker/lifecycle/native execution surfaces.
+Package extraction/recheck passed with syntax check and targeted smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+```
+
+Michael-run local Windows/MINGW64 candidate checks passed with the same full command set as the assistant sandbox checks.
+
+Real-runtime testing was not run and is not expected for this declared contract/skeleton-only branch because the staged and merged set does not touch runtime/worker/lifecycle/native execution behavior.
 
 ---
 
-## 8. Caveats / next gates
+## 8. Artifact/package verification
 
-Remaining gates before merge readiness:
+Final upload package:
 
 ```text
-package/artifact guard if preparing upload ZIP;
-extract generated package and rerun syntax + targeted smokes;
-direct GitHub branch inspection after upload;
-Michael local Windows/MINGW64 checks if requested;
-post-merge direct GitHub main inspection and final docs status refresh.
+runtime-capability-bus-executor-skeleton-v1-final-upload.zip
+```
+
+Final upload SHA-256:
+
+```text
+7eb6b10e2d9f156c60f65f89949965b31d69814362cfe921c3e7df77693ef63a
+```
+
+Artifact guard passed against the uploaded `runtime-dev-repo-main.zip` mirror used as the source folder:
+
+```text
+passed: true
+source file count: 175
+candidate file count: 179
+new file count: 4
+changed file count: 5
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Candidate-only files:
+
+```text
+runtime/execution/capabilityExecutorSkeletonCommon.mjs
+runtime/execution/capabilityExecutorSkeletonPlan.mjs
+tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+docs/dev-notes.48
+```
+
+Package extraction/recheck confirmed the generated upload package contents matched the staged contract/skeleton scope and passed syntax plus targeted smoke checks.
+
+---
+
+## 9. GitHub verification
+
+Direct GitHub branch inspection passed for:
+
+```text
+runtime-capability-bus-executor-skeleton-v1
+```
+
+Direct GitHub `main` inspection passed after merge.
+
+Relevant post-merge commit context:
+
+```text
+28906e5 — Merge pull request #27 from Main-Michael-Sparks/runtime-capability-bus-executor-skeleton-v1
+9bceeda — Update dev-notes.48
+```
+
+Main inspection confirmed the expected executor skeleton files, test file, README propagation, docs index propagation, and current-architecture propagation were present on `main` for the declared contract/skeleton-only scope.
+
+---
+
+## 10. Caveats / final status
+
+No code/source blocker remains for the declared contract/skeleton-only scope.
+
+No real-runtime test was required because this branch did not touch:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime lifecycle/init/reset/shutdown behavior
+request scheduling
+stream shaping
+model loading
+native execution
+```
+
+The final status for this branch is:
+
+```text
+Merged to main, main-inspected, contract/skeleton-only scope complete, and checkpointed.
 ```
 
 ---
 
-## 9. Future work not included
+## 11. Future work not included
 
 Not included in this branch:
 
@@ -217,4 +300,16 @@ memory/storage backend work
 multimodal/vision execution
 Cognitive Graph Runtime implementation
 cleanup or optimization pass
+```
+
+Recommended next branch family:
+
+```text
+runtime-backend-adapter-execution-interface-v1
+```
+
+Reason:
+
+```text
+The executor skeleton now defines the handoff point. A future executor still needs a typed backend adapter execution interface before real executeAction() behavior or native worker backend wiring can be safely implemented.
 ```
