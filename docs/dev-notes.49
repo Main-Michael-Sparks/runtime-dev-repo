@@ -1,0 +1,324 @@
+# Dev Notes 49 — Runtime Backend Adapter Execution Interface v1
+
+**Date:** 2026-06-18  
+**Branch:** `runtime-backend-adapter-execution-interface-v1`  
+**Status:** Staged in assistant sandbox for the declared contract/interface-only scope. Assistant syntax checks, targeted backend-adapter execution-interface smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact guard, and package extraction/recheck passed. Direct GitHub branch inspection, Michael local Windows/MINGW64 checks, post-merge main inspection, and final docs refresh remain future gates. No real-runtime test is expected for the declared scope because the branch remains contract/interface-only and does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow backend adapter invocation descriptor seam after the existing capability execution / executor skeleton descriptor chain.
+
+The descriptor chain becomes:
+
+```text
+actionEnvelope
+  -> capability bus action
+  -> router route plan
+  -> service plan
+  -> backend adapter plan
+  -> capability execution plan
+  -> executor skeleton handoff descriptor
+  -> backend adapter invocation descriptor
+```
+
+The new backend adapter invocation descriptor is minimal and backend-facing. It is derived from a validated capability execution plan or a validated executor skeleton handoff descriptor.
+
+This branch does not execute adapters. It does not call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue runtime requests, stream tokens, load models, or touch worker/lifecycle behavior.
+
+---
+
+## 2. Design decision
+
+Selected input design:
+
+```text
+Use a smaller backend adapter invocation descriptor derived from the validated upstream execution/skeleton chain.
+```
+
+The backend adapter execution interface does not consume raw action envelopes, raw backend adapter definitions, or raw backend adapter plans directly. Raw backend adapter plans remain upstream source material for capability execution validation, not direct invocation inputs.
+
+This preserves the intended layering:
+
+```text
+Capability Bus / Router / Service / Executor
+  validate and decide what should happen
+
+Backend Adapter Invocation Descriptor
+  carries only the backend-facing invocation contract
+
+Backend Adapter
+  may execute later in a separate behavior-wiring branch
+```
+
+---
+
+## 3. Implementation summary
+
+Added:
+
+```text
+runtime/backends/backendAdapterInvocationCommon.mjs
+runtime/backends/backendAdapterInvocationDescriptor.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+docs/dev-notes.49
+```
+
+Modified:
+
+```text
+runtime/backends/backendAdapterContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+New contract identity:
+
+```text
+contractVersion: backend-adapter-invocation.v1
+status: planned
+```
+
+Boundary metadata:
+
+```js
+{
+    adapterInvocation: "contract-only",
+    executable: false,
+    runtimeWiring: "not-wired",
+    nativeExecution: "not-wired"
+}
+```
+
+---
+
+## 4. Contract behavior
+
+The new backend adapter invocation descriptor helpers:
+
+```js
+validateBackendAdapterInvocationDescriptor(value)
+normalizeBackendAdapterInvocationDescriptor(value)
+assertBackendAdapterInvocationDescriptor(value)
+```
+
+Behavior:
+
+```text
+accepts a current capability execution plan
+accepts a current executor skeleton handoff descriptor
+accepts an already normalized backend adapter invocation descriptor
+normalizes accepted sources to a minimal backend adapter invocation descriptor
+copies normalized invocation metadata
+requires contract-only / non-executable boundary metadata
+rejects raw backend adapter plans as direct invocation inputs
+rejects unknown top-level, invocation, and boundary fields
+rejects forbidden executable/raw backend/model-path/runtime/worker keys
+returns copy-isolated normalized descriptors
+```
+
+Copied invocation metadata:
+
+```text
+actionId
+runId
+capability
+serviceId
+adapterId
+backendKind
+routeId
+modelBundleId
+hardwareProfileId
+stream
+timeoutMs
+resultContract
+eventContract
+```
+
+---
+
+## 5. Architecture boundaries preserved
+
+This branch does not:
+
+```text
+change runtime.mjs public APIs
+add executeAction() behavior
+call capability services
+invoke backend adapters
+call workerBridge
+import llama_worker
+load models
+enqueue runtime requests
+stream tokens
+change scheduler/request/stream behavior
+change cancellation or timeout behavior
+change lifecycle/init/reset/shutdown behavior
+expand configOverride
+add request-time raw model paths or projector paths
+accept raw backend payloads, commands, handlers, execute/invoke functions, or backend options
+implement memory/storage behavior
+implement Cognitive Graph Runtime behavior
+implement multimodal/vision execution
+```
+
+The backend adapter invocation descriptor remains a contract-only target for a later behavior-wiring branch.
+
+---
+
+## 6. Propagation review
+
+Propagation staged:
+
+```text
+backendAdapterContract.mjs re-exports the invocation descriptor constants/helpers as a thin barrel
+new targeted smoke validates derivation from capability execution and executor skeleton sources
+new targeted smoke rejects raw backend adapter plans as direct invocation inputs
+new targeted smoke rejects executable/raw backend/model-path/runtime/worker keys
+new targeted smoke includes source guards for no runtime/worker/native imports or message posting
+README fast-check list includes the new smoke
+README and docs/current-architecture.md list the backend adapter invocation descriptor as contract-only
+docs/README.md lists dev-notes.49
+```
+
+No runtime/execution barrel was changed; the new descriptor is owned under `runtime/backends/`.
+
+---
+
+## 7. Tests run
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Package extraction/recheck passed with syntax check and targeted smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+```
+
+Michael local Windows/MINGW64 checks:
+
+```text
+Pending.
+```
+
+---
+
+## 8. Artifact/package verification
+
+Final upload package prepared:
+
+```text
+runtime-backend-adapter-execution-interface-v1-final-upload.zip
+```
+
+Artifact guard passed on the staged tree and extracted package:
+
+```text
+source file count: 179
+candidate file count: 183
+new file count: 4
+changed file count: 4
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Candidate-only files:
+
+```text
+runtime/backends/backendAdapterInvocationCommon.mjs
+runtime/backends/backendAdapterInvocationDescriptor.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+docs/dev-notes.49
+```
+
+Changed files:
+
+```text
+runtime/backends/backendAdapterContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+---
+
+## 9. GitHub verification
+
+```text
+Pending direct branch inspection after upload.
+```
+
+Post-merge `main` inspection remains a future gate.
+
+---
+
+## 10. Caveats / status notes
+
+No code/source blocker is known in the assistant staged sandbox for the declared contract/interface-only scope at the time this document was drafted.
+
+No real-runtime test is expected for this branch if it remains contract/interface-only because it does not touch runtime/worker/lifecycle/native execution surfaces.
+
+Future behavior-wiring branches that actually invoke backend adapters, wire `executeAction()`, touch `workerBridge`, touch `llama_worker`, enqueue runtime requests, stream tokens, schedule/cancel work, load models, or alter lifecycle behavior must define new gates and may require real-runtime testing.
+
+Known future gates before merge readiness:
+
+```text
+Michael local Windows/MINGW64 candidate checks
+direct GitHub branch inspection after upload
+post-merge main inspection after merge
+final docs/status refresh after completed gates
+```
+
+---
+
+## 11. Future work not included
+
+Not included:
+
+```text
+executeAction() behavior
+backend adapter invocation behavior
+nativeWorkerBackend execution integration
+runtime request enqueueing through capabilities
+scheduler lane work
+vision/multimodal backend execution
+memory/storage backend implementation
+Cognitive Graph Runtime implementation
+cleanup or optimization work
+```
+
+Possible next branch family after this one:
+
+```text
+runtime-capability-execute-action-orchestration-v1
+```
+
+That branch should still begin with a reviewed plan/spec and should not assume real execution wiring until approved.
