@@ -67,6 +67,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.49` | runtime backend adapter execution interface v1 | current contract checkpoint |
 | `dev-notes.50` | runtime capability execute-action orchestration v1 | current contract checkpoint |
 | `dev-notes.51` | runtime capability result/event envelope integration v1 | current contract checkpoint |
+| `dev-notes.52` | runtime native worker backend execution integration v1 | current behavior-wiring checkpoint |
 
 ## Reading order for new feature work
 

@@ -20,6 +20,39 @@ tests and real-runtime requirements
 explicit non-goals
 ```
 
+## Execute-action / backend execution readiness
+
+`runtime-native-worker-backend-execution-integration-v1` adds the first narrow real execution seam for accepted execute-action orchestration descriptors. Future capability execution branches should preserve that shape:
+
+```text
+accepted upstream descriptor chain
+  -> execute-action behavior seam
+  -> selected executable backend adapter
+  -> shared parent-owned runtime substrate where applicable
+```
+
+Do not bypass the Capability Bus / Router / Service / backend invocation chain by calling `workerBridge` or `llama_worker` directly from backend adapters. New backends should define explicit adapter execution modules and should receive required runtime substrate functions through dependency injection rather than importing `runtime.mjs`.
+
+Likely future branches:
+
+```text
+runtime-execute-action-public-envelope-dispatch-v1
+runtime-cancel-action-v1
+runtime-action-event-subscription-v1
+```
+
+Questions to resolve before broader execute-action work:
+
+```text
+raw actionEnvelope -> executeAction orchestration ownership
+actionId -> requestId cancellation registry
+action event subscription/storage surface
+per-action timeout scheduling
+stream delta materialization policy
+backend lane scheduling for non-text capabilities
+real-runtime test requirements per backend
+```
+
 ## Embedding support readiness
 
 The repo is structurally ready for an embedding-support planning branch because parent/runtime and worker/model responsibilities are now separated.

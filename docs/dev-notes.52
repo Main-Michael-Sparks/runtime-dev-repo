@@ -1,0 +1,446 @@
+# Dev Notes 52 — Runtime Native Worker Backend Execution Integration v1
+
+**Date:** 2026-06-19  
+**Branch:** `runtime-native-worker-backend-execution-integration-v1`  
+**Status:** Staged candidate from uploaded `main` mirror and plan/spec; assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted nativeWorkerBackend execution integration smoke, current contract-chain smokes, and broader mock/static lifecycle/worker regression smokes passed. Real-runtime testing by Michael, artifact/package guard, direct GitHub branch inspection, and post-merge `main` inspection remain incomplete gates before merge readiness.
+
+---
+
+## 1. Purpose
+
+This branch wires the first real native text-generation execution path from the accepted execute-action descriptor chain into the existing Runtime Dev native runtime path.
+
+The branch adds a narrow behavior seam:
+
+```text
+action/orchestration contract chain
+  -> execute-action behavior seam
+  -> executable nativeWorkerBackend adapter
+  -> existing parent runtime substrate
+  -> scheduler / request lifecycle / settlement / stream / lifecycle coordinators
+  -> workerBridge
+  -> llama_worker
+  -> real model output
+  -> result/event outcome mapping
+```
+
+The branch does not create a second native execution path and does not let backend adapters call `workerBridge` or `llama_worker` directly.
+
+---
+
+## 2. Source-truth notes
+
+Source truth for the branch remains GitHub `main` unless Michael explicitly promotes an uploaded artifact.
+
+This staged candidate was prepared from the uploaded `runtime-dev-repo-main.zip` mirror after a minimal GitHub source-shape refresh showed the expected current layout and latest merge posture.
+
+Known caveat: raw GitHub retrieval may display some files as line-collapsed. Treat that as a retrieval/display artifact unless direct file-page inspection or a local clone confirms source formatting damage.
+
+---
+
+## 3. Architecture decision
+
+The previous runtime work is split into two classifications in the new stack:
+
+```text
+Existing native model machinery
+  -> first concrete replaceable backend family: nativeWorkerBackend
+
+Existing parent-side scheduler/request/settlement/stream/lifecycle machinery
+  -> shared Runtime Dev execution substrate
+```
+
+This branch makes `nativeWorkerBackend` executable for the accepted `text.generate` route while preserving scheduler, request lifecycle, settlement, stream shaping, lifecycle, `workerBridge`, and worker ownership in the parent/native runtime substrate.
+
+---
+
+## 4. Implementation summary
+
+Added:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs
+tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+docs/dev-notes.52
+```
+
+Modified:
+
+```text
+runtime.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+runtime/backends/nativeWorker/nativeWorkerBackendContract.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+tests/smokeTestCapabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+tests/smokeTestModelBundleRegistryContract.mjs
+tests/smokeTestHardwareProfileRegistryContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+No scheduler, workerBridge, llama_worker, configOverride, model bundle, hardware profile implementation, runtime lifecycle coordinator, stream controller, request settlement helper, or worker protocol behavior files were modified.
+
+---
+
+## 5. Public API change
+
+`runtime.mjs` now exports:
+
+```text
+cancelPrompt
+executeAction
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+```
+
+`executeAction(orchestrationDescriptor, options = {})` is intentionally narrow in this branch.
+
+It accepts:
+
+```text
+accepted execute-action orchestration descriptors
+```
+
+It does not accept:
+
+```text
+raw action envelopes
+arbitrary backend payloads
+outcome descriptors
+```
+
+Future raw action envelope dispatch remains a separate branch.
+
+---
+
+## 6. Runtime substrate extraction
+
+`runtime.mjs` now has an internal helper:
+
+```js
+async function runNativeTextRequest(text, options = {})
+```
+
+`prompt(text, options)` delegates to this helper.
+
+The helper preserves the existing prompt admission path:
+
+```text
+assert runtime/session admission
+ensure model ready
+check queue backpressure
+create request
+trace queued
+scheduler.enqueue(req)
+return { id, stream, done }
+```
+
+`executeAction()` injects this helper into the execute-action seam:
+
+```js
+runExecuteAction(orchestrationDescriptor, {
+    runNativeTextRequest
+}, options)
+```
+
+This keeps `runtime.mjs` as the composition root and prevents backend modules from importing `runtime.mjs` directly.
+
+---
+
+## 7. Execute-action behavior seam
+
+Added:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+```
+
+Primary export:
+
+```js
+runExecuteAction(orchestrationDescriptor, deps, options)
+```
+
+Responsibilities:
+
+```text
+validate accepted orchestration descriptor
+select the supported executable adapter for nativeWorkerBackend
+create started outcome
+wrap adapter done promise into completed/failed/cancelled/timeout outcome descriptors
+return action handle with requestId, stream, startedOutcome, and done
+```
+
+The seam does not import `runtime.mjs`, `workerBridge`, `llama_worker`, scheduler, request, stream, or lifecycle modules.
+
+---
+
+## 8. nativeWorkerBackend executable adapter
+
+Added:
+
+```text
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs
+```
+
+Primary export:
+
+```js
+runNativeWorkerAction(orchestrationDescriptor, deps, options)
+```
+
+Responsibilities:
+
+```text
+validate accepted orchestration descriptor
+confirm capability is text.generate
+confirm backendKind is nativeWorkerBackend
+confirm adapterId is native-worker.default
+confirm serviceId is supported
+extract input.prompt from the accepted upstream action
+call deps.runNativeTextRequest(prompt, requestOptions)
+return backend execution handle
+```
+
+The adapter does not import `runtime.mjs`, `workerBridge`, `llama_worker`, scheduler, streamController, or lifecycle modules.
+
+---
+
+## 9. Result/event mapping
+
+The execute-action behavior seam maps runtime request completion into existing outcome helpers:
+
+```text
+started -> createCapabilityBusExecuteActionStartedOutcome(...)
+completed -> createCapabilityBusExecuteActionCompletedOutcome(...)
+failed -> createCapabilityBusExecuteActionFailedOutcome(...)
+cancelled -> createCapabilityBusExecuteActionCancelledOutcome(...)
+timeout -> createCapabilityBusExecuteActionTimeoutOutcome(...)
+```
+
+For completed native text generation:
+
+```js
+result: {
+    text: resultText
+}
+```
+
+Usage metadata still comes from the accepted invocation descriptor through existing outcome helper behavior:
+
+```text
+backendKind
+modelBundleId
+hardwareProfileId
+```
+
+---
+
+## 10. Streaming and cancellation boundaries
+
+Streaming:
+
+```text
+executeAction() returns the existing parent-shaped runtime stream handle.
+No second stream shaper was added.
+No raw worker token stream is intercepted by backend adapter code.
+```
+
+Cancellation:
+
+```text
+executeAction() returns requestId.
+Existing cancelPrompt(requestId) remains the cancellation mechanism for this branch.
+executeAction().done maps Prompt canceled-style rejections into cancelled outcome descriptors.
+```
+
+Not included:
+
+```text
+cancelAction(actionId)
+actionId -> requestId registry
+action event subscription surface
+per-token action.stream.delta materialization
+new per-action timeout scheduler
+```
+
+---
+
+## 11. Propagation review
+
+Completed propagation:
+
+```text
+runtime.mjs imports runExecuteAction and exposes narrow executeAction()
+runtime.mjs prompt() now delegates to runNativeTextRequest()
+execute-action contract barrel re-exports runExecuteAction
+nativeWorkerBackend contract barrel re-exports runNativeWorkerAction
+runtime fixture manifest includes the newly reachable execute-action/backend contract graph
+public-entrypoint guard expects executeAction
+older contract-only guards updated to recognize intentional narrow executeAction seam
+new targeted smoke covers mock completion/failure/cancellation and source guards
+README/current architecture/feature readiness/docs index updated
+```
+
+The fixture manifest expanded because `runtime.mjs` now imports the execute-action seam, which brings the accepted descriptor/outcome/backend validation graph into fixture-copy reachability.
+
+---
+
+## 12. Tests run
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Broader mock/static checks passed:
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Note: one combined broad mock batch exceeded the sandbox command timeout while running `smokeTestWorkerNativeCancellationBoundary.mjs`; the relevant tests were rerun individually and passed.
+
+---
+
+## 13. Real-runtime testing requirement
+
+Real-runtime testing remains required before merge readiness because this branch wires the first real execute-action/backend execution path.
+
+Recommended Michael local Windows/MINGW64 run:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Recommended real-runtime scenarios:
+
+```text
+executeAction(valid text.generate orchestration, stream: false) completes with completed outcome and non-empty result.text
+executeAction(valid text.generate orchestration, stream: true) returns a readable stream and done resolves completed outcome
+cancelPrompt(handle.requestId) after executeAction(...) maps done to cancelled outcome
+prompt() still works after executeAction()
+resetSession/resetModel/shutdown still behave after executeAction smoke
+```
+
+---
+
+## 14. Caveats / known risks
+
+Finding: public API changed.  
+Affected surface: `runtime.mjs`, public-entrypoint guard.  
+Why it matters: prior contract-only branches intentionally rejected `executeAction` exposure. This branch intentionally adds only narrow `executeAction(orchestrationDescriptor)`.  
+Smallest safe correction: keep the input limited to accepted orchestration descriptors and defer raw action-envelope dispatch.  
+What still needs verification: direct GitHub branch inspection and Michael real-runtime execution.
+
+Finding: fixture manifest grew from runtime reachability.  
+Affected surface: fixture-copy tests.  
+Why it matters: `runtime.mjs` now imports the execute-action seam, which makes contract modules reachable in runtime fixtures.  
+Smallest safe correction: update `tests/helpers/runtimeFixtureFiles.mjs`; `checkRuntimeFixtureCoverage.mjs` passed with 85 files.  
+What still needs verification: package extraction/recheck after candidate ZIP generation.
+
+Finding: real execution behavior is only mock-smoke-tested in sandbox.  
+Affected surface: native/model behavior.  
+Why it matters: sandbox mock tests do not prove local node-llama-cpp/model execution.  
+Smallest safe correction: Michael local `REAL_RUNTIME=1` smoke before merge readiness.  
+What still needs verification: non-empty real result, streaming handle behavior, cancellation mapping, prompt compatibility after executeAction.
+
+---
+
+## 15. Explicit non-goals preserved
+
+Not included:
+
+```text
+raw actionEnvelope -> executeAction public dispatch
+broad router/service execution redesign
+scheduler redesign
+backend-owned scheduler
+workerBridge redesign
+llama_worker refactor
+worker protocol redesign
+model path/model identity override behavior
+configOverride expansion
+new per-action timeout scheduler
+cancelAction(actionId)
+action event subscription system
+stream delta subscription system
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+Cognitive Graph Runtime implementation
+cleanup/optimization pass
+```
+
+---
+
+## 16. Future work not included
+
+Recommended future branches:
+
+```text
+runtime-execute-action-public-envelope-dispatch-v1
+runtime-cancel-action-v1
+runtime-action-event-subscription-v1
+runtime-action-timeout-policy-v1
+runtime-backend-lane-scheduling-v1
+```
+
+---
+
+## 17. Branch completion checklist
+
+Incomplete gates before merge readiness:
+
+```text
+Michael local real-runtime test
+candidate ZIP artifact guard/package verification, if packaging
+GitHub branch upload
+Direct GitHub branch inspection
+post-merge main inspection, if merged
+checkpoint/bootstrap for next session
+```
