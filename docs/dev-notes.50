@@ -279,14 +279,22 @@ cleanup or optimization work
 
 ## 10. Caveats / next gates
 
-The staged candidate still needs:
+No source/code caveats remain for the declared contract/composition-only scope after direct GitHub `main` inspection.
+
+Completed gates:
 
 ```text
-Michael local Windows/MINGW64 checks
-GitHub branch upload/direct branch inspection
-post-upload docs/status review
-post-merge direct main inspection and final status refresh
-checkpoint/bootstrap after completion
-```
+assistant sandbox syntax checks
+targeted execute-action orchestration smoke
+existing contract-chain smokes
+fixture helper check
+worker import-cycle check
+public-entrypoint guard
+artifact/package guard
+package extraction/recheck
+Michael local Windows/MINGW64 candidate checks
+direct GitHub branch inspection
+direct GitHub main inspection
+post-merge status refresh
 
-The main risk to keep watching is accidental promotion from composition into execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
+The main risk to keep watching in future branches is accidental promotion from composition into execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
