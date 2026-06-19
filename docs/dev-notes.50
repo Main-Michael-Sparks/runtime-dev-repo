@@ -296,5 +296,6 @@ Michael local Windows/MINGW64 candidate checks
 direct GitHub branch inspection
 direct GitHub main inspection
 post-merge status refresh
+```
 
 The main risk to keep watching in future branches is accidental promotion from composition into execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
