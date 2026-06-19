@@ -317,7 +317,9 @@ async function assertExecuteActionModuleBoundaries() {
     assert(!barrel.includes("const "), "execute-action public barrel must not hold implementation constants");
 
     const runtimeSource = await readSource("runtime.mjs");
-    assert(!runtimeSource.includes("executeAction"), "runtime.mjs public API must not expose executeAction in this branch");
+    assert(runtimeSource.includes("export async function executeAction"), "runtime.mjs must expose narrow executeAction seam");
+    assert(runtimeSource.includes("runExecuteAction(orchestrationDescriptor"), "runtime.mjs executeAction must call runExecuteAction seam");
+    assert(!runtimeSource.includes("executeActionEnvelope"), "runtime.mjs must not expose raw action-envelope execution in this branch");
 
     const executionBarrel = await readSource("runtime/execution/capabilityExecutorContract.mjs");
     assert(!executionBarrel.includes("function "), "runtime/execution barrel must remain thin");

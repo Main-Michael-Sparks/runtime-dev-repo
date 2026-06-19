@@ -145,6 +145,7 @@ async function main() {
 
     const expectedExports = [
         "cancelPrompt",
+        "executeAction",
         "initModel",
         "prompt",
         "resetModel",
@@ -175,7 +176,8 @@ async function main() {
         "./runtime/request/request.mjs",
         "./runtime/stream/streamController.mjs",
         "./workerBridge.mjs",
-        "./runtime/request/scheduler.mjs"
+        "./runtime/request/scheduler.mjs",
+        "./runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -198,6 +200,7 @@ async function main() {
     const requiredWrapperMarkers = [
         "export async function initModel",
         "export async function prompt",
+        "export async function executeAction",
         "export function cancelPrompt",
         "export async function resetSession",
         "export async function resetModel",
@@ -211,6 +214,8 @@ async function main() {
 
     const promptAdmissionMarkers = [
         "function assertPromptAdmissionAllowed",
+        "async function runNativeTextRequest",
+        "return runNativeTextRequest(text, options);",
         "assertPromptAdmissionAllowed(sessionId)",
         "ensureModelReadyCoordinator",
         "scheduler.queuedCount()",
@@ -223,6 +228,17 @@ async function main() {
         assertIncludes(runtimeSource, marker, "runtime.mjs prompt admission path");
     }
     ok("runtime.mjs prompt admission markers remain present");
+
+    const executeActionMarkers = [
+        "export async function executeAction(orchestrationDescriptor, options = {})",
+        "runExecuteAction(orchestrationDescriptor",
+        "runNativeTextRequest"
+    ];
+
+    for (const marker of executeActionMarkers) {
+        assertIncludes(runtimeSource, marker, "runtime.mjs executeAction injection path");
+    }
+    ok("runtime.mjs executeAction dependency-injection markers remain present");
 
     const fastCancelMarkers = [
         "export function cancelPrompt",

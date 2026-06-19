@@ -44,6 +44,9 @@ import {
     recreateWorker
 } from "./workerBridge.mjs";
 import { createScheduler } from "./runtime/request/scheduler.mjs";
+import {
+    runExecuteAction
+} from "./runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
@@ -116,7 +119,7 @@ function assertPromptAdmissionAllowed(sessionId) {
 }
 
 
-export async function prompt(text, options = {}) {
+async function runNativeTextRequest(text, options = {}) {
     const sessionId = options.sessionId || "default";
 
     assertPromptAdmissionAllowed(sessionId);
@@ -138,6 +141,16 @@ export async function prompt(text, options = {}) {
         stream: req.stream,
         done: req.done
     };
+}
+
+export async function prompt(text, options = {}) {
+    return runNativeTextRequest(text, options);
+}
+
+export async function executeAction(orchestrationDescriptor, options = {}) {
+    return runExecuteAction(orchestrationDescriptor, {
+        runNativeTextRequest
+    }, options);
 }
 
 export function cancelPrompt(promptId) {
