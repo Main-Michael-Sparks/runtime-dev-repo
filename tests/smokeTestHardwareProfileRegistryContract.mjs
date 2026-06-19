@@ -440,6 +440,7 @@ async function testSourceShape() {
     assert(
         JSON.stringify(runtimeExports) === JSON.stringify([
             "cancelPrompt",
+            "executeAction",
             "initModel",
             "prompt",
             "resetModel",

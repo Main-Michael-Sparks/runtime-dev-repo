@@ -12,3 +12,7 @@ export {
     createNativeWorkerBackendAdapterDefinition,
     validateNativeWorkerBackendAdapterDefinition
 } from "./nativeWorkerBackendAdapterDefinition.mjs";
+
+export {
+    runNativeWorkerAction
+} from "./nativeWorkerBackendExecution.mjs";

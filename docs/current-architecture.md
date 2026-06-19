@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-18
+Date: 2026-06-19
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -16,6 +16,7 @@ llama_worker/llama.mjs      worker composition root and model/native boundary
 
 ```text
 cancelPrompt
+executeAction
 initModel
 prompt
 resetModel
@@ -48,6 +49,7 @@ runtime/bus/
     capabilityBusExecuteActionOrchestration.mjs
     capabilityBusExecuteActionOutcomeCommon.mjs
     capabilityBusExecuteActionOutcome.mjs
+    capabilityBusExecuteActionExecution.mjs
     capabilityBusExecuteActionContract.mjs
   capabilityServiceCommon.mjs
   capabilityServiceDefinition.mjs
@@ -82,6 +84,7 @@ runtime/backends/
   backendAdapterContract.mjs
   nativeWorker/
     nativeWorkerBackendAdapterDefinition.mjs
+    nativeWorkerBackendExecution.mjs
     nativeWorkerBackendContract.mjs
 
 runtime/execution/
@@ -133,13 +136,13 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only through `runtime-capability-result-event-envelope-integration-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, the bus-facing execute-action contract seam under `runtime/bus/executeAction/`, execute-action orchestration/composition descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-first, with one narrow behavior seam added by `runtime-native-worker-backend-execution-integration-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs` starts only from an accepted execute-action orchestration descriptor, dispatches to the selected executable backend adapter for the supported nativeWorkerBackend route, and maps real completion/failure/cancellation into outcome descriptors. It does not accept raw action envelopes, own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/backends/` is contract-only through `runtime-backend-adapter-execution-interface-v1`. It records generic backend adapter descriptor, registry, service-plan compatibility metadata, backend adapter invocation descriptors, plus the canonical `native-worker.default` native worker backend descriptor contract under `runtime/backends/nativeWorker/`. The backend adapter invocation descriptor is a minimal backend-facing contract derived from validated capability execution / executor skeleton metadata; it is non-executable and does not invoke adapters. The native worker backend contract identifies the current built-in text-generation worker path by metadata only; this namespace does not implement backend execution, call services, call `workerBridge`, import `llama_worker`, enqueue runtime requests, load models, change public runtime APIs, or touch worker behavior.
+`runtime/backends/` records generic backend adapter descriptors, registries, service-plan compatibility metadata, backend adapter invocation descriptors, and the canonical `native-worker.default` native worker backend descriptor contract under `runtime/backends/nativeWorker/`. `runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs` now implements the first executable adapter seam for accepted nativeWorkerBackend/text.generate orchestration descriptors. The adapter calls an injected parent-owned native text request helper and therefore reuses the existing scheduler, request lifecycle, stream shaping, settlement, lifecycle coordinators, `workerBridge`, and worker boundary indirectly. It does not import `runtime.mjs`, call `workerBridge` directly, import `llama_worker`, create a backend-owned scheduler, or load models.
 
-`runtime/execution/` is contract-only through `runtime-capability-bus-executor-skeleton-v1`. It records metadata-only capability execution descriptors derived from approved backend adapter plans plus executor skeleton handoff descriptors for future behavior-wiring branches. It does not implement `executeAction()`, call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
+`runtime/execution/` remains contract-only. It records metadata-only capability execution descriptors derived from approved backend adapter plans plus executor skeleton handoff descriptors. The new execute-action behavior seam consumes those accepted upstream descriptors through the orchestration/backend invocation chain; `runtime/execution/` itself still does not call services, call backend adapters, enqueue runtime requests, change public runtime APIs, or touch worker behavior.
 
 `runtime/models/` is contract-only through `runtime-model-bundle-registry-v1`. It records model bundle metadata, definition validation, registry validation, and lookup helpers for future routing/backend execution work. Route/model-bundle compatibility validation consumes this metadata from `runtime/router/` without moving model-bundle ownership into the router. Model bundle definitions are static metadata only: requests and plans should use `modelBundleId`, while artifact layout details such as model/projector paths stay inside registry metadata. This namespace does not load models, check filesystem paths, change public runtime APIs, expand `configOverride`, or touch worker behavior.
 
@@ -156,6 +159,7 @@ init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
 worker message routing
+executeAction dependency injection into the first nativeWorkerBackend seam
 ```
 
 ## Worker layout
@@ -232,4 +236,4 @@ node ./tests/tools/checkWorkerImportCycles.mjs
 
 ## Real-runtime note
 
-Mock/sandbox smoke tests are valuable for regression control, but they do not prove native/model behavior. Branches that touch init, reset, shutdown, worker cancellation, context creation, or prompt streaming still need real-runtime verification unless Michael explicitly waives it.
+Mock/sandbox smoke tests are valuable for regression control, but they do not prove native/model behavior. Branches that touch init, reset, shutdown, worker cancellation, context creation, prompt streaming, or real execute-action/backend execution still need real-runtime verification unless Michael explicitly waives it.
