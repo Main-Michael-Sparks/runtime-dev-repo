@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19  
 **Branch:** `runtime-capability-result-event-envelope-integration-v1`  
-**Status:** Assistant sandbox staged candidate for the declared contract-only result/event outcome scope; syntax checks, targeted execute-action outcome smoke, existing execute-action/orchestration smokes, contract-chain smokes, fixture helper check, worker import-cycle check, and public-entrypoint guard passed. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces. Michael local Windows/MINGW64 checks, direct GitHub branch inspection, and direct GitHub `main` inspection remain post-upload/post-merge gates.
+**Status:** Repo-verified on `runtime-capability-result-event-envelope-integration-v1` for the declared contract-only result/event outcome scope; assistant sandbox syntax checks, targeted execute-action outcome smoke, existing execute-action/orchestration smokes, contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection remains a post-merge gate. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -33,7 +33,9 @@ accepted execute-action orchestration descriptor
   -> result/event outcome descriptor
 ```
 
-The new descriptor is a bus-owned outcome contract artifact. It does not execute actions, call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, settle runtime requests, or touch lifecycle behavior.
+The new descriptor is a bus-owned outcome contract artifact.
+
+It does not execute actions, call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, settle runtime requests, or touch lifecycle behavior.
 
 ---
 
@@ -52,6 +54,8 @@ runtime.mjs / workerBridge / llama_worker own real runtime/native behavior and r
 ```
 
 The outcome helper consumes existing orchestration, result envelope, action event, execution, and backend invocation validators instead of redefining those schemas.
+
+This preserves the bus-owned outcome boundary without promoting backend invocation descriptors, executor skeleton descriptors, or orchestration descriptors into executable behavior.
 
 ---
 
@@ -76,7 +80,7 @@ docs/current-architecture.md
 docs/dev-notes.50
 ```
 
-The `docs/dev-notes.50` modification is an aside/docs-format correction only. It closes the Section 10 completed-gates fenced code block that was carried forward from the previous branch. It does not change the branch status, source claims, or code behavior.
+The `docs/dev-notes.50` modification is an aside/docs-format correction only. It closes the Section 10 completed-gates fenced code block that was carried forward from the previous branch. It does not change the previous branch status, source claims, or code behavior.
 
 No runtime, worker, lifecycle, request, stream, config, or native/backend behavior files were modified.
 
@@ -126,7 +130,6 @@ CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_EXECUTABLE
 CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_SETTLEMENT
 CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_WIRING
 CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_NATIVE_EXECUTION
-
 validateCapabilityBusExecuteActionOutcomeDescriptor(value)
 normalizeCapabilityBusExecuteActionOutcomeDescriptor(value)
 assertCapabilityBusExecuteActionOutcomeDescriptor(value)
@@ -171,7 +174,7 @@ The branch intentionally does not redesign `resultEnvelope.mjs` or `actionEvent.
 
 ## 6. Propagation review
 
-Propagation completed in the staged candidate:
+Propagation completed:
 
 ```text
 capabilityBusExecuteActionContract.mjs re-exports outcome constants/helpers as a thin barrel
@@ -221,11 +224,37 @@ node ./tests/smokeTestModelBundleRegistryContract.mjs
 node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 ```
 
-Real-runtime testing is not required for the staged scope because the branch is contract-only and does not touch runtime/worker/lifecycle/native execution behavior.
+Package extraction/recheck passed with syntax check and targeted chain smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+```
+
+Michael local Windows/MINGW64 candidate checks passed with the full command set listed above.
+
+Real-runtime testing is not required for the declared scope because the branch is contract-only and does not touch runtime/worker/lifecycle/native execution behavior.
 
 ---
 
 ## 8. Artifact/package verification
+
+Candidate package:
+
+```text
+runtime-capability-result-event-envelope-integration-v1-candidate.zip
+```
+
+Candidate SHA-256:
+
+```text
+f47fd4358bf80082f02b4092dec2600da0fede074805b09b6f17545b33920a4d
+```
 
 Artifact guard passed on the staged tree against the source mirror:
 
@@ -258,21 +287,54 @@ docs/dev-notes.50
 runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
 ```
 
-Package extraction/recheck passed with syntax check and targeted chain smokes:
+---
 
-```bash
-find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
-node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
-node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
-node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
-node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
-node ./tests/smokeTestCapabilityExecutorContract.mjs
-node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+## 9. GitHub branch verification
+
+Direct GitHub branch inspection passed on:
+
+```text
+runtime-capability-result-event-envelope-integration-v1
 ```
+
+Latest relevant branch commits observed during inspection:
+
+```text
+072c112 — Add files via upload
+f5d855b — Add files via upload
+4b638dc — Update dev-notes.50
+```
+
+Expected branch content confirmed:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionOutcomeCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOutcome.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+docs/dev-notes.51
+docs/dev-notes.50
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+Direct GitHub branch inspection confirmed these branch-shape details:
+
+```text
+README fast-check list includes node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+docs/dev-notes.51 exists as 317 lines / 247 loc / 11.6 KB
+capabilityBusExecuteActionOutcome.mjs exists as 888 lines / 791 loc / 34.8 KB
+smokeTestCapabilityExecuteActionOutcome.mjs exists as 653 lines / 589 loc / 23.7 KB
+capabilityBusExecuteActionContract.mjs re-exports the outcome constants/helpers/creators
+docs/dev-notes.50 Section 10 fence is closed before the final risk sentence
+```
+
+Direct GitHub `main` inspection remains a post-merge gate.
 
 ---
 
-## 9. Explicitly not included
+## 10. Explicitly not included
 
 This branch does not include:
 
@@ -301,17 +363,50 @@ actionEvent schema redesign
 
 ---
 
-## 10. Caveats / next gates
+## 11. Caveats / next gates
 
-No source/code caveats are known for the declared contract-only outcome scope in the assistant sandbox staged tree.
+No source/code caveats are known for the declared contract-only outcome scope after assistant sandbox checks, package verification, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection.
 
-Remaining gates before merge readiness:
+Completed gates:
 
 ```text
+assistant sandbox syntax checks
+targeted execute-action outcome smoke
+existing execute-action/orchestration smokes
+existing contract-chain smokes
+fixture helper check
+worker import-cycle check
+public-entrypoint guard
+artifact/package guard
+package extraction/recheck
 Michael local Windows/MINGW64 candidate checks
-direct GitHub branch inspection after upload/commit
+direct GitHub branch inspection
+docs/dev-notes.50 Section 10 fence correction confirmed on branch
+```
+
+Remaining post-merge gate:
+
+```text
 direct GitHub main inspection after merge
-post-merge status refresh, if merged
+post-merge status refresh if merged
 ```
 
 The main risk to keep watching in the next behavior-wiring branch is accidental promotion from result/event contracts into runtime settlement or backend execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
+
+---
+
+## 12. Recommended next step
+
+If Michael accepts the branch candidate, merge to `main`, then direct-check GitHub `main` for:
+
+```text
+expected outcome files
+barrel re-exports
+docs propagation
+README fast-check propagation
+docs/dev-notes.50 fence correction
+docs/dev-notes.51 final status wording
+no accidental runtime/worker/lifecycle/native execution changes
+```
+
+After post-merge `main` inspection, update the status line to merged/main-inspected wording if needed.
