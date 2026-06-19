@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19  
 **Branch:** `runtime-capability-result-event-envelope-integration-v1`  
-**Status:** Repo-verified on `runtime-capability-result-event-envelope-integration-v1` for the declared contract-only result/event outcome scope; assistant sandbox syntax checks, targeted execute-action outcome smoke, existing execute-action/orchestration smokes, contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection remains a post-merge gate. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Merged to `main` and main-inspected for the declared contract-only result/event outcome scope; assistant sandbox syntax checks, targeted execute-action outcome smoke, existing execute-action/orchestration smokes, contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
@@ -289,7 +289,7 @@ runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
 
 ---
 
-## 9. GitHub branch verification
+## 9. GitHub verification
 
 Direct GitHub branch inspection passed on:
 
@@ -297,7 +297,7 @@ Direct GitHub branch inspection passed on:
 runtime-capability-result-event-envelope-integration-v1
 ```
 
-Latest relevant branch commits observed during inspection:
+Latest relevant branch commits observed during branch inspection:
 
 ```text
 072c112 — Add files via upload
@@ -305,7 +305,17 @@ f5d855b — Add files via upload
 4b638dc — Update dev-notes.50
 ```
 
-Expected branch content confirmed:
+Direct GitHub `main` inspection passed after merge for the declared contract-only result/event outcome source scope.
+
+Latest relevant `main` file-history entries observed during post-merge inspection:
+
+```text
+072c112 — Add files via upload          runtime/bus/executeAction/capabilityBusExecuteActionOutcome.mjs
+fe67bde — Add files via upload          docs/dev-notes.51
+f5d855b — Add files via upload          docs/dev-notes.51
+```
+
+Expected merged content confirmed on `main`:
 
 ```text
 runtime/bus/executeAction/capabilityBusExecuteActionOutcomeCommon.mjs
@@ -319,18 +329,17 @@ docs/README.md
 docs/current-architecture.md
 ```
 
-Direct GitHub branch inspection confirmed these branch-shape details:
+Direct GitHub branch and `main` inspection confirmed these shape details:
 
 ```text
 README fast-check list includes node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
-docs/dev-notes.51 exists as 317 lines / 247 loc / 11.6 KB
+docs/README.md lists dev-notes.51
+current-architecture.md lists the new outcome files and contract-only scope
 capabilityBusExecuteActionOutcome.mjs exists as 888 lines / 791 loc / 34.8 KB
 smokeTestCapabilityExecuteActionOutcome.mjs exists as 653 lines / 589 loc / 23.7 KB
 capabilityBusExecuteActionContract.mjs re-exports the outcome constants/helpers/creators
 docs/dev-notes.50 Section 10 fence is closed before the final risk sentence
 ```
-
-Direct GitHub `main` inspection remains a post-merge gate.
 
 ---
 
@@ -381,15 +390,12 @@ artifact/package guard
 package extraction/recheck
 Michael local Windows/MINGW64 candidate checks
 direct GitHub branch inspection
-docs/dev-notes.50 Section 10 fence correction confirmed on branch
-```
-
-Remaining post-merge gate:
-
-```text
 direct GitHub main inspection after merge
-post-merge status refresh if merged
+docs/dev-notes.50 Section 10 fence correction confirmed on branch and main
+post-merge status refresh completed in this document
 ```
+
+No remaining merge-readiness gates are known for the declared contract-only result/event outcome scope.
 
 The main risk to keep watching in the next behavior-wiring branch is accidental promotion from result/event contracts into runtime settlement or backend execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
 
@@ -397,16 +403,12 @@ The main risk to keep watching in the next behavior-wiring branch is accidental 
 
 ## 12. Recommended next step
 
-If Michael accepts the branch candidate, merge to `main`, then direct-check GitHub `main` for:
+This branch family segment is complete for the declared contract-only result/event outcome scope.
+
+Recommended next branch, if Michael wants to start real behavior wiring:
 
 ```text
-expected outcome files
-barrel re-exports
-docs propagation
-README fast-check propagation
-docs/dev-notes.50 fence correction
-docs/dev-notes.51 final status wording
-no accidental runtime/worker/lifecycle/native execution changes
+runtime-native-worker-backend-execution-integration-v1
 ```
 
-After post-merge `main` inspection, update the status line to merged/main-inspected wording if needed.
+That branch should start with a high-risk behavior-wiring plan/spec before implementation. It should preserve parent runtime request lifecycle ownership, preserve the worker as the model/native boundary, keep the execution path as narrow as possible, and require real-runtime testing before merge readiness.
