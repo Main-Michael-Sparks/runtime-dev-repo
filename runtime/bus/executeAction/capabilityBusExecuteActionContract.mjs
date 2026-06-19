@@ -65,3 +65,7 @@ export {
     normalizeCapabilityBusExecuteActionOutcomeDescriptor,
     validateCapabilityBusExecuteActionOutcomeDescriptor
 } from "./capabilityBusExecuteActionOutcome.mjs";
+
+export {
+    runExecuteAction
+} from "./capabilityBusExecuteActionExecution.mjs";
