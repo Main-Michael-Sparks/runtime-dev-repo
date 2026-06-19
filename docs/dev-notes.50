@@ -1,0 +1,292 @@
+# Dev Notes 50 — Runtime Capability Execute-Action Orchestration v1
+
+**Date:** 2026-06-18  
+**Branch:** `runtime-capability-execute-action-orchestration-v1`  
+**Status:** Staged candidate for the declared contract/composition-only scope; assistant sandbox syntax checks, targeted execute-action orchestration smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, and package extraction/recheck passed. Michael local Windows/MINGW64 checks, direct GitHub branch inspection, direct GitHub `main` inspection, and post-merge status refresh remain future gates. No real-runtime test is required for the staged scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow, modular, contract-only composition seam after `runtime-backend-adapter-execution-interface-v1`.
+
+The branch proves that the accepted execute-action descriptor chain can be composed into one execute-action orchestration descriptor without starting execution.
+
+Current descriptor chain:
+
+```text
+actionEnvelope
+  -> capability bus action
+  -> router route plan
+  -> service plan
+  -> backend adapter plan
+  -> capability execution plan
+  -> executor skeleton handoff descriptor
+  -> backend adapter invocation descriptor
+```
+
+New branch output:
+
+```text
+accepted execute-action plan
+  -> executor skeleton handoff descriptor
+  -> backend adapter invocation descriptor
+  -> execute-action orchestration descriptor
+```
+
+The new descriptor is a bus-owned composition artifact. It does not execute actions, call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, or touch lifecycle behavior.
+
+---
+
+## 2. Modular ownership
+
+Ownership boundaries preserved:
+
+```text
+runtime/bus/executeAction/ owns execute-action composition/orchestration contracts.
+runtime/execution/ owns capability execution and executor skeleton descriptors.
+runtime/backends/ owns backend adapter and backend invocation descriptors.
+runtime/router/ owns route validation and route/model/profile compatibility.
+runtime/models/ owns model bundle metadata.
+runtime/profiles/ owns hardware profile metadata.
+runtime.mjs / workerBridge / llama_worker own real runtime/native behavior and remain untouched.
+```
+
+The orchestration helper consumes existing execution/backend validation helpers instead of duplicating backend or executor internals.
+
+---
+
+## 3. Implementation summary
+
+Added:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionOrchestrationCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOrchestration.mjs
+tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+docs/dev-notes.50
+```
+
+Modified:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+No runtime, worker, lifecycle, request, stream, config, or native/backend behavior files were modified.
+
+---
+
+## 4. New contract identity
+
+```text
+contractVersion: capability-bus-execute-action-orchestration.v1
+status: accepted
+```
+
+Boundary metadata:
+
+```js
+{
+    orchestration: "composition-only",
+    executable: false,
+    adapterInvocation: "contract-only",
+    runtimeWiring: "not-wired",
+    nativeExecution: "not-wired"
+}
+```
+
+Ordered chain metadata:
+
+```text
+actionEnvelope
+capabilityBusAction
+capabilityRoutePlan
+capabilityServicePlan
+backendAdapterPlan
+capabilityExecutionPlan
+capabilityExecutorSkeletonPlan
+backendAdapterInvocationDescriptor
+```
+
+---
+
+## 5. Contract behavior
+
+New helpers:
+
+```js
+validateCapabilityBusExecuteActionOrchestrationDescriptor(value)
+normalizeCapabilityBusExecuteActionOrchestrationDescriptor(value)
+assertCapabilityBusExecuteActionOrchestrationDescriptor(value)
+```
+
+Behavior:
+
+```text
+accepts a current accepted execute-action plan
+accepts an already normalized execute-action orchestration descriptor
+normalizes accepted execute-action plans into orchestration descriptors
+derives executor skeleton handoff descriptors through the existing execution helper
+derives backend adapter invocation descriptors through the existing backend helper
+embeds copy-isolated child descriptors for contract visibility
+requires non-executable / not-wired / contract-only boundary metadata
+rejects raw backend adapter plans as direct orchestration inputs
+rejects raw capability execution plans as direct orchestration inputs
+rejects unknown top-level, orchestration, action, and boundary fields
+rejects forbidden runtime/worker/native/model-path/backend-execution keys in orchestration-owned metadata
+```
+
+The branch intentionally keeps accepted execute-action plans as the only non-normalized top-level source. Lower-level descriptors remain owned by their own namespaces and cannot be used as direct orchestration inputs.
+
+---
+
+## 6. Propagation review
+
+Propagation completed in the staged candidate:
+
+```text
+capabilityBusExecuteActionContract.mjs re-exports orchestration constants/helpers as a thin barrel
+new targeted smoke validates accepted execute-action plan -> executor skeleton -> backend invocation -> orchestration descriptor
+new targeted smoke validates contract/status/boundary metadata
+new targeted smoke validates child descriptors through their existing validators
+new targeted smoke rejects raw backend adapter and raw capability execution plans as direct orchestration inputs
+new targeted smoke rejects forbidden runtime/worker/native/backend-execution keys
+new targeted smoke includes source guards for no runtime/worker/native imports or message posting
+README fast-check list includes the new smoke
+docs/current-architecture.md lists the new orchestration files and contract-only scope
+docs/README.md lists dev-notes.50
+```
+
+Fixture helper update was not required; `checkRuntimeFixtureCoverage.mjs` passed unchanged.
+
+---
+
+## 7. Tests run
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Assistant sandbox broader dependency-chain smokes also passed:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Real-runtime testing is not required for the staged scope because the branch is contract/composition-only and does not touch runtime/worker/lifecycle/native execution behavior.
+
+Package extraction/recheck passed with syntax check and targeted chain smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+```
+
+---
+
+## 8. Artifact/package verification
+
+Candidate package:
+
+```text
+runtime-capability-execute-action-orchestration-v1-candidate.zip
+```
+
+Artifact guard passed on the staged tree and extracted package:
+
+```text
+source file count: 183
+candidate file count: 187
+new file count: 4
+changed file count: 4
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Candidate-only files:
+
+```text
+docs/dev-notes.50
+runtime/bus/executeAction/capabilityBusExecuteActionOrchestration.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOrchestrationCommon.mjs
+tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+```
+
+Changed files:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+```
+
+---
+
+## 9. Explicitly not included
+
+This branch does not include:
+
+```text
+runtime.mjs public API changes
+real executeAction() behavior
+service invocation behavior
+backend adapter execution behavior
+nativeWorkerBackend execution behavior
+workerBridge changes
+llama_worker changes
+scheduler/request/stream changes
+lifecycle/init/reset/shutdown changes
+model loading changes
+configOverride expansion
+request-time raw model paths
+prompt/output semantic changes
+vision/multimodal execution
+memory/storage backend implementation
+Cognitive Graph Runtime implementation
+cleanup or optimization work
+```
+
+---
+
+## 10. Caveats / next gates
+
+The staged candidate still needs:
+
+```text
+Michael local Windows/MINGW64 checks
+GitHub branch upload/direct branch inspection
+post-upload docs/status review
+post-merge direct main inspection and final status refresh
+checkpoint/bootstrap after completion
+```
+
+The main risk to keep watching is accidental promotion from composition into execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.

@@ -44,6 +44,8 @@ runtime/bus/
     capabilityBusExecuteActionCommon.mjs
     capabilityBusExecuteActionPlan.mjs
     capabilityBusExecuteActionResult.mjs
+    capabilityBusExecuteActionOrchestrationCommon.mjs
+    capabilityBusExecuteActionOrchestration.mjs
     capabilityBusExecuteActionContract.mjs
   capabilityServiceCommon.mjs
   capabilityServiceDefinition.mjs
@@ -129,7 +131,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-only through `capability-bus-execute-action-contract-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, the bus-facing execute-action contract seam under `runtime/bus/executeAction/`, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
+`runtime/bus/` is contract-only through `runtime-capability-execute-action-orchestration-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, the bus-facing execute-action contract seam under `runtime/bus/executeAction/`, execute-action orchestration/composition descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
