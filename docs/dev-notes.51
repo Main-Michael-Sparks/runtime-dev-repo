@@ -1,0 +1,412 @@
+# Dev Notes 51 — Runtime Capability Result/Event Envelope Integration v1
+
+**Date:** 2026-06-19  
+**Branch:** `runtime-capability-result-event-envelope-integration-v1`  
+**Status:** Repo-verified on `runtime-capability-result-event-envelope-integration-v1` for the declared contract-only result/event outcome scope; assistant sandbox syntax checks, targeted execute-action outcome smoke, existing execute-action/orchestration smokes, contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection remains a post-merge gate. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+
+---
+
+## 1. Purpose
+
+This branch adds one narrow, modular, contract-only result/event outcome seam after `runtime-capability-execute-action-orchestration-v1`.
+
+The branch proves that an accepted execute-action orchestration descriptor can be paired with normalized Runtime Dev result envelopes and action events without starting execution.
+
+Current descriptor chain before this branch:
+
+```text
+actionEnvelope
+  -> capability bus action
+  -> router route plan
+  -> service plan
+  -> backend adapter plan
+  -> capability execution plan
+  -> executor skeleton handoff descriptor
+  -> backend adapter invocation descriptor
+  -> execute-action orchestration descriptor
+```
+
+New branch output:
+
+```text
+accepted execute-action orchestration descriptor
+  -> result/event outcome descriptor
+```
+
+The new descriptor is a bus-owned outcome contract artifact.
+
+It does not execute actions, call services, call backend adapters, call `workerBridge`, import `llama_worker`, enqueue requests, stream tokens, load models, settle runtime requests, or touch lifecycle behavior.
+
+---
+
+## 2. Modular ownership
+
+Ownership boundaries preserved:
+
+```text
+runtime/bus/executeAction/ owns execute-action composition/orchestration/outcome contracts.
+runtime/execution/ owns capability execution and executor skeleton descriptors.
+runtime/backends/ owns backend adapter and backend invocation descriptors.
+runtime/router/ owns route validation and route/model/profile compatibility.
+runtime/models/ owns model bundle metadata.
+runtime/profiles/ owns hardware profile metadata.
+runtime.mjs / workerBridge / llama_worker own real runtime/native behavior and remain untouched.
+```
+
+The outcome helper consumes existing orchestration, result envelope, action event, execution, and backend invocation validators instead of redefining those schemas.
+
+This preserves the bus-owned outcome boundary without promoting backend invocation descriptors, executor skeleton descriptors, or orchestration descriptors into executable behavior.
+
+---
+
+## 3. Implementation summary
+
+Added:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionOutcomeCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOutcome.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+docs/dev-notes.51
+```
+
+Modified:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/dev-notes.50
+```
+
+The `docs/dev-notes.50` modification is an aside/docs-format correction only. It closes the Section 10 completed-gates fenced code block that was carried forward from the previous branch. It does not change the previous branch status, source claims, or code behavior.
+
+No runtime, worker, lifecycle, request, stream, config, or native/backend behavior files were modified.
+
+---
+
+## 4. New contract identity
+
+```text
+contractVersion: capability-bus-execute-action-outcome.v1
+status: accepted
+```
+
+Boundary metadata:
+
+```js
+{
+    outcome: "result-event-contract-only",
+    executable: false,
+    runtimeSettlement: "not-wired",
+    runtimeWiring: "not-wired",
+    nativeExecution: "not-wired"
+}
+```
+
+The outcome descriptor embeds:
+
+```text
+action identity
+boundary metadata
+copy-isolated orchestration descriptor
+optional normalized resultEnvelope
+optional normalized actionEvent
+metadata copied from backend adapter invocation identity/contract fields
+```
+
+---
+
+## 5. Contract behavior
+
+New constants/helpers:
+
+```js
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_CONTRACT_VERSION
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_STATUS
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_BOUNDARY
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_EXECUTABLE
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_SETTLEMENT
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_WIRING
+CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_NATIVE_EXECUTION
+validateCapabilityBusExecuteActionOutcomeDescriptor(value)
+normalizeCapabilityBusExecuteActionOutcomeDescriptor(value)
+assertCapabilityBusExecuteActionOutcomeDescriptor(value)
+copyCapabilityBusExecuteActionOutcomeDescriptor(value)
+copyCapabilityBusExecuteActionOutcomeValue(value)
+```
+
+New outcome/event creators:
+
+```js
+createCapabilityBusExecuteActionAcceptedOutcome(orchestrationDescriptor, fields = {})
+createCapabilityBusExecuteActionStartedOutcome(orchestrationDescriptor, fields = {})
+createCapabilityBusExecuteActionCompletedOutcome(orchestrationDescriptor, fields = {})
+createCapabilityBusExecuteActionFailedOutcome(orchestrationDescriptor, error, fields = {})
+createCapabilityBusExecuteActionCancelledOutcome(orchestrationDescriptor, reasonOrError, fields = {})
+createCapabilityBusExecuteActionTimeoutOutcome(orchestrationDescriptor, reasonOrError, fields = {})
+createCapabilityBusExecuteActionPolicyDeniedOutcome(orchestrationDescriptor, reasonOrError, fields = {})
+createCapabilityBusExecuteActionStreamDeltaEvent(orchestrationDescriptor, fields = {})
+createCapabilityBusExecuteActionStreamDeltaOutcome(orchestrationDescriptor, fields = {})
+```
+
+Behavior:
+
+```text
+normalizes and validates accepted execute-action orchestration descriptors
+creates accepted/running/completed/failed/cancelled/timeout/policy_denied result envelopes
+creates accepted/started/stream.delta/completed/failed/cancelled/timeout/policyDenied action events
+allows stream delta to remain event-only without inventing a stream result schema
+requires non-executable / not-wired / contract-only boundary metadata
+requires result/event action identity to match orchestration action identity
+requires result/event status/type pairs to match when both are present
+copies route/service/adapter/backend/model/profile IDs from backend invocation metadata
+keeps event/result/orchestration payloads copy-isolated
+rejects raw lower-level execution, executor skeleton, and backend invocation descriptors as direct outcome inputs
+rejects forbidden runtime/worker/native/model-path/backend-execution keys in outcome-owned metadata
+rejects unknown top-level, action, boundary, and metadata fields
+```
+
+The branch intentionally does not redesign `resultEnvelope.mjs` or `actionEvent.mjs`.
+
+---
+
+## 6. Propagation review
+
+Propagation completed:
+
+```text
+capabilityBusExecuteActionContract.mjs re-exports outcome constants/helpers as a thin barrel
+new targeted smoke validates orchestration descriptor -> result/event outcome descriptors
+new targeted smoke validates accepted/running/completed/failed/cancelled/timeout/policy_denied result envelopes
+new targeted smoke validates accepted/started/stream.delta/completed/failed/cancelled/timeout/policyDenied action events
+new targeted smoke validates stream delta as event-only and as event-only outcome descriptor
+new targeted smoke validates status/type mismatch rejection
+new targeted smoke validates copy isolation
+new targeted smoke rejects raw lower-level execution/backend descriptors as direct outcome inputs
+new targeted smoke rejects forbidden runtime/worker/native/backend-execution keys
+new targeted smoke includes source guards for no runtime/worker/native imports or message posting
+README fast-check list includes the new smoke
+docs/current-architecture.md lists the new outcome files and contract-only scope
+docs/README.md lists dev-notes.51
+docs/dev-notes.50 Section 10 fence corrected as a docs-format aside
+```
+
+Fixture helper update was not required; `checkRuntimeFixtureCoverage.mjs` passed unchanged.
+
+---
+
+## 7. Tests run
+
+Assistant sandbox staged-tree checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Package extraction/recheck passed with syntax check and targeted chain smokes:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+```
+
+Michael local Windows/MINGW64 candidate checks passed with the full command set listed above.
+
+Real-runtime testing is not required for the declared scope because the branch is contract-only and does not touch runtime/worker/lifecycle/native execution behavior.
+
+---
+
+## 8. Artifact/package verification
+
+Candidate package:
+
+```text
+runtime-capability-result-event-envelope-integration-v1-candidate.zip
+```
+
+Candidate SHA-256:
+
+```text
+f47fd4358bf80082f02b4092dec2600da0fede074805b09b6f17545b33920a4d
+```
+
+Artifact guard passed on the staged tree against the source mirror:
+
+```text
+source file count: 187
+candidate file count: 191
+new file count: 4
+changed file count: 5
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Candidate-only files:
+
+```text
+docs/dev-notes.51
+runtime/bus/executeAction/capabilityBusExecuteActionOutcome.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOutcomeCommon.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+```
+
+Changed files:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/dev-notes.50
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+```
+
+---
+
+## 9. GitHub branch verification
+
+Direct GitHub branch inspection passed on:
+
+```text
+runtime-capability-result-event-envelope-integration-v1
+```
+
+Latest relevant branch commits observed during inspection:
+
+```text
+072c112 — Add files via upload
+f5d855b — Add files via upload
+4b638dc — Update dev-notes.50
+```
+
+Expected branch content confirmed:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionOutcomeCommon.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionOutcome.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+docs/dev-notes.51
+docs/dev-notes.50
+README.md
+docs/README.md
+docs/current-architecture.md
+```
+
+Direct GitHub branch inspection confirmed these branch-shape details:
+
+```text
+README fast-check list includes node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+docs/dev-notes.51 exists as 317 lines / 247 loc / 11.6 KB
+capabilityBusExecuteActionOutcome.mjs exists as 888 lines / 791 loc / 34.8 KB
+smokeTestCapabilityExecuteActionOutcome.mjs exists as 653 lines / 589 loc / 23.7 KB
+capabilityBusExecuteActionContract.mjs re-exports the outcome constants/helpers/creators
+docs/dev-notes.50 Section 10 fence is closed before the final risk sentence
+```
+
+Direct GitHub `main` inspection remains a post-merge gate.
+
+---
+
+## 10. Explicitly not included
+
+This branch does not include:
+
+```text
+runtime.mjs public API changes
+real executeAction() behavior
+service invocation behavior
+backend adapter execution behavior
+nativeWorkerBackend execution behavior
+workerBridge changes
+llama_worker changes
+scheduler/request/stream changes
+lifecycle/init/reset/shutdown changes
+runtime request settlement changes
+model loading changes
+configOverride expansion
+request-time raw model paths
+prompt/output semantic changes
+vision/multimodal execution
+memory/storage backend implementation
+Cognitive Graph Runtime implementation
+cleanup or optimization work
+resultEnvelope schema redesign
+actionEvent schema redesign
+```
+
+---
+
+## 11. Caveats / next gates
+
+No source/code caveats are known for the declared contract-only outcome scope after assistant sandbox checks, package verification, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection.
+
+Completed gates:
+
+```text
+assistant sandbox syntax checks
+targeted execute-action outcome smoke
+existing execute-action/orchestration smokes
+existing contract-chain smokes
+fixture helper check
+worker import-cycle check
+public-entrypoint guard
+artifact/package guard
+package extraction/recheck
+Michael local Windows/MINGW64 candidate checks
+direct GitHub branch inspection
+docs/dev-notes.50 Section 10 fence correction confirmed on branch
+```
+
+Remaining post-merge gate:
+
+```text
+direct GitHub main inspection after merge
+post-merge status refresh if merged
+```
+
+The main risk to keep watching in the next behavior-wiring branch is accidental promotion from result/event contracts into runtime settlement or backend execution. The smallest safe guard remains the explicit non-executable boundary plus source guards proving no runtime/worker/native imports.
+
+---
+
+## 12. Recommended next step
+
+If Michael accepts the branch candidate, merge to `main`, then direct-check GitHub `main` for:
+
+```text
+expected outcome files
+barrel re-exports
+docs propagation
+README fast-check propagation
+docs/dev-notes.50 fence correction
+docs/dev-notes.51 final status wording
+no accidental runtime/worker/lifecycle/native execution changes
+```
+
+After post-merge `main` inspection, update the status line to merged/main-inspected wording if needed.

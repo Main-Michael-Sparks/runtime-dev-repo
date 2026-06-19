@@ -89,6 +89,7 @@ node ./tests/smokeTestCapabilityExecutorContract.mjs
 node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
 node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
 node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 ```
