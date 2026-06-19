@@ -37,3 +37,31 @@ export {
     normalizeCapabilityBusExecuteActionOrchestrationDescriptor,
     validateCapabilityBusExecuteActionOrchestrationDescriptor
 } from "./capabilityBusExecuteActionOrchestration.mjs";
+
+export {
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_BOUNDARY,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_CONTRACT_VERSION,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_EXECUTABLE,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_NATIVE_EXECUTION,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_SETTLEMENT,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_RUNTIME_WIRING,
+    CAPABILITY_BUS_EXECUTE_ACTION_OUTCOME_STATUS,
+    copyCapabilityBusExecuteActionOutcomeDescriptor,
+    copyCapabilityBusExecuteActionOutcomeValue,
+    prefixCapabilityBusExecuteActionOutcomeValidationErrors
+} from "./capabilityBusExecuteActionOutcomeCommon.mjs";
+
+export {
+    assertCapabilityBusExecuteActionOutcomeDescriptor,
+    createCapabilityBusExecuteActionAcceptedOutcome,
+    createCapabilityBusExecuteActionCancelledOutcome,
+    createCapabilityBusExecuteActionCompletedOutcome,
+    createCapabilityBusExecuteActionFailedOutcome,
+    createCapabilityBusExecuteActionPolicyDeniedOutcome,
+    createCapabilityBusExecuteActionStartedOutcome,
+    createCapabilityBusExecuteActionStreamDeltaEvent,
+    createCapabilityBusExecuteActionStreamDeltaOutcome,
+    createCapabilityBusExecuteActionTimeoutOutcome,
+    normalizeCapabilityBusExecuteActionOutcomeDescriptor,
+    validateCapabilityBusExecuteActionOutcomeDescriptor
+} from "./capabilityBusExecuteActionOutcome.mjs";
