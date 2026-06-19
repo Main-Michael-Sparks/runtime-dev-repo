@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-19  
 **Branch:** `runtime-native-worker-backend-execution-integration-v1`  
-**Status:** Repo-verified on `runtime-native-worker-backend-execution-integration-v1` for the declared nativeWorkerBackend execute-action behavior-wiring scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted nativeWorkerBackend execution integration smoke, current contract-chain smokes, broader mock/static lifecycle/worker regression smokes, artifact/package guard, short-root package extraction/recheck, Michael local Windows/MINGW64 targeted real-runtime `executeAction` test, direct GitHub branch commit inspection, and direct GitHub source/file inspection passed. Direct GitHub `main` inspection remains a post-merge gate.
+**Status:** Merged to `main` and main-inspected for the declared nativeWorkerBackend execute-action behavior-wiring scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted nativeWorkerBackend execution integration smoke, current contract-chain smokes, broader mock/static lifecycle/worker regression smokes, artifact/package guard, short-root package extraction/recheck, Michael local Windows/MINGW64 targeted real-runtime `executeAction` test, direct GitHub branch commit inspection, direct GitHub branch source/file inspection, and direct GitHub `main` source/commit inspection passed.
 
 ---
 
@@ -42,15 +42,17 @@ runtime/backends/nativeWorker/
 
 ## 2. Source-truth notes
 
-Source truth for this branch is GitHub branch:
+Source truth after merge is GitHub `main`.
+
+The implementation was prepared on branch:
 
 ```text
 runtime-native-worker-backend-execution-integration-v1
 ```
 
-The branch was prepared from the uploaded `main` mirror and reviewed against GitHub branch content after upload.
+The branch was prepared from the uploaded `main` mirror, reviewed against GitHub branch content after upload, then merged to `main`.
 
-Direct GitHub branch evidence showed:
+Direct GitHub branch evidence showed before merge:
 
 ```text
 3 commits
@@ -72,6 +74,18 @@ Direct commit inspection showed:
 9223a3a: 4 files changed
 72661fc: 4 files changed
 ```
+
+Post-merge `main` history showed:
+
+```text
+ee2c2d5 — Merge pull request #31 from Main-Michael-Sparks/runtime-native-worker-backend-execution-integration-v1
+c069d29 — Add files via upload / Dev-doc update
+72661fc — Add files via upload
+9223a3a — Add files via upload
+625d6d7 — Add files via upload
+```
+
+Post-merge `main` source inspection confirmed the expected current source shape, public `executeAction` export, execute-action behavior seam, executable nativeWorkerBackend adapter seam, and unchanged parent/runtime plus worker/native boundary language in the current README.
 
 Known caveat: raw GitHub retrieval can display source as line-collapsed. Treat that as a retrieval/display artifact unless a GitHub file page or local clone confirms actual formatting damage. The short-root ZIP package extracted locally with normal file formatting.
 
@@ -504,7 +518,7 @@ Direct branch inspection passed on:
 runtime-native-worker-backend-execution-integration-v1
 ```
 
-Direct GitHub compare view reported:
+Direct GitHub compare view reported before merge:
 
 ```text
 3 commits
@@ -544,7 +558,7 @@ Direct commit inspection confirmed the expected file groups:
   docs/feature-readiness.md
 ```
 
-Direct source/file inspection confirmed:
+Direct branch source/file inspection confirmed:
 
 ```text
 runtime.mjs exports narrow executeAction(orchestrationDescriptor, options = {})
@@ -554,7 +568,18 @@ nativeWorkerBackendExecution.mjs validates nativeWorkerBackend/text.generate rou
 nativeWorkerBackendExecution.mjs raw source contained no workerBridge text
 ```
 
-Direct post-merge `main` inspection remains a post-merge gate.
+Direct post-merge `main` inspection passed. `main` history showed merge commit `ee2c2d5` for pull request #31 from `runtime-native-worker-backend-execution-integration-v1`, with the branch/source update commits visible in the current main history.
+
+Direct post-merge `main` source inspection confirmed:
+
+```text
+README.md lists runtime/bus as action/result/event/context contracts plus the first execute-action behavior seam
+README.md lists runtime/backends as backend adapter contracts plus executable nativeWorker adapter seam
+README.md lists public runtime exports including executeAction
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs is present on main
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs is present on main
+docs/dev-notes.52 is present on main
+```
 
 ---
 
@@ -564,19 +589,19 @@ Finding: public API changed.
 Affected surface: `runtime.mjs`, public-entrypoint guard.  
 Why it matters: prior contract-only branches intentionally rejected `executeAction` exposure. This branch intentionally adds only narrow `executeAction(orchestrationDescriptor)`.  
 Smallest safe correction: keep the input limited to accepted orchestration descriptors and defer raw action-envelope dispatch.  
-What still needs verification: direct post-merge `main` inspection after merge.
+What still needs verification: no additional verification remains for the declared branch scope after direct post-merge `main` inspection; broader executeAction cancellation/event/timeout expansion remains future work.
 
 Finding: fixture manifest grew from runtime reachability.  
 Affected surface: fixture-copy tests.  
 Why it matters: `runtime.mjs` now imports the execute-action seam, which makes contract modules reachable in runtime fixtures.  
 Smallest safe correction: update `tests/helpers/runtimeFixtureFiles.mjs`; `checkRuntimeFixtureCoverage.mjs` passed with 85 files.  
-What still needs verification: direct post-merge `main` inspection after merge.
+What still needs verification: no additional verification remains for the declared branch scope after direct post-merge `main` inspection; broader executeAction cancellation/event/timeout expansion remains future work.
 
 Finding: real-runtime evidence is targeted rather than exhaustive.  
 Affected surface: native/model behavior.  
 Why it matters: the local real-runtime smoke proves the new execute-action seam reaches the native model path for `text.generate`, but it is not a full stress/regression campaign across reset/shutdown/cancellation permutations.  
 Smallest safe correction: treat the completed `REAL_RUNTIME=1` smoke as the required branch real-runtime gate for this declared scope, and leave broader executeAction cancellation/event/timeout expansion to future branches.  
-What still needs verification: direct post-merge `main` inspection after merge.
+What still needs verification: broader executeAction reset/shutdown/cancellation stress coverage remains future work, not a blocker for this declared targeted scope.
 
 ---
 
@@ -641,20 +666,21 @@ artifact/package guard passed
 short-root package extraction/recheck passed
 Michael local Windows/MINGW64 targeted real-runtime executeAction smoke passed
 Direct GitHub branch commit inspection passed
-Direct GitHub source/file inspection passed
+Direct GitHub branch source/file inspection passed
+Direct GitHub main source/commit inspection passed
+post-merge dev-notes status refresh prepared
 ```
 
 Incomplete gates:
 
 ```text
-Direct GitHub main inspection after merge
-post-merge dev-notes status refresh, if Michael wants final merged wording
-next-session checkpoint/bootstrap after merge or branch decision
+none for the declared branch scope
+next-session checkpoint/bootstrap remains recommended before starting the next branch
 ```
 
 Recommended next action:
 
 ```text
-Merge to main if Michael accepts the declared targeted real-runtime scope.
-After merge, direct-check GitHub main and refresh this status line to merged/main-inspected wording.
+Use this post-merge version as the final docs/dev-notes.52 wording.
+Create checkpoint/bootstrap notes for the next session before starting the next branch.
 ```
