@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-18  
 **Branch:** `runtime-capability-execute-action-orchestration-v1`  
-**Status:** Repo-verified on `runtime-capability-execute-action-orchestration-v1` for the declared contract/composition-only scope; assistant sandbox syntax checks, targeted execute-action orchestration smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, and direct GitHub branch inspection passed. Direct GitHub `main` inspection and post-merge status refresh remain future gates. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
+**Status:** Merged to `main` and main-inspected for the declared contract/composition-only scope; assistant sandbox syntax checks, targeted execute-action orchestration smoke, existing contract-chain smokes, fixture helper check, worker import-cycle check, public-entrypoint guard, artifact/package guard, package extraction/recheck, Michael local Windows/MINGW64 candidate checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime test is required for the declared scope because this branch does not touch runtime/worker/lifecycle/native execution surfaces.
 
 ---
 
