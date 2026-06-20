@@ -14,6 +14,11 @@ import {
 import {
     NATIVE_WORKER_BACKEND_KIND
 } from "../../backends/nativeWorker/nativeWorkerBackendAdapterDefinition.mjs";
+import {
+    bindActionRequest,
+    releaseActionRequest,
+    reserveActionRequest
+} from "./actionRequestRegistry.mjs";
 
 function createUnsupportedExecutionError(message, details = {}) {
     const err = new Error(message);
@@ -62,6 +67,20 @@ function getInvocation(orchestrationDescriptor) {
     return orchestrationDescriptor.backendAdapterInvocationDescriptor.invocation;
 }
 
+function createRegistryActionMetadata(orchestration, invocation) {
+    return {
+        actionId: invocation.actionId,
+        ...(invocation.runId === undefined ? {} : { runId: invocation.runId }),
+        capability: invocation.capability,
+        backend: {
+            kind: invocation.backendKind,
+            adapterId: invocation.adapterId,
+            ...(invocation.modelBundleId === undefined ? {} : { modelBundleId: invocation.modelBundleId }),
+            ...(invocation.hardwareProfileId === undefined ? {} : { hardwareProfileId: invocation.hardwareProfileId })
+        }
+    };
+}
+
 function selectExecutableAdapter(invocation) {
     if (invocation.backendKind === NATIVE_WORKER_BACKEND_KIND) {
         return runNativeWorkerAction;
@@ -83,6 +102,14 @@ function createTrace(startedAt, finishedAt) {
         finishedAt,
         durationMs: Math.max(0, finishedAt - startedAt)
     };
+}
+
+function bindDoneRelease(donePromise, registry, actionId) {
+    if (!registry) return donePromise;
+
+    return donePromise.finally(() => {
+        releaseActionRequest(registry, actionId);
+    });
 }
 
 function mapDoneToOutcome(orchestration, startedAt, donePromise) {
@@ -135,13 +162,44 @@ export async function runExecuteAction(orchestrationDescriptor, deps = {}, optio
     const orchestration = assertCapabilityBusExecuteActionOrchestrationDescriptor(orchestrationDescriptor);
     const invocation = getInvocation(orchestration);
     const adapter = selectExecutableAdapter(invocation);
+    const actionRequests = deps.actionRequests ?? null;
     const startedAt = Date.now();
-    const backendHandle = await adapter(orchestration, deps, options);
+
+    if (actionRequests) {
+        reserveActionRequest(actionRequests, createRegistryActionMetadata(orchestration, invocation));
+    }
+
+    let backendHandle;
+
+    try {
+        backendHandle = await adapter(orchestration, deps, options);
+
+        if (actionRequests) {
+            bindActionRequest(
+                actionRequests,
+                invocation.actionId,
+                backendHandle.requestId,
+                backendHandle
+            );
+        }
+    } catch (err) {
+        if (actionRequests) {
+            releaseActionRequest(actionRequests, invocation.actionId);
+        }
+
+        throw err;
+    }
+
     const startedOutcome = createCapabilityBusExecuteActionStartedOutcome(orchestration, {
         trace: {
             startedAt
         }
     });
+    const done = bindDoneRelease(
+        mapDoneToOutcome(orchestration, startedAt, backendHandle.done),
+        actionRequests,
+        invocation.actionId
+    );
 
     return {
         actionId: backendHandle.actionId,
@@ -151,6 +209,6 @@ export async function runExecuteAction(orchestrationDescriptor, deps = {}, optio
         backend: backendHandle.backend,
         stream: backendHandle.stream,
         startedOutcome,
-        done: mapDoneToOutcome(orchestration, startedAt, backendHandle.done)
+        done
     };
 }
