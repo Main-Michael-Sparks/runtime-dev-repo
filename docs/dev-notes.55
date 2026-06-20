@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20  
 **Branch:** `runtime-action-event-subscription-v1`  
-**Status:** Final staged candidate from the included GitHub `main` repo ZIP mirror; assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-event subscription smoke, execute-action/cancel-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime execute-action/cancel-action checks passed. Direct GitHub branch verification remains a post-upload gate.
+**Status:** Merged to `main` and main-inspected for the declared live in-process action-event subscription scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-event subscription smoke, execute-action/cancel-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed.
 
 ---
 
@@ -144,6 +144,8 @@ terminal outcome.actionEvent from completed / failed / cancelled / timeout mappi
 
 Adapter/backend handle creation failures before `startedOutcome` creation do not publish a misleading started event in v1.
 
+Publication errors are isolated from execute-action behavior. A subscriber/listener failure or publisher exception must not convert an otherwise valid action execution into a failed outcome.
+
 ---
 
 ## 6. Boundaries preserved
@@ -171,6 +173,19 @@ llama_worker
 node-llama-cpp
 scheduler/request/stream/lifecycle/backends
 executeAction execution modules
+```
+
+The branch does not change:
+
+```text
+worker protocol
+scheduler behavior
+request settlement ordering
+stream shaping
+cancelAction/cancelPrompt behavior
+nativeWorkerBackend execution behavior
+model path / model identity behavior
+config override surface
 ```
 
 ---
@@ -266,9 +281,23 @@ ExperimentalWarning: Importing JSON modules is an experimental feature and might
 
 Because this branch is parent-side/control-surface publication only and does not touch worker, scheduler, lifecycle, request settlement, or stream shaping internals, these existing real-runtime execute-action/cancel-action checks cover the native/model regression gate for the declared scope.
 
+No additional real-runtime retest was required after merge because `main` was inspected for the declared branch scope and the local real-runtime checks passed on the uploaded candidate package.
+
 ---
 
-## 9. Artifact / GitHub verification status
+## 9. Artifact/package verification
+
+Final candidate package after real-runtime dev-note refresh:
+
+```text
+runtime-action-event-subscription-v1-candidate-final.zip
+```
+
+Final candidate SHA-256:
+
+```text
+f750c83cb83554a44014c230f36dcc207fc30de99c8f24e3713d449320fdd3bb
+```
 
 Assistant sandbox status:
 
@@ -286,15 +315,69 @@ Michael local status:
 real-runtime-tested
 ```
 
-Incomplete gates before merge-ready wording:
+Package checks passed:
 
 ```text
-GitHub branch upload and direct branch inspection
+ZIP integrity passed
+candidate extraction/recheck passed
+artifact_guard.py passed
 ```
 
 ---
 
-## 10. Future work not included
+## 10. GitHub verification
+
+Branch verified:
+
+```text
+runtime-action-event-subscription-v1
+```
+
+Branch compare reported:
+
+```text
+3 commits
+11 files changed
+```
+
+Latest branch upload commits observed:
+
+```text
+c7dfad2 — Add files via upload
+1ff2a78 — Add files via upload
+23149f1 — Add files via upload
+```
+
+After merge, `main` was inspected directly for the declared branch scope.
+
+`main` merge commit observed:
+
+```text
+68c73f5 — Merge pull request #33 from Main-Michael-Sparks/runtime-action-event-subscription-v1
+```
+
+Direct branch/main inspection confirmed:
+
+```text
+runtime.mjs wires createActionEventSubscriptionRegistry / publishActionEvent / subscribeActionEvents
+runtime.mjs preserves executeAction, cancelAction, and cancelPrompt surfaces
+runtime/bus/actionEventSubscriptionRegistry.mjs is present
+capabilityBusExecuteActionExecution.mjs publishes started and terminal outcome events through the injected publisher
+tests/smokeTestRuntimePublicEntrypointContract.mjs checks subscribeActionEvents public markers
+tests/helpers/runtimeFixtureFiles.mjs includes the new registry module
+docs/README.md, docs/current-architecture.md, docs/feature-readiness.md, and README.md include the event-subscription update
+```
+
+Known retrieval caveat:
+
+```text
+Some GitHub raw/file retrieval paths may display line-collapsed source or stale snippets.
+Use cache-busted direct source/file inspection and the included repo ZIP mirror when a retrieval path appears inconsistent with recently merged source.
+```
+
+---
+
+## 11. Future work not included
 
 Not included:
 
@@ -311,3 +394,17 @@ embedding/rerank/retrieval execution
 tool execution
 Cognitive Graph Runtime implementation
 ```
+
+---
+
+## 12. Recommended next step
+
+Use GitHub `main` as source truth for the next branch.
+
+Recommended next planning direction:
+
+```text
+preflight -> sandbox plan/spec -> next narrow Runtime Dev substrate branch
+```
+
+Do not start memory/storage backend implementation, stream-delta replay, event persistence, graph runtime implementation, tool execution, embedding/rerank/retrieval execution, or vision/multimodal execution unless Michael explicitly redirects after preflight and plan/spec review.
