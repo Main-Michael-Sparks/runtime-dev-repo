@@ -36,7 +36,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam and a narrow action/request registry. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` tracks active `actionId -> requestId` mappings so public `cancelAction(actionId)` can delegate to the existing `cancelPrompt(requestId)` path. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -53,6 +53,7 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 `runtime.mjs` currently exports exactly:
 
 ```text
+cancelAction
 cancelPrompt
 executeAction
 initModel
@@ -93,6 +94,7 @@ node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
 node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
 node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 ```

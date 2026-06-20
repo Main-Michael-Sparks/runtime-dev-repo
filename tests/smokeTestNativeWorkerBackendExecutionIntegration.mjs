@@ -428,7 +428,8 @@ async function assertSourceGuards() {
     assert(runtimeSource.includes("async function runNativeTextRequest"), "runtime.mjs should define runNativeTextRequest");
     assert(runtimeSource.includes("return runNativeTextRequest(text, options);"), "prompt should delegate to runNativeTextRequest");
     assert(runtimeSource.includes("export async function executeAction"), "runtime.mjs should expose executeAction");
-    assert(runtimeSource.includes("runExecuteActionDispatch(actionInput, {\n        runNativeTextRequest\n    }, options)"), "executeAction should inject runNativeTextRequest through dispatch explicitly");
+    assert(runtimeSource.includes("runExecuteActionDispatch(actionInput"), "executeAction should route through dispatch explicitly");
+    assert(runtimeSource.includes("runNativeTextRequest,\n        actionRequests"), "executeAction should inject runNativeTextRequest and actionRequests through dispatch explicitly");
     ok("source guards for modular import direction passed");
 }
 

@@ -47,9 +47,14 @@ import { createScheduler } from "./runtime/request/scheduler.mjs";
 import {
     runExecuteActionDispatch
 } from "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs";
+import {
+    cancelActionRequest,
+    createActionRequestRegistry
+} from "./runtime/bus/executeAction/actionRequestRegistry.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
+const actionRequests = createActionRequestRegistry();
 
 const scheduler = createScheduler({
     maxInFlight: config.runtime.maxInFlight,
@@ -149,8 +154,15 @@ export async function prompt(text, options = {}) {
 
 export async function executeAction(actionInput, options = {}) {
     return runExecuteActionDispatch(actionInput, {
-        runNativeTextRequest
+        runNativeTextRequest,
+        actionRequests
     }, options);
+}
+
+export function cancelAction(actionId) {
+    return cancelActionRequest(actionRequests, actionId, cancelPrompt, {
+        reason: "Action canceled"
+    });
 }
 
 export function cancelPrompt(promptId) {

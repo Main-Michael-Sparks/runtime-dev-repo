@@ -144,6 +144,7 @@ async function main() {
     const workerBridgeSource = await readText(workerBridgePath);
 
     const expectedExports = [
+        "cancelAction",
         "cancelPrompt",
         "executeAction",
         "initModel",
@@ -177,7 +178,8 @@ async function main() {
         "./runtime/stream/streamController.mjs",
         "./workerBridge.mjs",
         "./runtime/request/scheduler.mjs",
-        "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs"
+        "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs",
+        "./runtime/bus/executeAction/actionRequestRegistry.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -201,6 +203,7 @@ async function main() {
         "export async function initModel",
         "export async function prompt",
         "export async function executeAction",
+        "export function cancelAction",
         "export function cancelPrompt",
         "export async function resetSession",
         "export async function resetModel",
@@ -232,13 +235,25 @@ async function main() {
     const executeActionMarkers = [
         "export async function executeAction(actionInput, options = {})",
         "runExecuteActionDispatch(actionInput",
-        "runNativeTextRequest"
+        "runNativeTextRequest",
+        "actionRequests"
     ];
 
     for (const marker of executeActionMarkers) {
         assertIncludes(runtimeSource, marker, "runtime.mjs executeAction injection path");
     }
     ok("runtime.mjs executeAction public-dispatch dependency-injection markers remain present");
+
+    const cancelActionMarkers = [
+        "export function cancelAction(actionId)",
+        "cancelActionRequest(actionRequests, actionId, cancelPrompt",
+        `reason: "Action canceled"`
+    ];
+
+    for (const marker of cancelActionMarkers) {
+        assertIncludes(runtimeSource, marker, "runtime.mjs cancelAction wrapper");
+    }
+    ok("runtime.mjs cancelAction wrapper markers remain present");
 
     const fastCancelMarkers = [
         "export function cancelPrompt",

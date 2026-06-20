@@ -61,6 +61,7 @@ export const RUNTIME_FIXTURE_FILES = [
     "runtime/bus/capabilityTaxonomy.mjs",
     "runtime/bus/contextRefs.mjs",
     "runtime/bus/contractValidation.mjs",
+    "runtime/bus/executeAction/actionRequestRegistry.mjs",
     "runtime/bus/executeAction/capabilityBusExecuteActionCommon.mjs",
     "runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs",
     "runtime/bus/executeAction/defaultExecuteActionRegistries.mjs",
