@@ -1,0 +1,434 @@
+# Dev Notes 56 — Runtime Action Event History Contract v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-action-event-storage-v1`  
+**Status:** Repo-inspected on `runtime-action-event-storage-v1` for the declared bounded in-memory action-event history/readback scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event history smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend checks, and direct GitHub branch inspection passed. This corrected document updates the branch identity from the staging package name to the actual uploaded GitHub branch name.
+
+---
+
+## 1. Purpose
+
+This branch adds the first narrow history/readback seam for execute-action events.
+
+It preserves the previous live event-subscription surface while adding:
+
+```js
+readActionEvents(filter = {}, options = {})
+```
+
+The new surface is intentionally bounded in-memory history/readback only. It does not add durable persistence, callback replay, cross-process pub/sub, stream-delta materialization, `eventLogStoreBackend`, graph runtime behavior, scheduler/request/lifecycle changes, worker changes, or native backend execution changes.
+
+---
+
+## 2. Implementation summary
+
+Added:
+
+```text
+runtime/bus/actionEventHistory.mjs
+tests/smokeTestActionEventHistory.mjs
+docs/dev-notes.56
+```
+
+Modified:
+
+```text
+runtime.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestActionEventSubscription.mjs
+tests/smokeTestModelBundleRegistryContract.mjs
+tests/smokeTestHardwareProfileRegistryContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+Explicitly not modified:
+
+```text
+workerBridge.mjs
+llama_worker/**
+runtime/request/**
+runtime/stream/**
+runtime/lifecycle/**
+runtime/config/**
+runtime/backends/nativeWorker/**
+runtime/bus/executeAction/**
+```
+
+---
+
+## 3. Modular ownership
+
+The event surfaces now remain split by responsibility:
+
+```text
+runtime/bus/actionEvent.mjs
+  validation and normalization only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registration, filtering, unsubscribe, and publication only
+
+runtime/bus/actionEventHistory.mjs
+  bounded in-memory history, retention, sequence assignment, and read/query only
+
+runtime.mjs
+  composition root; wires record -> live publish and exposes readActionEvents(...)
+```
+
+No broad event manager was introduced.
+
+`actionEventHistory.mjs` does not import the subscription registry, `runtime.mjs`, worker bridge, worker modules, request modules, stream modules, lifecycle modules, or backend/native execution modules.
+
+---
+
+## 4. Public behavior
+
+`runtime.mjs` now exports:
+
+```text
+cancelAction
+cancelPrompt
+executeAction
+initModel
+prompt
+readActionEvents
+resetModel
+resetSession
+shutdownRuntime
+subscribeActionEvents
+```
+
+`readActionEvents(filter, options)` returns:
+
+```js
+{
+    events: [],
+    cursor: {
+        lastSequence: null
+    },
+    truncated: false
+}
+```
+
+Supported history filters:
+
+```text
+actionId
+runId
+type
+capability
+sinceTimestamp
+untilTimestamp
+afterSequence
+```
+
+Supported read options:
+
+```text
+limit
+```
+
+History behavior:
+
+```text
+bounded total in-memory retention, default maxEvents: 1000
+record before live publication
+monotonic sequence assigned at record time
+events returned in sequence order
+defensive frozen copies returned from reads
+duplicate retained eventId values rejected
+older evicted eventIds may be reused after leaving the retained window
+```
+
+---
+
+## 5. What is still not included
+
+This branch does not add:
+
+```text
+durable event persistence
+eventLogStoreBackend
+callback replay API
+cross-process pub/sub
+action.stream.delta materialization
+stream-delta storage
+Cognitive Graph Runtime
+graph scheduler/run state/node contracts
+memory/storage backends
+embedding/rerank/retrieval capability execution
+vision/multimodal capability execution
+tool execution
+per-action timeout scheduling
+backend lane scheduling
+worker/native execution changes
+scheduler/request/lifecycle/stream changes
+```
+
+Docs intentionally use “bounded in-memory history/readback,” not durable storage.
+
+---
+
+## 6. Propagation review
+
+Updated public/export propagation:
+
+```text
+runtime.mjs public export set includes readActionEvents
+tests/smokeTestRuntimePublicEntrypointContract.mjs public API guard updated
+README.md public API and action-event section updated
+docs/current-architecture.md public entrypoint/layout/responsibility map updated
+docs/feature-readiness.md future branch list updated away from first storage plan-spec toward replay/event-log/stream-delta follow-ups
+docs/README.md dev-notes index updated
+tests/helpers/runtimeFixtureFiles.mjs fixture manifest updated with actionEventHistory.mjs
+```
+
+Updated test-source guards:
+
+```text
+tests/smokeTestActionEventSubscription.mjs now expects runtime.mjs to inject publishRuntimeActionEvent rather than the previous direct publication lambda
+tests/smokeTestModelBundleRegistryContract.mjs and tests/smokeTestHardwareProfileRegistryContract.mjs public export expectations now include readActionEvents and subscribeActionEvents
+```
+
+---
+
+## 7. Tests run
+
+Syntax:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Helper/static checks:
+
+```bash
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Targeted/event checks:
+
+```bash
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+```
+
+Execute-action regression checks:
+
+```bash
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Contract/static chain checks:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Result:
+
+```text
+All listed assistant sandbox checks passed after updating expected public-entrypoint guards for the new readActionEvents export and modular publishRuntimeActionEvent wrapper.
+```
+
+Michael local Windows/MINGW64 real-runtime confidence checks:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Result:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+[OK] REAL_RUNTIME executeAction text.generate completed
+
+All three real-runtime confidence checks finished.
+```
+
+Observed non-blocking warnings:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+Real-runtime interpretation:
+
+```text
+This branch is parent-side/bus-level in-memory history over already-published started/terminal action events and does not touch worker, scheduler, lifecycle, stream shaping, request settlement, nativeWorkerBackend execution, model path, config override, or prompt output semantics. The Michael-run real-runtime checks confirm the existing native text.generate execute/cancel path still works through the event-producing execute-action/nativeWorkerBackend surfaces.
+```
+
+---
+
+## 8. Artifact/package verification
+
+Candidate package:
+
+```text
+runtime-action-event-history-contract-v1-candidate.zip
+```
+
+Artifact guard command:
+
+```bash
+python3 artifact_guard.py \
+  --source-root /mnt/data/runtime-action-event-history-contract-v1-candidate \
+  --candidate-root /mnt/data/runtime-action-event-history-contract-v1-package-check/runtime-action-event-history-contract-v1-candidate \
+  --manifest /mnt/data/runtime-action-event-history-contract-v1-artifact-manifest.json \
+  --json /mnt/data/runtime-action-event-history-contract-v1-artifact-guard-report.json \
+  --syntax-timeout 120
+```
+
+Artifact guard result:
+
+```text
+Passed: True
+source_file_count: 208
+candidate_file_count: 208
+syntax_check_count: 147
+changed_file_count: 0
+source_only_file_count: 0
+candidate_only_file_count: 0
+failing_finding_count: 0
+```
+
+Package extraction/recheck passed:
+
+```bash
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+```
+
+---
+
+## 9. GitHub verification
+
+Direct GitHub branch inspection checked:
+
+```text
+runtime-action-event-storage-v1
+```
+
+Confirmed expected branch-scope files/surfaces:
+
+```text
+runtime/bus/actionEventHistory.mjs
+runtime.mjs readActionEvents(...) export and record -> live publish wiring
+tests/smokeTestActionEventHistory.mjs
+docs/dev-notes.56
+README/docs propagation for bounded in-memory history/readback
+```
+
+Finding corrected by this document:
+
+```text
+The uploaded branch contained the expected source scope, but docs/dev-notes.56 still listed the staging/candidate branch name runtime-action-event-history-contract-v1. This corrected dev note uses the actual GitHub branch name runtime-action-event-storage-v1.
+```
+
+---
+
+## 10. Caveats / known risks
+
+### Finding: History is not durable storage
+
+Affected surface:
+
+```text
+README/docs/API wording, future graph expectations, event replay expectations
+```
+
+Why it matters:
+
+```text
+A bounded in-memory event history disappears on process exit and is not a durable event log.
+```
+
+Smallest safe correction:
+
+```text
+Docs call this history/readback only and explicitly defer eventLogStoreBackend.
+```
+
+### Finding: Stream deltas remain excluded
+
+Affected surface:
+
+```text
+runtime/stream, prompt streaming semantics, executeAction future streaming events, real-runtime stream behavior
+```
+
+Why it matters:
+
+```text
+action.stream.delta would touch higher-volume ordering, storage pressure, and stream-shaping policy.
+```
+
+Smallest safe correction:
+
+```text
+Keep stream-delta materialization in a separate future plan/spec branch.
+```
+
+### Finding: Storage failure policy is only safe for in-memory v1
+
+Affected surface:
+
+```text
+executeAction publication path, action-event consistency
+```
+
+Why it matters:
+
+```text
+recordActionEvent currently runs before live publication. For in-memory v1, record failure indicates validation/configuration drift. A future durable backend needs an explicit failure policy.
+```
+
+Smallest safe correction:
+
+```text
+Define durable storage failure policy in eventLogStoreBackend work, not in this branch.
+```
+
+---
+
+## 11. Recommended next work not included
+
+Possible future branches:
+
+```text
+runtime-action-event-replay-contract-v1
+runtime-event-log-store-contract-v1
+runtime-action-stream-delta-events-v1-plan-spec
+```
+
+Do not fold these into this branch unless Michael explicitly expands scope.

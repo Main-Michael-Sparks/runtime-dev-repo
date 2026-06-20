@@ -397,7 +397,7 @@ async function assertSourceBoundaries() {
 
     assert(runtimeSource.includes("const actionEvents = createActionEventSubscriptionRegistry();"), "runtime.mjs should own action event registry composition");
     assert(runtimeSource.includes("export function subscribeActionEvents"), "runtime.mjs should expose subscribeActionEvents wrapper");
-    assert(runtimeSource.includes("publishActionEvent: (event) => publishActionEvent(actionEvents, event)"), "runtime.mjs should inject action event publisher into executeAction dispatch");
+    assert(runtimeSource.includes("publishActionEvent: publishRuntimeActionEvent"), "runtime.mjs should inject action event publisher into executeAction dispatch");
 
     for (const marker of [
         "runtime.mjs",

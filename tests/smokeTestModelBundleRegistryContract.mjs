@@ -391,9 +391,11 @@ async function testSourceShape() {
             "executeAction",
             "initModel",
             "prompt",
+            "readActionEvents",
             "resetModel",
             "resetSession",
-            "shutdownRuntime"
+            "shutdownRuntime",
+            "subscribeActionEvents"
         ].sort()),
         `runtime.mjs exports changed unexpectedly: ${JSON.stringify(runtimeExports)}`
     );
