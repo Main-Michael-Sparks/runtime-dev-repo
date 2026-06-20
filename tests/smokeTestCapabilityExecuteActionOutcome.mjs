@@ -624,7 +624,7 @@ async function assertOutcomeModuleBoundaries() {
 
     const runtimeSource = await readSource("runtime.mjs");
     assert(runtimeSource.includes("export async function executeAction"), "runtime.mjs must expose narrow executeAction seam");
-    assert(runtimeSource.includes("runExecuteAction(orchestrationDescriptor"), "runtime.mjs executeAction must call runExecuteAction seam");
+    assert(runtimeSource.includes("runExecuteActionDispatch(actionInput"), "runtime.mjs executeAction must call public dispatch seam");
     assert(!runtimeSource.includes("executeActionEnvelope"), "runtime.mjs must not expose raw action-envelope execution in this branch");
 
     ok("execute-action outcome module source guards passed");

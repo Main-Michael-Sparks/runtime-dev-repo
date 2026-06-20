@@ -45,8 +45,8 @@ import {
 } from "./workerBridge.mjs";
 import { createScheduler } from "./runtime/request/scheduler.mjs";
 import {
-    runExecuteAction
-} from "./runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs";
+    runExecuteActionDispatch
+} from "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
@@ -147,8 +147,8 @@ export async function prompt(text, options = {}) {
     return runNativeTextRequest(text, options);
 }
 
-export async function executeAction(orchestrationDescriptor, options = {}) {
-    return runExecuteAction(orchestrationDescriptor, {
+export async function executeAction(actionInput, options = {}) {
+    return runExecuteActionDispatch(actionInput, {
         runNativeTextRequest
     }, options);
 }

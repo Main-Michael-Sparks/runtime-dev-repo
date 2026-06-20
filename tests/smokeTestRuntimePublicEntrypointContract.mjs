@@ -177,7 +177,7 @@ async function main() {
         "./runtime/stream/streamController.mjs",
         "./workerBridge.mjs",
         "./runtime/request/scheduler.mjs",
-        "./runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs"
+        "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -230,15 +230,15 @@ async function main() {
     ok("runtime.mjs prompt admission markers remain present");
 
     const executeActionMarkers = [
-        "export async function executeAction(orchestrationDescriptor, options = {})",
-        "runExecuteAction(orchestrationDescriptor",
+        "export async function executeAction(actionInput, options = {})",
+        "runExecuteActionDispatch(actionInput",
         "runNativeTextRequest"
     ];
 
     for (const marker of executeActionMarkers) {
         assertIncludes(runtimeSource, marker, "runtime.mjs executeAction injection path");
     }
-    ok("runtime.mjs executeAction dependency-injection markers remain present");
+    ok("runtime.mjs executeAction public-dispatch dependency-injection markers remain present");
 
     const fastCancelMarkers = [
         "export function cancelPrompt",

@@ -36,7 +36,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` remains mostly contract-oriented, but `runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs` now provides the first narrow execute-action behavior seam. That seam starts from an accepted execute-action orchestration descriptor, dispatches to the executable `nativeWorkerBackend` adapter, and maps real completion/failure/cancellation into result/event outcome descriptors. It still does not accept raw action envelopes, own scheduler state, import `workerBridge`, import `llama_worker`, or implement broad service/router execution.
+`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -92,6 +92,7 @@ node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
 node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
 node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
 node ./tests/smokeTestModelBundleRegistryContract.mjs
 node ./tests/smokeTestHardwareProfileRegistryContract.mjs
 ```
