@@ -148,6 +148,7 @@ async function main() {
         "cancelPrompt",
         "executeAction",
         "initModel",
+        "readActionEvents",
         "subscribeActionEvents",
         "prompt",
         "resetModel",
@@ -181,7 +182,8 @@ async function main() {
         "./runtime/request/scheduler.mjs",
         "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs",
         "./runtime/bus/executeAction/actionRequestRegistry.mjs",
-        "./runtime/bus/actionEventSubscriptionRegistry.mjs"
+        "./runtime/bus/actionEventSubscriptionRegistry.mjs",
+        "./runtime/bus/actionEventHistory.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -206,6 +208,7 @@ async function main() {
         "export async function prompt",
         "export async function executeAction",
         "export function subscribeActionEvents",
+        "export function readActionEvents",
         "export function cancelAction",
         "export function cancelPrompt",
         "export async function resetSession",
@@ -248,17 +251,23 @@ async function main() {
     }
     ok("runtime.mjs executeAction public-dispatch dependency-injection markers remain present");
 
-    const subscribeActionEventsMarkers = [
+    const actionEventMarkers = [
         "const actionEvents = createActionEventSubscriptionRegistry();",
+        "const actionEventHistory = createActionEventHistory();",
+        "function publishRuntimeActionEvent(event)",
+        "recordActionEvent(actionEventHistory, event)",
+        "publishActionEvent(actionEvents, recordedEvent)",
+        "publishActionEvent: publishRuntimeActionEvent",
         "export function subscribeActionEvents(filterOrListener, listener)",
         "subscribeActionEventRegistry(actionEvents, filterOrListener, listener)",
-        "publishActionEvent: (event) => publishActionEvent(actionEvents, event)"
+        "export function readActionEvents(filter = {}, options = {})",
+        "readActionEventHistory(actionEventHistory, filter, options)"
     ];
 
-    for (const marker of subscribeActionEventsMarkers) {
-        assertIncludes(runtimeSource, marker, "runtime.mjs subscribeActionEvents wrapper");
+    for (const marker of actionEventMarkers) {
+        assertIncludes(runtimeSource, marker, "runtime.mjs action event history/subscription wrappers");
     }
-    ok("runtime.mjs subscribeActionEvents wrapper markers remain present");
+    ok("runtime.mjs action event history and subscription wrapper markers remain present");
 
     const cancelActionMarkers = [
         "export function cancelAction(actionId)",

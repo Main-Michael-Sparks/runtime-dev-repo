@@ -56,11 +56,17 @@ import {
     publishActionEvent,
     subscribeActionEvents as subscribeActionEventRegistry
 } from "./runtime/bus/actionEventSubscriptionRegistry.mjs";
+import {
+    createActionEventHistory,
+    readActionEvents as readActionEventHistory,
+    recordActionEvent
+} from "./runtime/bus/actionEventHistory.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
 const actionRequests = createActionRequestRegistry();
 const actionEvents = createActionEventSubscriptionRegistry();
+const actionEventHistory = createActionEventHistory();
 
 const scheduler = createScheduler({
     maxInFlight: config.runtime.maxInFlight,
@@ -158,16 +164,25 @@ export async function prompt(text, options = {}) {
     return runNativeTextRequest(text, options);
 }
 
+function publishRuntimeActionEvent(event) {
+    const recordedEvent = recordActionEvent(actionEventHistory, event);
+    return publishActionEvent(actionEvents, recordedEvent);
+}
+
 export async function executeAction(actionInput, options = {}) {
     return runExecuteActionDispatch(actionInput, {
         runNativeTextRequest,
         actionRequests,
-        publishActionEvent: (event) => publishActionEvent(actionEvents, event)
+        publishActionEvent: publishRuntimeActionEvent
     }, options);
 }
 
 export function subscribeActionEvents(filterOrListener, listener) {
     return subscribeActionEventRegistry(actionEvents, filterOrListener, listener);
+}
+
+export function readActionEvents(filter = {}, options = {}) {
+    return readActionEventHistory(actionEventHistory, filter, options);
 }
 
 export function cancelAction(actionId) {
