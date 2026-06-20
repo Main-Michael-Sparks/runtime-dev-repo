@@ -1,6 +1,6 @@
 # Feature Readiness Notes
 
-Date: 2026-06-09
+Date: 2026-06-20
 
 This document records what the current runtime shape makes easier for future feature branches. It is not a feature implementation document.
 
@@ -22,7 +22,7 @@ explicit non-goals
 
 ## Execute-action / backend execution readiness
 
-`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. Future capability execution branches should preserve this shape:
+`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. `runtime-cancel-action-v1` adds public `cancelAction(actionId)` by mapping active action IDs to existing request IDs and then delegating to `cancelPrompt(requestId)`, without adding a second worker cancellation path. Future capability execution branches should preserve this shape:
 
 ```text
 raw action envelope where supported
@@ -30,6 +30,9 @@ raw action envelope where supported
   -> execute-action behavior seam
   -> selected executable backend adapter
   -> shared parent-owned runtime substrate where applicable
+cancelAction(actionId)
+  -> actionId/requestId registry
+  -> existing cancelPrompt(requestId) path
 ```
 
 Do not bypass the Capability Bus / Router / Service / backend invocation chain by calling `workerBridge` or `llama_worker` directly from backend adapters. New backends should define explicit adapter execution modules and should receive required runtime substrate functions through dependency injection rather than importing `runtime.mjs`.
@@ -37,7 +40,6 @@ Do not bypass the Capability Bus / Router / Service / backend invocation chain b
 Likely future branches:
 
 ```text
-runtime-cancel-action-v1
 runtime-action-event-subscription-v1
 ```
 
@@ -45,7 +47,6 @@ Questions to resolve before broader execute-action work:
 
 ```text
 additional capability registry defaults beyond text.generate/nativeWorkerBackend
-actionId -> requestId cancellation registry
 action event subscription/storage surface
 per-action timeout scheduling
 stream delta materialization policy

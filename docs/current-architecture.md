@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-19
+Date: 2026-06-20
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -15,6 +15,7 @@ llama_worker/llama.mjs      worker composition root and model/native boundary
 `runtime.mjs` should remain the consumer-facing module. It exports:
 
 ```text
+cancelAction
 cancelPrompt
 executeAction
 initModel
@@ -42,6 +43,7 @@ runtime/bus/
   capabilityBusResult.mjs
   capabilityBusEvents.mjs
   executeAction/
+    actionRequestRegistry.mjs
     capabilityBusExecuteActionCommon.mjs
     capabilityBusExecuteActionPlan.mjs
     capabilityBusExecuteActionResult.mjs
@@ -138,7 +140,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-first, with a narrow public execute-action dispatch composition seam above the existing behavior seam. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, supplies the default registry bundle from `defaultExecuteActionRegistries.mjs`, composes through the accepted descriptor chain, and delegates to `capabilityBusExecuteActionExecution.mjs`. The execution seam still owns only orchestration-descriptor execution and selected backend-adapter dispatch. These modules do not own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` is contract-first, with a narrow public execute-action dispatch composition seam above the existing behavior seam and a small action/request registry for public action cancellation. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, supplies the default registry bundle from `defaultExecuteActionRegistries.mjs`, composes through the accepted descriptor chain, and delegates to `capabilityBusExecuteActionExecution.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` reserves active action IDs before backend request creation, binds accepted actions to request IDs, releases entries when mapped outcomes settle, and lets `cancelAction(actionId)` delegate to the existing `cancelPrompt(requestId)` behavior. The execution seam still owns only orchestration-descriptor execution and selected backend-adapter dispatch. These modules do not own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -157,11 +159,13 @@ request lifecycle ownership
 queue-based concurrency
 prompt admission
 request cancellation/settlement
+actionId-to-requestId cancellation mapping
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
 worker message routing
 executeAction dependency injection through the public raw-envelope dispatch seam into the first nativeWorkerBackend seam
+cancelAction mapping through the execute-action registry into the existing cancelPrompt path
 ```
 
 ## Worker layout

@@ -1,0 +1,480 @@
+# Dev Notes 54 — Runtime Cancel Action v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-cancel-action-v1`  
+**Status:** Assistant-staged candidate from the preflighted downloaded `main` repo ZIP. Sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-cancellation smoke, execute-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, docs propagation review, package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime checks passed. GitHub branch verification remains the only incomplete gate before merge readiness.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow public action-level cancellation surface:
+
+```js
+cancelAction(actionId)
+```
+
+The implementation intentionally preserves the existing request cancellation path:
+
+```text
+cancelAction(actionId)
+  -> actionId/requestId registry lookup
+  -> existing cancelPrompt(requestId)
+  -> existing scheduler/request/worker cancellation path
+  -> existing execute-action cancelled outcome mapping
+```
+
+This is not a scheduler rewrite, lifecycle rewrite, worker protocol change, or second native cancellation path.
+
+---
+
+## 2. Source basis
+
+The staged candidate was built from the preflighted downloaded repo ZIP copy of GitHub `main` after `runtime-execute-action-public-envelope-dispatch-v1`.
+
+The prior branch established public raw action-envelope dispatch for the built-in route:
+
+```text
+text.generate -> nativeWorkerBackend -> native-worker.default
+```
+
+That branch left action-level cancellation as future work while preserving request-level cancellation through:
+
+```text
+cancelPrompt(requestId)
+```
+
+This branch fills that specific control-surface gap.
+
+---
+
+## 3. Implementation summary
+
+### Added
+
+```text
+runtime/bus/executeAction/actionRequestRegistry.mjs
+tests/smokeTestExecuteActionCancellation.mjs
+docs/dev-notes.54
+```
+
+### Modified
+
+```text
+runtime.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestCapabilityBusExecuteActionContract.mjs
+tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+tests/smokeTestModelBundleRegistryContract.mjs
+tests/smokeTestHardwareProfileRegistryContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+### Explicitly not modified
+
+```text
+runtime/request/scheduler.mjs
+runtime/request/request.mjs
+runtime/request/runtimeRequestSettlement.mjs
+runtime/lifecycle/**
+workerBridge.mjs
+llama_worker/**
+runtime/config/**
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs
+```
+
+---
+
+## 4. Public API state
+
+`runtime.mjs` now exports:
+
+```text
+cancelAction
+cancelPrompt
+executeAction
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+```
+
+`cancelAction(actionId)` returns:
+
+```text
+true   active action mapping existed and cancellation was requested through cancelPrompt(requestId)
+false  missing, invalid, unknown, or no-longer-active actionId
+```
+
+Invalid action IDs are intentionally low-friction and return `false`, matching the boolean style of `cancelPrompt(...)`.
+
+---
+
+## 5. Registry design
+
+New module:
+
+```text
+runtime/bus/executeAction/actionRequestRegistry.mjs
+```
+
+Exports:
+
+```text
+createActionRequestRegistry
+reserveActionRequest
+bindActionRequest
+releaseActionRequest
+cancelActionRequest
+getActionRequest
+```
+
+The registry keeps only active action/request metadata:
+
+```text
+actionId
+runId
+capability
+requestId
+backend
+state
+reservedAt
+boundAt
+```
+
+Supported states are intentionally small:
+
+```text
+reserved
+bound
+```
+
+Completed/cancelled/failed status remains owned by existing execute-action outcome descriptors, not by the registry.
+
+---
+
+## 6. Execution integration
+
+`capabilityBusExecuteActionExecution.mjs` now optionally consumes `deps.actionRequests`.
+
+When a registry is provided, the execution seam does this:
+
+```text
+1. validate orchestration descriptor
+2. select backend adapter
+3. reserve actionId before backend request creation
+4. reject duplicate active actionId before native/backend request creation
+5. call selected backend adapter
+6. bind actionId -> requestId after backend handle creation
+7. map backend done promise to execute-action outcome
+8. release registry entry when the mapped done promise settles
+```
+
+If backend request creation fails after reservation and before binding, the reservation is released and the original adapter error is rethrown.
+
+Duplicate active action IDs reject with:
+
+```text
+message: Active action already registered: <actionId>
+code: duplicate_active_action_id
+kind: validation
+```
+
+---
+
+## 7. Runtime integration
+
+`runtime.mjs` remains the composition root.
+
+It creates one module-scope registry instance:
+
+```js
+const actionRequests = createActionRequestRegistry();
+```
+
+It passes the registry into execute-action dispatch through dependency injection:
+
+```js
+runExecuteActionDispatch(actionInput, {
+    runNativeTextRequest,
+    actionRequests
+}, options);
+```
+
+It exposes `cancelAction(actionId)` as a thin wrapper:
+
+```js
+cancelActionRequest(actionRequests, actionId, cancelPrompt, {
+    reason: "Action canceled"
+});
+```
+
+The wrapper does not send worker messages directly, does not import worker modules, and does not bypass the existing `cancelPrompt(...)` fast path.
+
+---
+
+## 8. Boundary review
+
+Preserved boundaries:
+
+```text
+queue-based concurrency remains parent-side and scheduler-owned
+worker remains the model/native execution boundary
+parent runtime still owns request lifecycle
+parent-side stream shaping unchanged
+config surface unchanged
+prompt/output semantics unchanged except for new public cancellation wrapper
+worker protocol unchanged
+nativeWorkerBackend adapter unchanged
+```
+
+The new registry module does not import:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+scheduler.mjs
+streamController.mjs
+node-llama-cpp
+```
+
+The execute-action execution seam still does not import worker or scheduler internals.
+
+---
+
+## 9. Test coverage added
+
+New targeted smoke:
+
+```bash
+node ./tests/smokeTestExecuteActionCancellation.mjs
+```
+
+Coverage:
+
+```text
+invalid and unknown action IDs return false
+active action binds actionId -> requestId after backend handle creation
+cancelActionRequest delegates to existing request cancellation by requestId
+cancelled backend request maps to cancelled execute-action outcome
+completed action releases the registry entry after outcome settlement
+adapter creation failure releases reserved action
+active duplicate actionId rejects before backend request creation
+accepted orchestration descriptor path still supports registry tracking
+source-boundary guards for registry/runtime/execution/backend modules
+REAL_RUNTIME action cancellation mode is available when REAL_RUNTIME=1
+```
+
+---
+
+## 10. Tests run in assistant sandbox
+
+### Syntax
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Result: passed.
+
+### Helper checks
+
+```bash
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Result: passed.
+
+### Targeted / execute-action checks
+
+```bash
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+```
+
+Result: passed. Real-runtime modes were skipped where applicable because `REAL_RUNTIME=1` is not available in the assistant sandbox.
+
+### Current contract-chain / broader static checks
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Result: passed.
+
+### Broader cancellation/lifecycle mock-static checks
+
+```bash
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+```
+
+Result: passed when run as targeted commands. A first combined broad command timed out while still running the native-operation hard-stop suite due to aggregate runtime/output length, not a surfaced test failure; the affected suite passed when rerun individually.
+
+---
+
+## 11. Michael local Windows/MINGW64 real-runtime status
+
+Michael ran the required real-runtime checks from the extracted candidate package on Windows/MINGW64:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Result: passed.
+
+Key passed markers:
+
+```text
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+All executeAction action-level cancellation smoke tests finished.
+
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+All executeAction public envelope dispatch smoke tests finished.
+
+[OK] REAL_RUNTIME executeAction text.generate completed
+All nativeWorkerBackend execution integration smoke tests finished.
+```
+
+Non-blocking runtime warnings observed:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+Those warnings did not fail the smoke tests and match the known local runtime warning pattern.
+
+---
+
+## 12. Artifact/package status
+
+Candidate package includes the staged repo tree only, without assistant scratch files or test logs.
+
+Package verification completed:
+
+```text
+ZIP integrity test: passed
+candidate extraction/recheck: passed
+artifact guard / package guard: passed
+```
+
+The docs were refreshed after Michael's real-runtime results so `docs/dev-notes.54` no longer lists real-runtime testing as a pending gate.
+
+---
+
+## 13. GitHub verification status
+
+GitHub branch verification has not been performed yet for `runtime-cancel-action-v1`.
+
+Required post-upload checks:
+
+```text
+confirm branch exists at runtime-cancel-action-v1
+inspect runtime.mjs
+inspect runtime/bus/executeAction/actionRequestRegistry.mjs
+inspect runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+inspect tests/smokeTestExecuteActionCancellation.mjs
+inspect docs/dev-notes.54
+check latest commit message(s)
+confirm no unexpected worker/lifecycle/scheduler/config files changed
+```
+
+---
+
+## 14. Caveats and risks
+
+### Finding
+
+GitHub branch verification has not been performed yet for `runtime-cancel-action-v1`.
+
+### Affected surface
+
+```text
+source truth / upload verification / merge readiness
+```
+
+### Why it matters
+
+The assistant sandbox candidate and Michael's local extracted candidate passed the required checks, but merge readiness still requires confirming the uploaded GitHub branch contains the same reviewed source and docs.
+
+### Smallest safe correction
+
+After upload, inspect the branch directly at the expected paths listed in section 13 and confirm the latest commit message(s).
+
+### What still needs verification
+
+```text
+GitHub branch content after upload
+no unexpected worker/lifecycle/scheduler/config file changes on the branch
+```
+
+---
+
+## 15. Future work not included
+
+Intentionally excluded:
+
+```text
+action event subscription surface
+stream delta subscription/event storage
+per-action timeout scheduler
+scheduler lane redesign
+backend-owned scheduling
+workerBridge changes
+llama_worker changes
+worker protocol changes
+configOverride changes
+model path/model identity changes
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+Cognitive Graph Runtime implementation
+cleanup/optimization pass
+```
+
+Likely next execute-action/control-surface branch after this one:
+
+```text
+runtime-action-event-subscription-v1
+```
+
+Only start that after `runtime-cancel-action-v1` is repo-verified, real-runtime-tested or waived, and checkpointed.
