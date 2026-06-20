@@ -279,6 +279,7 @@ function createValidRegistries(overrides = {}) {
 
 async function assertExecuteActionModuleBoundaries() {
     const executeActionFiles = [
+        "runtime/bus/executeAction/actionRequestRegistry.mjs",
         "runtime/bus/executeAction/capabilityBusExecuteActionCommon.mjs",
         "runtime/bus/executeAction/capabilityBusExecuteActionPlan.mjs",
         "runtime/bus/executeAction/capabilityBusExecuteActionResult.mjs",

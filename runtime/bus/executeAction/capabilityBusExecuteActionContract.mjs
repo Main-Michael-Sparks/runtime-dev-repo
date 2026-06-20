@@ -78,3 +78,12 @@ export {
     looksLikeRawActionEnvelope,
     runExecuteActionDispatch
 } from "./capabilityBusExecuteActionDispatch.mjs";
+
+export {
+    bindActionRequest,
+    cancelActionRequest,
+    createActionRequestRegistry,
+    getActionRequest,
+    releaseActionRequest,
+    reserveActionRequest
+} from "./actionRequestRegistry.mjs";

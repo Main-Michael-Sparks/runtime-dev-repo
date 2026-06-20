@@ -439,6 +439,7 @@ async function testSourceShape() {
     const runtimeExports = [...namedBlockExports, ...functionExports].sort();
     assert(
         JSON.stringify(runtimeExports) === JSON.stringify([
+            "cancelAction",
             "cancelPrompt",
             "executeAction",
             "initModel",
