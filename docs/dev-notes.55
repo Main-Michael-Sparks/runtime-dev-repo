@@ -1,0 +1,313 @@
+# Dev Notes 55 — Runtime Action Event Subscription v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-action-event-subscription-v1`  
+**Status:** Final staged candidate from the included GitHub `main` repo ZIP mirror; assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-event subscription smoke, execute-action/cancel-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime execute-action/cancel-action checks passed. Direct GitHub branch verification remains a post-upload gate.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow public live action-event observation surface:
+
+```js
+subscribeActionEvents(filterOrListener, listener)
+```
+
+The branch reuses the existing `actionEvent` and execute-action outcome contracts. It does not create a new event schema.
+
+The v1 surface is in-process only:
+
+```text
+no event storage
+no event replay
+no cross-process pub/sub
+no stream-delta materialization
+no eventLogStoreBackend
+```
+
+---
+
+## 2. Public behavior
+
+`runtime.mjs` now exports:
+
+```text
+cancelAction
+cancelPrompt
+executeAction
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+subscribeActionEvents
+```
+
+Supported subscription forms:
+
+```js
+const unsubscribeAll = subscribeActionEvents((event) => {
+    // all live action events
+});
+
+const unsubscribeAction = subscribeActionEvents({ actionId: "act_123" }, (event) => {
+    // matching actionId only
+});
+
+const unsubscribeRun = subscribeActionEvents({ runId: "run_456" }, listener);
+const unsubscribeType = subscribeActionEvents({ type: "action.completed" }, listener);
+```
+
+The returned unsubscribe function is idempotent:
+
+```text
+true  listener was active and is now removed
+false listener was already removed
+```
+
+---
+
+## 3. Implementation summary
+
+Added:
+
+```text
+runtime/bus/actionEventSubscriptionRegistry.mjs
+tests/smokeTestActionEventSubscription.mjs
+docs/dev-notes.55
+```
+
+Modified:
+
+```text
+runtime.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+---
+
+## 4. Modular ownership
+
+New module:
+
+```text
+runtime/bus/actionEventSubscriptionRegistry.mjs
+```
+
+Responsibilities:
+
+```text
+createActionEventSubscriptionRegistry()
+subscribeActionEvents(registry, filterOrListener, listener)
+publishActionEvent(registry, event, options = {})
+getActionEventSubscriberCount(registry)
+```
+
+The registry owns:
+
+```text
+live listener registration
+actionId / runId / type filtering
+idempotent unsubscribe
+normalized event publication through existing actionEvent validation
+listener-error isolation
+subscriber-list copying during publish
+```
+
+The registry does not retain events after publication.
+
+---
+
+## 5. Execution publication seam
+
+`runtime.mjs` remains the composition root. It creates one event registry and injects a publisher into execute-action dispatch:
+
+```text
+createActionEventSubscriptionRegistry()
+executeAction(...) -> runExecuteActionDispatch(..., { runNativeTextRequest, actionRequests, publishActionEvent })
+subscribeActionEvents(...) -> bus-level subscription registry
+```
+
+`capabilityBusExecuteActionExecution.mjs` publishes existing outcome events only:
+
+```text
+startedOutcome.actionEvent
+terminal outcome.actionEvent from completed / failed / cancelled / timeout mapping
+```
+
+Adapter/backend handle creation failures before `startedOutcome` creation do not publish a misleading started event in v1.
+
+---
+
+## 6. Boundaries preserved
+
+This branch does not modify:
+
+```text
+workerBridge.mjs
+llama_worker/**
+runtime/request/scheduler.mjs
+runtime/request/request.mjs
+runtime/request/runtimeRequestSettlement.mjs
+runtime/lifecycle/**
+runtime/stream/**
+runtime/config/**
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs
+```
+
+The event registry does not import:
+
+```text
+runtime.mjs
+workerBridge
+llama_worker
+node-llama-cpp
+scheduler/request/stream/lifecycle/backends
+executeAction execution modules
+```
+
+---
+
+## 7. Tests run
+
+Syntax:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+```
+
+Helper/tool checks:
+
+```bash
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Targeted and execute-action regression checks:
+
+```bash
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+```
+
+Broader contract/static checks:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+Note: one combined long smoke command hit the assistant tool timeout while running lifecycle/cancellation suites. The remaining suites were rerun in smaller groups and passed.
+
+---
+
+## 8. Real-runtime status
+
+Real-runtime tests were run by Michael locally on Windows/MINGW64 from the candidate package.
+
+Passed:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Observed successful real-runtime outcomes:
+
+```text
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME executeAction text.generate completed
+```
+
+Known non-blocking warnings appeared:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+Because this branch is parent-side/control-surface publication only and does not touch worker, scheduler, lifecycle, request settlement, or stream shaping internals, these existing real-runtime execute-action/cancel-action checks cover the native/model regression gate for the declared scope.
+
+---
+
+## 9. Artifact / GitHub verification status
+
+Assistant sandbox status:
+
+```text
+syntax-checked
+helper-checked
+mock-smoke-tested
+artifact-guarded
+package extraction/recheck passed
+```
+
+Michael local status:
+
+```text
+real-runtime-tested
+```
+
+Incomplete gates before merge-ready wording:
+
+```text
+GitHub branch upload and direct branch inspection
+```
+
+---
+
+## 10. Future work not included
+
+Not included:
+
+```text
+event replay/history
+eventLogStoreBackend
+action event persistence
+stream-delta materialization or subscription replay
+per-action timeout scheduling
+backend lane scheduling
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+Cognitive Graph Runtime implementation
+```

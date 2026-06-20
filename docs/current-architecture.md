@@ -20,6 +20,7 @@ cancelPrompt
 executeAction
 initModel
 prompt
+subscribeActionEvents
 resetModel
 resetSession
 shutdownRuntime
@@ -42,6 +43,7 @@ runtime/bus/
   capabilityBusContract.mjs
   capabilityBusResult.mjs
   capabilityBusEvents.mjs
+  actionEventSubscriptionRegistry.mjs
   executeAction/
     actionRequestRegistry.mjs
     capabilityBusExecuteActionCommon.mjs
@@ -140,7 +142,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-first, with a narrow public execute-action dispatch composition seam above the existing behavior seam and a small action/request registry for public action cancellation. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, supplies the default registry bundle from `defaultExecuteActionRegistries.mjs`, composes through the accepted descriptor chain, and delegates to `capabilityBusExecuteActionExecution.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` reserves active action IDs before backend request creation, binds accepted actions to request IDs, releases entries when mapped outcomes settle, and lets `cancelAction(actionId)` delegate to the existing `cancelPrompt(requestId)` behavior. The execution seam still owns only orchestration-descriptor execution and selected backend-adapter dispatch. These modules do not own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` is contract-first, with a narrow public execute-action dispatch composition seam above the existing behavior seam, a small action/request registry for public action cancellation, and a live action-event subscription registry for in-process observation. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, supplies the default registry bundle from `defaultExecuteActionRegistries.mjs`, composes through the accepted descriptor chain, and delegates to `capabilityBusExecuteActionExecution.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` reserves active action IDs before backend request creation, binds accepted actions to request IDs, releases entries when mapped outcomes settle, and lets `cancelAction(actionId)` delegate to the existing `cancelPrompt(requestId)` behavior. `runtime/bus/actionEventSubscriptionRegistry.mjs` owns live subscription registration, actionId/runId/type filtering, normalized event publication, listener-error isolation, and idempotent unsubscribe behavior. The execution seam still owns only orchestration-descriptor execution, selected backend-adapter dispatch, and publication of existing started/terminal outcome events through an injected publisher. These modules do not own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -160,12 +162,14 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
+live action-event subscription and started/terminal event publication for executeAction
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
 worker message routing
 executeAction dependency injection through the public raw-envelope dispatch seam into the first nativeWorkerBackend seam
 cancelAction mapping through the execute-action registry into the existing cancelPrompt path
+subscribeActionEvents mapping through the bus-level live action-event subscription registry
 ```
 
 ## Worker layout
