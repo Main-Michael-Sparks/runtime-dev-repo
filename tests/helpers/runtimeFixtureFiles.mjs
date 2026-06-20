@@ -52,6 +52,7 @@ export const RUNTIME_FIXTURE_FILES = [
     "runtime/bus/actionEvent.mjs",
     "runtime/bus/actionEventHistory.mjs",
     "runtime/bus/actionEventSubscriptionRegistry.mjs",
+    "runtime/bus/actionEventReplay.mjs",
     "runtime/bus/capabilityBusContract.mjs",
     "runtime/bus/capabilityDefinition.mjs",
     "runtime/bus/capabilityRegistryContract.mjs",

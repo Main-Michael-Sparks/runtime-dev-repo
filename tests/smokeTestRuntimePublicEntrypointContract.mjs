@@ -183,7 +183,8 @@ async function main() {
         "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs",
         "./runtime/bus/executeAction/actionRequestRegistry.mjs",
         "./runtime/bus/actionEventSubscriptionRegistry.mjs",
-        "./runtime/bus/actionEventHistory.mjs"
+        "./runtime/bus/actionEventHistory.mjs",
+        "./runtime/bus/actionEventReplay.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -258,8 +259,10 @@ async function main() {
         "recordActionEvent(actionEventHistory, event)",
         "publishActionEvent(actionEvents, recordedEvent)",
         "publishActionEvent: publishRuntimeActionEvent",
-        "export function subscribeActionEvents(filterOrListener, listener)",
-        "subscribeActionEventRegistry(actionEvents, filterOrListener, listener)",
+        "export function subscribeActionEvents(filterOrListener, listener, options = {})",
+        "subscribeActionEventReplay({",
+        "subscribe: (filter, normalizedListener) => subscribeActionEventRegistry(",
+        "readEvents: (filter, readOptions) => readActionEventHistory(",
         "export function readActionEvents(filter = {}, options = {})",
         "readActionEventHistory(actionEventHistory, filter, options)"
     ];

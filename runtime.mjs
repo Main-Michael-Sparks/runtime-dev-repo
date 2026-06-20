@@ -61,6 +61,9 @@ import {
     readActionEvents as readActionEventHistory,
     recordActionEvent
 } from "./runtime/bus/actionEventHistory.mjs";
+import {
+    subscribeActionEventReplay
+} from "./runtime/bus/actionEventReplay.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
@@ -177,8 +180,19 @@ export async function executeAction(actionInput, options = {}) {
     }, options);
 }
 
-export function subscribeActionEvents(filterOrListener, listener) {
-    return subscribeActionEventRegistry(actionEvents, filterOrListener, listener);
+export function subscribeActionEvents(filterOrListener, listener, options = {}) {
+    return subscribeActionEventReplay({
+        subscribe: (filter, normalizedListener) => subscribeActionEventRegistry(
+            actionEvents,
+            filter,
+            normalizedListener
+        ),
+        readEvents: (filter, readOptions) => readActionEventHistory(
+            actionEventHistory,
+            filter,
+            readOptions
+        )
+    }, filterOrListener, listener, options);
 }
 
 export function readActionEvents(filter = {}, options = {}) {
