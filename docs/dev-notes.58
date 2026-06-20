@@ -1,0 +1,423 @@
+# Dev Notes 58 — Runtime Action Stream Delta Events v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-action-stream-delta-events-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Source truth:** GitHub `main` was the declared source truth at branch start. This assistant implementation was staged from the local `runtime-dev-repo-main.zip` mirror after the Replay v1 handoff/preflight. GitHub branch verification is still required after upload.  
+**Status:** Candidate staged in sandbox for the declared opt-in live-only `action.stream.delta` scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action stream-delta smoke, replay/history/subscription/public-entrypoint smokes, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regressions, broader contract-chain smokes, and worker static/mock smokes passed. Real-runtime testing and direct GitHub branch/main verification are still required before merge readiness.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow, parent-side, live-only stream-delta action-event surface for execute-action text generation.
+
+The public subscription surface remains:
+
+```js
+subscribeActionEvents(filterOrListener, listener, options = {})
+```
+
+Default subscriptions remain protected from high-volume stream deltas.
+
+Stream deltas are opt-in:
+
+```js
+const unsubscribe = subscribeActionEvents(
+    { actionId: "act_123" },
+    listener,
+    {
+        includeStreamDeltas: true
+    }
+);
+```
+
+A replay listener may also opt into future live deltas:
+
+```js
+const unsubscribe = subscribeActionEvents(
+    { actionId: "act_123" },
+    listener,
+    {
+        replay: true,
+        includeStreamDeltas: true
+    }
+);
+```
+
+The branch does not add retained stream-delta history, stream-delta replay from history, durable event storage, process-restart recovery, cross-process pub/sub, `eventLogStoreBackend`, graph runtime, worker changes, backend changes, scheduler changes, request-settlement changes, stream-shaping changes, config changes, model identity/path changes, or prompt/output semantic changes.
+
+---
+
+## 2. Implementation summary
+
+Added:
+
+```text
+runtime/bus/actionStreamDeltaEvents.mjs
+tests/smokeTestActionStreamDeltaEvents.mjs
+docs/dev-notes.58
+```
+
+Modified:
+
+```text
+runtime.mjs
+runtime/lifecycle/workerProtocolRouter.mjs
+runtime/bus/actionEventSubscriptionRegistry.mjs
+runtime/bus/actionEventReplay.mjs
+runtime/bus/executeAction/actionRequestRegistry.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestActionEventReplay.mjs
+```
+
+No source edits were made to:
+
+```text
+workerBridge.mjs
+llama_worker/**
+runtime/request/**
+runtime/stream/**
+runtime/config/**
+runtime/backends/**
+runtime/router/**
+runtime/services/**
+```
+
+`runtime/lifecycle/workerProtocolRouter.mjs` was touched only to call an injected observer after token normalization/finalText accumulation and before parent-side stream shaping.
+
+---
+
+## 3. Modular ownership boundaries
+
+Preserved event split:
+
+```text
+runtime/bus/actionEvent.mjs
+  validation and normalization of action-event envelopes only
+
+runtime/bus/actionEventHistory.mjs
+  bounded retained history/readback only; stream deltas are not recorded here in v1
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registration, filtering, stream-delta opt-in gating, publication, and unsubscribe behavior only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained replay/live-join orchestration only; it passes includeStreamDeltas to the live subscription layer but does not retain or replay deltas from history
+
+runtime/bus/actionStreamDeltaEvents.mjs
+  maps injected parent-side request stream observations to live-only action.stream.delta events using actionRequests requestId lookup and injected event publication
+
+runtime/bus/executeAction/actionRequestRegistry.mjs
+  active actionId/requestId metadata lookup for cancelAction and stream-delta mapping
+
+runtime.mjs
+  composition root / dependency injection / public API export only
+```
+
+No broad event manager was introduced.
+
+`actionStreamDeltaEvents.mjs` does not import or own:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime/request/**
+runtime/stream/**
+runtime/lifecycle/**
+runtime/backends/**
+runtime/router/**
+runtime/services/**
+streamController
+scheduler
+recordActionEvent
+```
+
+---
+
+## 4. Stream-delta behavior
+
+When a worker stream message arrives in the parent runtime:
+
+```text
+workerProtocolRouter receives worker stream chunk
+  -> normalizeToken(...)
+  -> req.finalText += token
+  -> injected observeStreamDelta(req.id, token, req)
+  -> pushStream(req, token, config)
+```
+
+The observer is no-throw:
+
+```text
+stream-delta publication errors do not affect finalText accumulation
+stream-delta listener errors do not affect pushStream
+stream-delta mapping failures return null and do not affect prompt/output behavior
+```
+
+Published stream-delta event shape:
+
+```js
+{
+    type: "action.stream.delta",
+    actionId,
+    runId,
+    capability: "text.generate",
+    timestamp,
+    data: {
+        delta,
+        index,
+        requestId,
+        chunkKind: "text",
+        emittedAt,
+        backend
+    }
+}
+```
+
+Index semantics:
+
+```text
+index starts at 0 per active actionId
+index increments per published stream-delta event
+index is a publication-order chunk index, not a model token ID and not a byte/char offset
+```
+
+Stream-delta retention policy:
+
+```text
+live-only in v1
+not recorded through actionEventHistory
+no retained history sequence number
+not replayed from history
+not durable
+```
+
+---
+
+## 5. Public/API state
+
+Current public runtime API surface is unchanged:
+
+```text
+cancelAction
+cancelPrompt
+executeAction
+initModel
+prompt
+readActionEvents
+resetModel
+resetSession
+shutdownRuntime
+subscribeActionEvents
+```
+
+`subscribeActionEvents(...)` now supports:
+
+```text
+live same-process observation by default
+opt-in retained in-memory replay with { replay: true }
+opt-in live stream deltas with { includeStreamDeltas: true }
+idempotent unsubscribe
+listener-first replay shorthand
+filter + listener form
+```
+
+Supported live subscription filters:
+
+```text
+actionId
+runId
+type
+capability
+```
+
+`readActionEvents(filter = {}, options = {})` remains bounded retained-history readback. It does not return live-only stream deltas unless a future retained stream-delta policy branch changes that explicitly.
+
+---
+
+## 6. Verification carried forward
+
+Assistant syntax/helper checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Targeted action-event checks passed:
+
+```bash
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Execute-action regression checks passed:
+
+```bash
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Broader static/mock contract checks passed:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Real-runtime testing still needed before merge readiness because this branch touches `workerProtocolRouter` stream handling, even though the change is parent-side and no worker/backend code was changed.
+
+Suggested Michael local Windows/MINGW64 real-runtime checks:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+```
+
+A future real-runtime stream-delta smoke may be added after the mock behavior is accepted.
+
+---
+
+## 7. Caveats / known risks
+
+### Finding: Stream deltas are live-only
+
+Affected surface:
+
+```text
+future graph progress observation, replay/restart behavior, durable audit timelines
+```
+
+Why it matters:
+
+```text
+A subscriber can observe deltas only while attached in the same process. Deltas disappear after process exit and are not returned by retained replay/readback.
+```
+
+Smallest safe correction:
+
+```text
+Keep v1 docs/API language as opt-in live-only stream deltas. Define retained/durable stream-delta policy separately.
+```
+
+What still needs verification:
+
+```text
+Future eventLogStoreBackend or retained-delta branch must define volume limits, backpressure, cursor semantics, retention, and storage failure policy.
+```
+
+### Finding: workerProtocolRouter stream path is touched
+
+Affected surface:
+
+```text
+parent-side stream handling, finalText accumulation, pushStream ordering
+```
+
+Why it matters:
+
+```text
+Mock tests show observer errors are isolated, but real-runtime stream behavior should still be checked before merge readiness.
+```
+
+Smallest safe correction:
+
+```text
+Run Michael local real-runtime execute-action/nativeWorkerBackend/cancel spot checks before final status.
+```
+
+What still needs verification:
+
+```text
+Real-runtime streaming behavior with actual node-llama-cpp output.
+```
+
+### Finding: Synchronous live subscribers can still consume time
+
+Affected surface:
+
+```text
+high-volume stream-delta listeners
+```
+
+Why it matters:
+
+```text
+The existing live event publication model is synchronous. Stream deltas are opt-in to avoid surprising default listeners, but a slow opted-in listener can still add synchronous work.
+```
+
+Smallest safe correction:
+
+```text
+Keep v1 opt-in and do not add hidden coalescing/drop policy. Add coalescing/sampling/drop diagnostics only in a separate explicit branch.
+```
+
+What still needs verification:
+
+```text
+Whether future graph/control consumers need sampled/coalesced stream observations instead of every normalized chunk.
+```
+
+---
+
+## 8. Future work not included
+
+Possible future branches:
+
+```text
+runtime-event-log-store-contract-v1
+runtime-action-event-cross-process-bridge-plan-spec
+runtime-action-stream-delta-retention-policy-v1
+runtime-action-stream-delta-coalescing-policy-v1
+```
+
+Still excluded unless Michael explicitly redirects:
+
+```text
+Cognitive Graph Runtime implementation
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+cleanup/optimization
+worker/native backend redesign
+scheduler lane redesign
+```
+
+---
+
+## 9. Recommended next step
+
+Upload the candidate branch and run Michael local real-runtime checks.
+
+After successful real-runtime checks and direct GitHub branch inspection, update final status from candidate staged/sandbox-tested to repo-verified and real-runtime-tested by Michael.
