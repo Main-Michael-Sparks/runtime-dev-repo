@@ -1,20 +1,23 @@
 # Dev Notes 53 — Runtime Execute-Action Public Envelope Dispatch v1
 
-**Date:** 2026-06-19  
-**Branch:** `runtime-execute-action-public-envelope-dispatch-v1`  
-**Status:** Assistant sandbox candidate staged for the declared public raw action-envelope dispatch scope. Sandbox syntax checks, fixture coverage, worker import hygiene, targeted public-envelope dispatch smoke, existing execute-action/nativeWorkerBackend behavior smokes, current contract-chain smokes, and broader mock/static lifecycle/worker regression smokes passed. Direct GitHub branch verification, artifact/package guard after upload, direct GitHub `main` post-merge inspection, and Michael local Windows/MINGW64 real-runtime public raw-envelope dispatch remain future gates.
+**Date:** 2026-06-20  
+**Prepared branch:** `runtime-execute-action-public-envelope-dispatch-v1`  
+**Actual integration path:** Uploaded directly to GitHub `main` instead of a feature branch / PR merge.  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Source truth:** GitHub `main` after direct upload.  
+**Status:** Uploaded directly to `main` and main-inspected for the declared public raw action-envelope dispatch scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted public-envelope dispatch smoke, existing execute-action/nativeWorkerBackend behavior smokes, current contract-chain smokes, broader mock/static lifecycle/worker regression smokes, artifact/package guard, package extraction/recheck, and Michael local Windows/MINGW64 real-runtime checks for both public raw-envelope dispatch and the existing nativeWorkerBackend executeAction path passed. The normal feature-branch / PR branch-verification gate was skipped because the candidate was uploaded directly to `main`; direct `main` inspection was used instead.
 
 ---
 
 ## 1. Purpose
 
-This branch extends the existing execute-action chain upward so public `executeAction(...)` can accept raw Runtime Dev action envelopes for the current built-in route:
+This work extends the existing execute-action chain upward so public `executeAction(...)` can accept raw Runtime Dev action envelopes for the current built-in route:
 
 ```text
 text.generate -> nativeWorkerBackend -> native-worker.default
 ```
 
-The branch preserves the existing descriptor chain:
+The completed descriptor chain is:
 
 ```text
 raw actionEnvelope
@@ -34,11 +37,13 @@ This is not a second execution path. It is a small public/input dispatch composi
 
 ---
 
-## 2. Source-truth notes
+## 2. Source-truth and integration notes
 
-Implementation was prepared from the uploaded GitHub `main` mirror after `runtime-native-worker-backend-execution-integration-v1` was merged.
+Current source truth is GitHub `main`.
 
-Preflight GitHub commit inspection showed current `main` history beginning with:
+The candidate was prepared from the GitHub `main` mirror after `runtime-native-worker-backend-execution-integration-v1` had already been merged and checkpointed.
+
+Pre-upload baseline `main` history began with:
 
 ```text
 fb4b767 — Add files via upload
@@ -49,13 +54,31 @@ c069d29 — Add files via upload / Dev-doc update
 625d6d7 — Add files via upload
 ```
 
+After direct upload, `main` showed three additional upload commits for this branch family:
+
+```text
+72bdfca — Add files via upload
+4ff34fc — Add files via upload
+cad5aa5 — Add files via upload
+```
+
+Direct GitHub file-page inspection on `main` showed expected key files and normal file-page line counts:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs — 73 lines
+runtime/bus/executeAction/defaultExecuteActionRegistries.mjs — 124 lines
+tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs — 299 lines
+docs/dev-notes.53 — 378 lines
+runtime.mjs — 233 lines
+```
+
 Known caveat: raw GitHub retrieval may display source files as line-collapsed. Treat that as a retrieval/display artifact unless direct GitHub file-page inspection or local clone inspection confirms actual formatting damage.
 
 ---
 
 ## 3. Architecture decision
 
-The branch extends the existing intended chain instead of adding an unrelated public wrapper.
+The implementation extends the existing intended execute-action chain instead of adding an unrelated public wrapper.
 
 The existing modules already provided:
 
@@ -296,18 +319,113 @@ conservative shape detection
 source-boundary guards for runtime/worker/native imports
 ```
 
-Real-runtime gate not run in assistant sandbox:
+Michael local Windows/MINGW64 real-runtime checks passed:
 
 ```bash
 REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
 REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
 ```
 
-These remain Michael local Windows/MINGW64 gates before merge readiness if the branch is uploaded.
+Observed successful public raw-envelope dispatch result:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+
+All executeAction public envelope dispatch smoke tests finished.
+```
+
+Observed successful existing nativeWorkerBackend executeAction result:
+
+```text
+[OK] REAL_RUNTIME executeAction text.generate completed
+
+All nativeWorkerBackend execution integration smoke tests finished.
+```
+
+A first run of `smokeTestExecuteActionPublicEnvelopeDispatch.mjs` reached all branch-specific checks and then failed during native context allocation:
+
+```text
+ggml_backend_cpu_buffer_type_alloc_buffer: failed to allocate buffer of size 4237836288
+llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+```
+
+The same command passed on rerun. Classify the first failure as transient native resource/context allocation, not a raw-envelope dispatch defect.
+
+Warnings observed during real-runtime runs were not branch blockers:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
 
 ---
 
-## 10. Explicit non-goals preserved
+## 10. Artifact/package verification
+
+Candidate package:
+
+```text
+rt-ea-dispatch-v1-candidate.zip
+```
+
+Candidate SHA-256:
+
+```text
+a5fb93482ab780bddb13bb5b060f5fd4af8232238156ca5a1033c2da1b556745
+```
+
+Package root:
+
+```text
+rt-ea-dispatch-v1/
+```
+
+Artifact guard/package extraction result:
+
+```text
+source file count: 195
+candidate file count: 199
+required file count: 5
+new file count: 4
+changed file count: 14
+source-only file count: 0
+candidate-only file count: 4
+failing finding count: 0
+```
+
+Candidate-only files:
+
+```text
+docs/dev-notes.53
+runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs
+runtime/bus/executeAction/defaultExecuteActionRegistries.mjs
+tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+```
+
+---
+
+## 11. GitHub verification notes
+
+Because the candidate was accidentally uploaded directly to `main`, the normal direct feature-branch verification gate was skipped.
+
+Direct `main` inspection after upload confirmed:
+
+```text
+main contains Jun 20 upload commits 72bdfca, 4ff34fc, cad5aa5 for this work.
+main contains runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs.
+main contains runtime/bus/executeAction/defaultExecuteActionRegistries.mjs.
+main contains tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs.
+main contains docs/dev-notes.53.
+runtime.mjs is present on main with the updated runtime composition surface.
+```
+
+Direct file-page line-count checks showed the expected file-page sizes listed in Section 2.
+
+Caveat: the raw GitHub retrieval path may still line-collapse file content in this environment. Treat direct GitHub file pages or a local clone as the safer formatting check.
+
+---
+
+## 12. Explicit non-goals preserved
 
 Not included:
 
@@ -334,37 +452,37 @@ cleanup/optimization pass
 
 ---
 
-## 11. Caveats / future gates
+## 13. Caveats / known risks
 
 ```text
 Finding:
-  Assistant sandbox did not run real native/model execution.
+  Candidate was uploaded directly to main instead of a feature branch.
 Affected surface:
-  public raw-envelope executeAction path into nativeWorkerBackend.
+  branch audit / repo verification process.
 Why it matters:
-  mock/static checks prove dispatch composition and boundary behavior, not local model execution.
+  The normal branch verification and PR merge checkpoint were skipped.
 Smallest safe correction:
-  Michael should run REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs before merge readiness.
+  Treat this as direct-main integration, preserve this dev-note status refresh, and create a checkpoint/bootstrap that records the actual integration path.
 What still needs verification:
-  Local Windows/MINGW64 native execution through the new raw-envelope public path.
+  After this refreshed dev note is uploaded, inspect docs/dev-notes.53 on main again.
 ```
 
 ```text
 Finding:
-  Candidate is not direct-GitHub branch verified yet.
+  One first real-runtime public-dispatch run failed during native context allocation, then the exact rerun passed.
 Affected surface:
-  uploaded branch/source truth.
+  local native/model resource stability, not execute-action dispatch logic.
 Why it matters:
-  GitHub upload/cache behavior has caused stale or line-collapsed retrieval in prior sessions.
+  The first run could look like a branch failure if read without the successful rerun.
 Smallest safe correction:
-  After upload, inspect direct GitHub branch commits and relevant file pages.
+  Record the failure as transient native context allocation/resource pressure.
 What still needs verification:
-  Branch source content, commit list, docs/dev-notes.53 formatting, and post-merge main if merged.
+  Re-run real-runtime smokes if future nearby branches touch init/context/native execution surfaces.
 ```
 
 ---
 
-## 12. Future work not included
+## 14. Future work not included
 
 Likely next execute-action branches after this one:
 
@@ -376,3 +494,15 @@ runtime-capability-default-registry-expansion-v1
 ```
 
 Additional capability defaults beyond `text.generate/nativeWorkerBackend` should be separate branches.
+
+---
+
+## 15. Recommended next step
+
+Upload this refreshed `docs/dev-notes.53` to `main` as a docs-only correction, then do a quick direct `main` inspection of the refreshed file.
+
+After that, checkpoint/bootstrap can treat this work as:
+
+```text
+Direct-main integrated, main-inspected, assistant sandbox-tested, artifact-guarded, package-rechecked, and Michael real-runtime-tested for the declared public raw action-envelope dispatch scope.
+```
