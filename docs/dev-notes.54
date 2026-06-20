@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20  
 **Branch:** `runtime-cancel-action-v1`  
-**Status:** Repo-verified on `runtime-cancel-action-v1` for the declared public action-level cancellation scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-cancellation smoke, execute-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, docs propagation review, package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime checks, and direct GitHub branch inspection passed. Merge-ready for the declared scope.
+**Status:** Merged to `main` and main-inspected for the declared public action-level cancellation scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-cancellation smoke, execute-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, docs propagation review, package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed. No real-runtime retest is required after merge because the inspected `main` content matches the declared branch scope and the local real-runtime checks already passed on the candidate package.
 
 ---
 
@@ -408,7 +408,7 @@ Direct GitHub branch inspection was performed after upload for:
 runtime-cancel-action-v1
 ```
 
-Checked paths:
+Checked branch paths:
 
 ```text
 README.md
@@ -441,9 +441,43 @@ a4e102f — Add files via upload
 102bb90 — Add files via upload
 ```
 
-Direct file inspection confirmed the expected public export, execute-action registry, action/request binding and release behavior, targeted cancellation smoke, fixture propagation, and docs propagation. The GitHub compare diff showed the declared branch scope: new action-request registry and cancellation smoke, public `cancelAction(...)` wrapper, execute-action execution registry integration, contract/test/doc propagation, and no worker/lifecycle/scheduler/config/nativeWorkerBackend implementation edits.
+Direct branch file inspection confirmed the expected public export, execute-action registry, action/request binding and release behavior, targeted cancellation smoke, fixture propagation, and docs propagation. The GitHub compare diff showed the declared branch scope: new action-request registry and cancellation smoke, public `cancelAction(...)` wrapper, execute-action execution registry integration, contract/test/doc propagation, and no worker/lifecycle/scheduler/config/nativeWorkerBackend implementation edits.
 
-Result: repo-verified for the declared public action-level cancellation scope.
+After merge, direct GitHub `main` inspection was performed for:
+
+```text
+main
+```
+
+Checked main paths:
+
+```text
+README.md
+runtime.mjs
+runtime/bus/executeAction/actionRequestRegistry.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+tests/smokeTestExecuteActionCancellation.mjs
+docs/dev-notes.54
+```
+
+Direct raw-source inspection of `main` confirmed:
+
+```text
+runtime.mjs imports createActionRequestRegistry and cancelActionRequest
+runtime.mjs creates the module-scope actionRequests registry
+runtime.mjs passes actionRequests into runExecuteActionDispatch(...)
+runtime.mjs exports cancelAction(actionId)
+README.md lists cancelAction in the public API
+README.md documents runtime/bus/executeAction/actionRequestRegistry.mjs
+actionRequestRegistry.mjs contains create/reserve/bind/release/get/cancel helpers
+capabilityBusExecuteActionExecution.mjs reserves, binds, releases on adapter creation failure, and releases on done settlement
+tests/smokeTestExecuteActionCancellation.mjs contains the REAL_RUNTIME cancelAction cancelled-outcome path
+docs/dev-notes.54 carries branch verification and Michael real-runtime results
+```
+
+GitHub HTML/file-page retrieval showed some stale or line-collapsed renderings during assistant inspection. Raw source with cache-bust showed the expected merged content. Treat this as a GitHub retrieval/display artifact unless a local clone confirms formatting damage.
+
+Result: merged to `main` and main-inspected for the declared public action-level cancellation scope.
 
 ---
 
