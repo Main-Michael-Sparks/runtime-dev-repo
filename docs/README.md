@@ -70,6 +70,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.52` | runtime native worker backend execution integration v1 | current behavior-wiring checkpoint |
 | `dev-notes.53` | runtime execute-action public envelope dispatch v1 | current public dispatch checkpoint |
 | `dev-notes.54` | runtime cancel action v1 | current public cancellation checkpoint |
+| `dev-notes.55` | runtime action event subscription v1 | current public event-observation checkpoint |
 
 ## Reading order for new feature work
 

@@ -148,6 +148,7 @@ async function main() {
         "cancelPrompt",
         "executeAction",
         "initModel",
+        "subscribeActionEvents",
         "prompt",
         "resetModel",
         "resetSession",
@@ -179,7 +180,8 @@ async function main() {
         "./workerBridge.mjs",
         "./runtime/request/scheduler.mjs",
         "./runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs",
-        "./runtime/bus/executeAction/actionRequestRegistry.mjs"
+        "./runtime/bus/executeAction/actionRequestRegistry.mjs",
+        "./runtime/bus/actionEventSubscriptionRegistry.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -203,6 +205,7 @@ async function main() {
         "export async function initModel",
         "export async function prompt",
         "export async function executeAction",
+        "export function subscribeActionEvents",
         "export function cancelAction",
         "export function cancelPrompt",
         "export async function resetSession",
@@ -236,13 +239,26 @@ async function main() {
         "export async function executeAction(actionInput, options = {})",
         "runExecuteActionDispatch(actionInput",
         "runNativeTextRequest",
-        "actionRequests"
+        "actionRequests",
+        "publishActionEvent"
     ];
 
     for (const marker of executeActionMarkers) {
         assertIncludes(runtimeSource, marker, "runtime.mjs executeAction injection path");
     }
     ok("runtime.mjs executeAction public-dispatch dependency-injection markers remain present");
+
+    const subscribeActionEventsMarkers = [
+        "const actionEvents = createActionEventSubscriptionRegistry();",
+        "export function subscribeActionEvents(filterOrListener, listener)",
+        "subscribeActionEventRegistry(actionEvents, filterOrListener, listener)",
+        "publishActionEvent: (event) => publishActionEvent(actionEvents, event)"
+    ];
+
+    for (const marker of subscribeActionEventsMarkers) {
+        assertIncludes(runtimeSource, marker, "runtime.mjs subscribeActionEvents wrapper");
+    }
+    ok("runtime.mjs subscribeActionEvents wrapper markers remain present");
 
     const cancelActionMarkers = [
         "export function cancelAction(actionId)",

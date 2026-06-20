@@ -112,6 +112,17 @@ function bindDoneRelease(donePromise, registry, actionId) {
     });
 }
 
+function publishOutcomeEvent(deps, outcome) {
+    if (typeof deps.publishActionEvent !== "function") return;
+    if (!outcome?.actionEvent) return;
+
+    try {
+        deps.publishActionEvent(outcome.actionEvent);
+    } catch {
+        // Event publication must not alter execute-action behavior.
+    }
+}
+
 function mapDoneToOutcome(orchestration, startedAt, donePromise) {
     return donePromise
         .then((resultText) => {
@@ -195,8 +206,14 @@ export async function runExecuteAction(orchestrationDescriptor, deps = {}, optio
             startedAt
         }
     });
+    publishOutcomeEvent(deps, startedOutcome);
+
     const done = bindDoneRelease(
-        mapDoneToOutcome(orchestration, startedAt, backendHandle.done),
+        mapDoneToOutcome(orchestration, startedAt, backendHandle.done)
+            .then((outcome) => {
+                publishOutcomeEvent(deps, outcome);
+                return outcome;
+            }),
         actionRequests,
         invocation.actionId
     );

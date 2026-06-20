@@ -36,7 +36,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam and a narrow action/request registry. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` tracks active `actionId -> requestId` mappings so public `cancelAction(actionId)` can delegate to the existing `cancelPrompt(requestId)` path. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam, a narrow action/request registry, and a live action-event subscription registry. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` tracks active `actionId -> requestId` mappings so public `cancelAction(actionId)` can delegate to the existing `cancelPrompt(requestId)` path. `runtime/bus/actionEventSubscriptionRegistry.mjs` owns in-process listener registration, actionId/runId/type filtering, unsubscribe behavior, and live publication of normalized action events from the execute-action outcome seam. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -58,10 +58,27 @@ cancelPrompt
 executeAction
 initModel
 prompt
+subscribeActionEvents
 resetModel
 resetSession
 shutdownRuntime
 ```
+
+
+### Action event subscription v1
+
+`subscribeActionEvents(...)` is a live in-process observation surface for execute-action lifecycle events. It supports all-action listeners plus optional `{ actionId }`, `{ runId }`, and `{ type }` filters, and it returns an idempotent unsubscribe function.
+
+```js
+const unsubscribe = subscribeActionEvents({ actionId: "act_123" }, (event) => {
+    // event.type: action.started, action.completed, action.failed,
+    // action.cancelled, or action.timeout for the current v1 execution path.
+});
+
+unsubscribe();
+```
+
+This v1 surface does not store, replay, persist, or cross-process broadcast events. Stream-delta materialization and event-log storage remain future work.
 
 The static public-entrypoint guard is:
 
@@ -78,6 +95,7 @@ find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
 node ./tests/tools/checkRuntimeFixtureCoverage.mjs
 node ./tests/tools/checkWorkerImportCycles.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
 node ./tests/smokeTestActionEnvelopeContract.mjs
 node ./tests/smokeTestCapabilityRegistryContract.mjs
 node ./tests/smokeTestCapabilityBusContract.mjs
