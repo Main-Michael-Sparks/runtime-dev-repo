@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20  
 **Branch:** `runtime-action-event-storage-v1`  
-**Status:** Repo-inspected on `runtime-action-event-storage-v1` for the declared bounded in-memory action-event history/readback scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event history smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend checks, and direct GitHub branch inspection passed. This corrected document updates the branch identity from the staging package name to the actual uploaded GitHub branch name.
+**Status:** Merged to `main` and main-inspected for the declared bounded in-memory action-event history/readback scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event history smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend checks, direct GitHub branch inspection, corrected dev-note branch identity inspection, and direct GitHub `main` inspection passed.
 
 ---
 
@@ -291,10 +291,16 @@ This branch is parent-side/bus-level in-memory history over already-published st
 
 ## 8. Artifact/package verification
 
-Candidate package:
+Final candidate package:
 
 ```text
-runtime-action-event-history-contract-v1-candidate.zip
+runtime-action-event-history-contract-v1-candidate-final.zip
+```
+
+Final candidate SHA-256:
+
+```text
+815133a55f42da794380e63a5ea1d7f11ab85dbfdfd7de08602738bd3734ba37
 ```
 
 Artifact guard command:
@@ -302,9 +308,9 @@ Artifact guard command:
 ```bash
 python3 artifact_guard.py \
   --source-root /mnt/data/runtime-action-event-history-contract-v1-candidate \
-  --candidate-root /mnt/data/runtime-action-event-history-contract-v1-package-check/runtime-action-event-history-contract-v1-candidate \
+  --candidate-root /mnt/data/runtime-action-event-history-contract-v1-package-check-final/runtime-action-event-history-contract-v1-candidate \
   --manifest /mnt/data/runtime-action-event-history-contract-v1-artifact-manifest.json \
-  --json /mnt/data/runtime-action-event-history-contract-v1-artifact-guard-report.json \
+  --json /mnt/data/runtime-action-event-history-contract-v1-artifact-guard-report-final.json \
   --syntax-timeout 120
 ```
 
@@ -321,7 +327,7 @@ candidate_only_file_count: 0
 failing_finding_count: 0
 ```
 
-Package extraction/recheck passed:
+Final package extraction/recheck passed:
 
 ```bash
 node ./tests/smokeTestActionEventHistory.mjs
@@ -339,7 +345,24 @@ Direct GitHub branch inspection checked:
 runtime-action-event-storage-v1
 ```
 
-Confirmed expected branch-scope files/surfaces:
+Direct GitHub `main` inspection after merge checked:
+
+```text
+main
+```
+
+Latest relevant `main` commits observed during cache-busted inspection:
+
+```text
+bbd06f8 — Merge pull request #34 from Main-Michael-Sparks/runtime-action-event-storage-v1
+64a3cb7 — Add files via upload
+2b96762 — Add files via upload
+da9de53 — Add files via upload
+69271fe — Add files via upload
+69c3070 — Add files via upload
+```
+
+Confirmed expected branch/main files and surfaces:
 
 ```text
 runtime/bus/actionEventHistory.mjs
@@ -347,15 +370,15 @@ runtime.mjs readActionEvents(...) export and record -> live publish wiring
 tests/smokeTestActionEventHistory.mjs
 docs/dev-notes.56
 README/docs propagation for bounded in-memory history/readback
+docs/feature-readiness.md future follow-up branch list
 ```
 
-Finding corrected by this document:
+Final docs correction confirmed:
 
 ```text
-The uploaded branch contained the expected source scope, but docs/dev-notes.56 still listed the staging/candidate branch name runtime-action-event-history-contract-v1. This corrected dev note uses the actual GitHub branch name runtime-action-event-storage-v1.
+docs/dev-notes.56 now lists Branch: runtime-action-event-storage-v1, matching the actual uploaded and merged GitHub branch.
 ```
 
----
 
 ## 10. Caveats / known risks
 
