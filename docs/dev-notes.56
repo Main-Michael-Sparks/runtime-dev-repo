@@ -1,8 +1,8 @@
 # Dev Notes 56 — Runtime Action Event History Contract v1
 
 **Date:** 2026-06-20  
-**Branch:** `runtime-action-event-history-contract-v1`  
-**Status:** Candidate staged from the post-`runtime-action-event-subscription-v1` main mirror and tested for the declared bounded in-memory action-event history/readback scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event history smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend checks passed. Direct GitHub branch verification remains the post-upload gate.
+**Branch:** `runtime-action-event-storage-v1`  
+**Status:** Repo-inspected on `runtime-action-event-storage-v1` for the declared bounded in-memory action-event history/readback scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event history smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend checks, and direct GitHub branch inspection passed. This corrected document updates the branch identity from the staging package name to the actual uploaded GitHub branch name.
 
 ---
 
@@ -331,7 +331,33 @@ node ./tests/smokeTestActionEventSubscription.mjs
 
 ---
 
-## 9. Caveats / known risks
+## 9. GitHub verification
+
+Direct GitHub branch inspection checked:
+
+```text
+runtime-action-event-storage-v1
+```
+
+Confirmed expected branch-scope files/surfaces:
+
+```text
+runtime/bus/actionEventHistory.mjs
+runtime.mjs readActionEvents(...) export and record -> live publish wiring
+tests/smokeTestActionEventHistory.mjs
+docs/dev-notes.56
+README/docs propagation for bounded in-memory history/readback
+```
+
+Finding corrected by this document:
+
+```text
+The uploaded branch contained the expected source scope, but docs/dev-notes.56 still listed the staging/candidate branch name runtime-action-event-history-contract-v1. This corrected dev note uses the actual GitHub branch name runtime-action-event-storage-v1.
+```
+
+---
+
+## 10. Caveats / known risks
 
 ### Finding: History is not durable storage
 
@@ -395,7 +421,7 @@ Define durable storage failure policy in eventLogStoreBackend work, not in this 
 
 ---
 
-## 10. Recommended next work not included
+## 11. Recommended next work not included
 
 Possible future branches:
 
