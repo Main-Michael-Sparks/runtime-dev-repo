@@ -50,6 +50,7 @@ export const RUNTIME_FIXTURE_FILES = [
     "runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs",
     "runtime/bus/actionEnvelope.mjs",
     "runtime/bus/actionEvent.mjs",
+    "runtime/bus/actionEventSubscriptionRegistry.mjs",
     "runtime/bus/capabilityBusContract.mjs",
     "runtime/bus/capabilityDefinition.mjs",
     "runtime/bus/capabilityRegistryContract.mjs",
