@@ -22,10 +22,11 @@ explicit non-goals
 
 ## Execute-action / backend execution readiness
 
-`runtime-native-worker-backend-execution-integration-v1` adds the first narrow real execution seam for accepted execute-action orchestration descriptors. Future capability execution branches should preserve that shape:
+`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. Future capability execution branches should preserve this shape:
 
 ```text
-accepted upstream descriptor chain
+raw action envelope where supported
+  -> accepted upstream descriptor chain
   -> execute-action behavior seam
   -> selected executable backend adapter
   -> shared parent-owned runtime substrate where applicable
@@ -36,7 +37,6 @@ Do not bypass the Capability Bus / Router / Service / backend invocation chain b
 Likely future branches:
 
 ```text
-runtime-execute-action-public-envelope-dispatch-v1
 runtime-cancel-action-v1
 runtime-action-event-subscription-v1
 ```
@@ -44,7 +44,7 @@ runtime-action-event-subscription-v1
 Questions to resolve before broader execute-action work:
 
 ```text
-raw actionEnvelope -> executeAction orchestration ownership
+additional capability registry defaults beyond text.generate/nativeWorkerBackend
 actionId -> requestId cancellation registry
 action event subscription/storage surface
 per-action timeout scheduling

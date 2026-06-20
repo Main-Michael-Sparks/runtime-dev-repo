@@ -1,0 +1,378 @@
+# Dev Notes 53 — Runtime Execute-Action Public Envelope Dispatch v1
+
+**Date:** 2026-06-19  
+**Branch:** `runtime-execute-action-public-envelope-dispatch-v1`  
+**Status:** Assistant sandbox candidate staged for the declared public raw action-envelope dispatch scope. Sandbox syntax checks, fixture coverage, worker import hygiene, targeted public-envelope dispatch smoke, existing execute-action/nativeWorkerBackend behavior smokes, current contract-chain smokes, and broader mock/static lifecycle/worker regression smokes passed. Direct GitHub branch verification, artifact/package guard after upload, direct GitHub `main` post-merge inspection, and Michael local Windows/MINGW64 real-runtime public raw-envelope dispatch remain future gates.
+
+---
+
+## 1. Purpose
+
+This branch extends the existing execute-action chain upward so public `executeAction(...)` can accept raw Runtime Dev action envelopes for the current built-in route:
+
+```text
+text.generate -> nativeWorkerBackend -> native-worker.default
+```
+
+The branch preserves the existing descriptor chain:
+
+```text
+raw actionEnvelope
+  -> Capability Bus action validation
+  -> Capability Router route plan
+  -> Capability Service plan
+  -> Backend Adapter plan
+  -> Capability Execution plan
+  -> accepted execute-action plan
+  -> execute-action orchestration descriptor
+  -> existing runExecuteAction(...)
+  -> nativeWorkerBackend execution seam
+  -> existing parent runtime substrate
+```
+
+This is not a second execution path. It is a small public/input dispatch composition seam above the already accepted execute-action behavior seam.
+
+---
+
+## 2. Source-truth notes
+
+Implementation was prepared from the uploaded GitHub `main` mirror after `runtime-native-worker-backend-execution-integration-v1` was merged.
+
+Preflight GitHub commit inspection showed current `main` history beginning with:
+
+```text
+fb4b767 — Add files via upload
+ee2c2d5 — Merge pull request #31 from Main-Michael-Sparks/runtime-native-worker-backend-execution-integration-v1
+c069d29 — Add files via upload / Dev-doc update
+72661fc — Add files via upload
+9223a3a — Add files via upload
+625d6d7 — Add files via upload
+```
+
+Known caveat: raw GitHub retrieval may display source files as line-collapsed. Treat that as a retrieval/display artifact unless direct GitHub file-page inspection or local clone inspection confirms actual formatting damage.
+
+---
+
+## 3. Architecture decision
+
+The branch extends the existing intended chain instead of adding an unrelated public wrapper.
+
+The existing modules already provided:
+
+```text
+runtime/bus/actionEnvelope.mjs
+  raw action envelope validation / normalization
+
+runtime/bus/executeAction/capabilityBusExecuteActionPlan.mjs
+  raw actionEnvelope + registries -> accepted execute-action plan
+
+runtime/bus/executeAction/capabilityBusExecuteActionOrchestration.mjs
+  accepted execute-action plan -> executable orchestration descriptor
+
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+  orchestration descriptor -> executable nativeWorkerBackend dispatch
+
+runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs
+  nativeWorkerBackend/text.generate adapter execution using injected runNativeTextRequest
+```
+
+The missing branch piece was public dispatch composition and a default built-in registry bundle for the current `text.generate -> nativeWorkerBackend` route.
+
+---
+
+## 4. Implementation summary
+
+Added:
+
+```text
+runtime/bus/executeAction/defaultExecuteActionRegistries.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs
+tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+docs/dev-notes.53
+```
+
+Modified:
+
+```text
+runtime.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestBackendAdapterExecutionInterface.mjs
+tests/smokeTestCapabilityBusExecuteActionContract.mjs
+tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+tests/smokeTestCapabilityExecuteActionOutcome.mjs
+tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+```
+
+No scheduler, request, stream, lifecycle, workerBridge, llama_worker, configOverride, model-bundle implementation, hardware-profile implementation, worker protocol, or native/model lifecycle files were modified.
+
+---
+
+## 5. Public API behavior
+
+`runtime.mjs` still exports exactly:
+
+```text
+cancelPrompt
+executeAction
+initModel
+prompt
+resetModel
+resetSession
+shutdownRuntime
+```
+
+`executeAction(actionInput, options = {})` now accepts:
+
+```text
+raw action envelopes for the built-in text.generate/nativeWorkerBackend route
+existing accepted execute-action orchestration descriptors
+```
+
+The existing orchestration-descriptor path remains supported through the same execute-action behavior seam.
+
+Invalid raw envelopes reject before native request creation. Missing `input.prompt` rejects inside the nativeWorkerBackend adapter before the injected `runNativeTextRequest(...)` helper is called.
+
+Cancellation remains unchanged:
+
+```text
+executeAction(...) returns requestId
+cancelPrompt(requestId) remains the cancellation mechanism
+cancelAction(actionId) remains future work
+```
+
+---
+
+## 6. Default registry bundle
+
+Added:
+
+```text
+runtime/bus/executeAction/defaultExecuteActionRegistries.mjs
+```
+
+Primary export:
+
+```js
+createDefaultExecuteActionRegistries()
+```
+
+The module creates a narrow default registry bundle for one built-in route:
+
+```text
+capability: text.generate
+routeId: text-generate-default
+serviceId: text.generate.default
+backendKind: nativeWorkerBackend
+adapterId: native-worker.default
+modelBundleId: mistral-text-local
+hardwareProfileId: laptopFallback
+```
+
+It uses existing registry and nativeWorkerBackend adapter definition helpers. It does not execute actions and does not import `runtime.mjs`, `workerBridge.mjs`, `llama_worker/**`, scheduler, request, stream, lifecycle, or native/model modules.
+
+---
+
+## 7. Dispatch helper
+
+Added:
+
+```text
+runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs
+```
+
+Primary exports:
+
+```js
+looksLikeRawActionEnvelope(value)
+runExecuteActionDispatch(actionInput, deps = {}, options = {})
+```
+
+Behavior:
+
+```text
+if actionInput looks like a raw action envelope:
+  use deps.executeActionRegistries or createDefaultExecuteActionRegistries()
+  assertCapabilityBusExecuteActionPlan(actionInput, registries)
+  normalizeCapabilityBusExecuteActionOrchestrationDescriptor(plan)
+  runExecuteAction(orchestration, deps, options)
+
+otherwise:
+  runExecuteAction(actionInput, deps, options)
+```
+
+Shape detection is conservative. It avoids treating existing execute-action plans or orchestration descriptors as raw envelopes.
+
+---
+
+## 8. Runtime composition
+
+`runtime.mjs` now imports:
+
+```js
+runExecuteActionDispatch
+```
+
+`executeAction(...)` now injects the parent-owned native text helper through dispatch:
+
+```js
+export async function executeAction(actionInput, options = {}) {
+    return runExecuteActionDispatch(actionInput, {
+        runNativeTextRequest
+    }, options);
+}
+```
+
+`runtime.mjs` remains the composition root. `runNativeTextRequest(...)`, `prompt(...)`, `cancelPrompt(...)`, init, reset, shutdown, scheduler, stream, request, and lifecycle behavior were not otherwise changed.
+
+---
+
+## 9. Tests and verification
+
+Assistant sandbox checks passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestCapabilityExecuteActionOrchestration.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+```
+
+Broader mock/static checks passed:
+
+```bash
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestNativeOperationHardStopPolicy.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerOperationSerialization.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestInitThenResetWithoutPriorPrompt.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationRetry.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestContextCreationCancelBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestWorkerNativeCancellationBoundary.mjs
+SKIP_REAL_RUNTIME=1 node ./tests/smokeTestDrainShutdown.mjs
+SKIP_RUNTIME=1 node ./tests/smokeTestHardwareAwareInitRetry.mjs
+```
+
+New targeted smoke:
+
+```bash
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+```
+
+Validated:
+
+```text
+raw action envelope dispatch through default registries to mock native execution
+existing accepted orchestration descriptor path still works
+invalid raw envelope rejects before native request creation
+missing prompt rejects before native request creation
+conservative shape detection
+source-boundary guards for runtime/worker/native imports
+```
+
+Real-runtime gate not run in assistant sandbox:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+These remain Michael local Windows/MINGW64 gates before merge readiness if the branch is uploaded.
+
+---
+
+## 10. Explicit non-goals preserved
+
+Not included:
+
+```text
+cancelAction(actionId)
+actionId -> requestId registry
+action event subscription surface
+stream delta subscription system
+new per-action timeout scheduler
+scheduler redesign
+backend-owned scheduler
+workerBridge redesign
+llama_worker changes
+worker protocol redesign
+model path/model identity override behavior
+configOverride expansion
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+Cognitive Graph Runtime implementation
+cleanup/optimization pass
+```
+
+---
+
+## 11. Caveats / future gates
+
+```text
+Finding:
+  Assistant sandbox did not run real native/model execution.
+Affected surface:
+  public raw-envelope executeAction path into nativeWorkerBackend.
+Why it matters:
+  mock/static checks prove dispatch composition and boundary behavior, not local model execution.
+Smallest safe correction:
+  Michael should run REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs before merge readiness.
+What still needs verification:
+  Local Windows/MINGW64 native execution through the new raw-envelope public path.
+```
+
+```text
+Finding:
+  Candidate is not direct-GitHub branch verified yet.
+Affected surface:
+  uploaded branch/source truth.
+Why it matters:
+  GitHub upload/cache behavior has caused stale or line-collapsed retrieval in prior sessions.
+Smallest safe correction:
+  After upload, inspect direct GitHub branch commits and relevant file pages.
+What still needs verification:
+  Branch source content, commit list, docs/dev-notes.53 formatting, and post-merge main if merged.
+```
+
+---
+
+## 12. Future work not included
+
+Likely next execute-action branches after this one:
+
+```text
+runtime-cancel-action-v1
+runtime-action-event-subscription-v1
+runtime-action-timeout-policy-v1
+runtime-capability-default-registry-expansion-v1
+```
+
+Additional capability defaults beyond `text.generate/nativeWorkerBackend` should be separate branches.

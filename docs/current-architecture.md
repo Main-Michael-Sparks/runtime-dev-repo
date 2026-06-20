@@ -50,6 +50,8 @@ runtime/bus/
     capabilityBusExecuteActionOutcomeCommon.mjs
     capabilityBusExecuteActionOutcome.mjs
     capabilityBusExecuteActionExecution.mjs
+    defaultExecuteActionRegistries.mjs
+    capabilityBusExecuteActionDispatch.mjs
     capabilityBusExecuteActionContract.mjs
   capabilityServiceCommon.mjs
   capabilityServiceDefinition.mjs
@@ -136,7 +138,7 @@ runtime/stream/
   streamController.mjs
 ```
 
-`runtime/bus/` is contract-first, with one narrow behavior seam added by `runtime-native-worker-backend-execution-integration-v1`. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs` starts only from an accepted execute-action orchestration descriptor, dispatches to the selected executable backend adapter for the supported nativeWorkerBackend route, and maps real completion/failure/cancellation into outcome descriptors. It does not accept raw action envelopes, own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` is contract-first, with a narrow public execute-action dispatch composition seam above the existing behavior seam. It records the action/result/event/context surface shape, capability definition and registry metadata, bus skeleton intake/result/event helpers, execute-action contract/orchestration descriptors, execute-action result/event outcome descriptors, capability service metadata/registry/plan validation helpers, and compatibility barrels for older capability router import paths. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, supplies the default registry bundle from `defaultExecuteActionRegistries.mjs`, composes through the accepted descriptor chain, and delegates to `capabilityBusExecuteActionExecution.mjs`. The execution seam still owns only orchestration-descriptor execution and selected backend-adapter dispatch. These modules do not own queueing, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is contract-only through `runtime-model-bundle-route-validation-v1`. It owns capability router metadata/registry/plan validation helpers plus route/model-bundle/hardware-profile compatibility validation for future Capability Router branches, but it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -159,7 +161,7 @@ init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
 worker message routing
-executeAction dependency injection into the first nativeWorkerBackend seam
+executeAction dependency injection through the public raw-envelope dispatch seam into the first nativeWorkerBackend seam
 ```
 
 ## Worker layout
