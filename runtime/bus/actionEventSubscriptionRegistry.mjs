@@ -75,7 +75,7 @@ function normalizeFilter(filter) {
     );
 }
 
-function normalizeSubscribeArgs(filterOrListener, listener) {
+export function normalizeActionEventSubscribeArgs(filterOrListener, listener) {
     if (typeof filterOrListener === "function" && listener === undefined) {
         return {
             filter: {},
@@ -121,7 +121,7 @@ export function createActionEventSubscriptionRegistry() {
 export function subscribeActionEvents(registry, filterOrListener, listener) {
     assertSubscriptionRegistry(registry);
 
-    const normalized = normalizeSubscribeArgs(filterOrListener, listener);
+    const normalized = normalizeActionEventSubscribeArgs(filterOrListener, listener);
     const subscriptionId = registry.nextSubscriptionId++;
     let active = true;
 
