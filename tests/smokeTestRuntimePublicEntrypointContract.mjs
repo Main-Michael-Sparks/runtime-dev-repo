@@ -184,7 +184,8 @@ async function main() {
         "./runtime/bus/executeAction/actionRequestRegistry.mjs",
         "./runtime/bus/actionEventSubscriptionRegistry.mjs",
         "./runtime/bus/actionEventHistory.mjs",
-        "./runtime/bus/actionEventReplay.mjs"
+        "./runtime/bus/actionEventReplay.mjs",
+        "./runtime/bus/actionStreamDeltaEvents.mjs"
     ];
 
     for (const marker of requiredRuntimeMarkers) {
@@ -255,13 +256,15 @@ async function main() {
     const actionEventMarkers = [
         "const actionEvents = createActionEventSubscriptionRegistry();",
         "const actionEventHistory = createActionEventHistory();",
+        "function publishRuntimeLiveActionEvent(event)",
+        "const observeStreamDelta = createActionStreamDeltaObserver({",
         "function publishRuntimeActionEvent(event)",
         "recordActionEvent(actionEventHistory, event)",
         "publishActionEvent(actionEvents, recordedEvent)",
         "publishActionEvent: publishRuntimeActionEvent",
         "export function subscribeActionEvents(filterOrListener, listener, options = {})",
         "subscribeActionEventReplay({",
-        "subscribe: (filter, normalizedListener) => subscribeActionEventRegistry(",
+        "subscribe: (filter, normalizedListener, subscribeOptions) => subscribeActionEventRegistry(",
         "readEvents: (filter, readOptions) => readActionEventHistory(",
         "export function readActionEvents(filter = {}, options = {})",
         "readActionEventHistory(actionEventHistory, filter, options)"

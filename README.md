@@ -36,7 +36,7 @@ llama_worker/               worker/native/model boundary modules
 
 Public consumers should import from `runtime.mjs`. Internal modules should preserve the existing parent/runtime and worker/native boundaries.
 
-`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam, a narrow action/request registry, a live action-event subscription registry, a bounded in-memory action-event history/readback helper, and a small retained-replay/live-join helper. `runtime/bus/actionEventHistory.mjs` owns retained event history, retention, sequence assignment, and read/query behavior for `readActionEvents(...)`. `runtime/bus/actionEventReplay.mjs` owns optional in-process retained replay plus the live join buffer/dedupe path for `subscribeActionEvents(..., { replay: true })`. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` tracks active `actionId -> requestId` mappings so public `cancelAction(actionId)` can delegate to the existing `cancelPrompt(requestId)` path. `runtime/bus/actionEventSubscriptionRegistry.mjs` owns in-process listener registration, actionId/runId/type filtering, unsubscribe behavior, and live publication of normalized action events from the execute-action outcome seam. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
+`runtime/bus/` remains contract-first, but the execute-action namespace now includes a public dispatch composition seam, a narrow action/request registry, a live action-event subscription registry, a bounded in-memory action-event history/readback helper, a small retained-replay/live-join helper, and a live-only action stream-delta observer helper. `runtime/bus/actionEventHistory.mjs` owns retained event history, retention, sequence assignment, and read/query behavior for `readActionEvents(...)`. `runtime/bus/actionEventReplay.mjs` owns optional in-process retained replay plus the live join buffer/dedupe path for `subscribeActionEvents(..., { replay: true })`. `runtime/bus/actionStreamDeltaEvents.mjs` maps injected parent-side request stream observations into opt-in live `action.stream.delta` events without owning stream shaping, retention, replay, durable storage, worker routing, or backend execution. `runtime/bus/executeAction/capabilityBusExecuteActionDispatch.mjs` accepts raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route, composes them through the existing Capability Bus / Router / Service / Backend Adapter / Execution Plan chain, normalizes the accepted plan into an orchestration descriptor, and then delegates to the existing execute-action behavior seam. The default route registry lives in `runtime/bus/executeAction/defaultExecuteActionRegistries.mjs`. `runtime/bus/executeAction/actionRequestRegistry.mjs` tracks active `actionId -> requestId` mappings so public `cancelAction(actionId)` can delegate to the existing `cancelPrompt(requestId)` path and so parent-side stream observations can map request IDs back to active actions. `runtime/bus/actionEventSubscriptionRegistry.mjs` owns in-process listener registration, actionId/runId/type/capability filtering, unsubscribe behavior, stream-delta opt-in gating, and live publication of normalized action events from the execute-action outcome/stream-observation seams. These modules do not own scheduler state, import `workerBridge`, import `llama_worker`, or bypass the upstream descriptor chain.
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
@@ -68,7 +68,7 @@ shutdownRuntime
 
 ### Action event subscription and history v1
 
-`subscribeActionEvents(...)` is a live in-process observation surface for execute-action lifecycle events. It supports all-action listeners plus optional `{ actionId }`, `{ runId }`, and `{ type }` filters, and it returns an idempotent unsubscribe function. By default it remains live-only.
+`subscribeActionEvents(...)` is a live in-process observation surface for execute-action lifecycle events. It supports all-action listeners plus optional `{ actionId }`, `{ runId }`, `{ type }`, and `{ capability }` filters, and it returns an idempotent unsubscribe function. By default it remains live-only and excludes high-volume `action.stream.delta` events.
 
 ```js
 const unsubscribe = subscribeActionEvents({ actionId: "act_123" }, (event) => {
@@ -97,9 +97,22 @@ const unsubscribeReplayAll = subscribeActionEvents((event) => {
 });
 ```
 
-Replay is sequence-deduped at the live join boundary and remains same-process / in-memory only. It is not durable storage and does not replay stream deltas.
+Replay is sequence-deduped at the live join boundary and remains same-process / in-memory only. It is not durable storage. Stream deltas are live-only and are not retained or replayed from history.
 
-`readActionEvents(filter = {}, options = {})` returns bounded in-memory history/readback for the same started and terminal action events. It supports filters by `actionId`, `runId`, `type`, `capability`, timestamp range, and `afterSequence`, plus a `limit` option.
+`subscribeActionEvents(...)` can observe live stream deltas only when explicitly opted in:
+
+```js
+const unsubscribeDeltas = subscribeActionEvents({ actionId: "act_123" }, (event) => {
+    // event.type === "action.stream.delta"
+    // event.data.delta contains the normalized text chunk.
+}, {
+    includeStreamDeltas: true
+});
+```
+
+Stream deltas are published from a parent-side observer after token normalization and before parent stream shaping. They do not receive retained history sequence numbers.
+
+`readActionEvents(filter = {}, options = {})` returns bounded in-memory history/readback for retained started and terminal action events. It supports filters by `actionId`, `runId`, `type`, `capability`, timestamp range, and `afterSequence`, plus a `limit` option.
 
 ```js
 const history = readActionEvents({ actionId: "act_123" }, { limit: 10 });
@@ -108,7 +121,7 @@ console.log(history.events);
 console.log(history.cursor.lastSequence);
 ```
 
-This event surface does not add durable persistence, process-restart recovery, cross-process pub/sub, stream-delta materialization, or `eventLogStoreBackend`. Stream-delta materialization and durable event-log storage remain future work.
+This event surface does not add durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or `eventLogStoreBackend`. Durable event-log storage and retained/replayable stream-delta policy remain future work.
 
 The static public-entrypoint guard is:
 
@@ -128,6 +141,7 @@ node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 node ./tests/smokeTestActionEventHistory.mjs
 node ./tests/smokeTestActionEventSubscription.mjs
 node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
 node ./tests/smokeTestActionEnvelopeContract.mjs
 node ./tests/smokeTestCapabilityRegistryContract.mjs
 node ./tests/smokeTestCapabilityBusContract.mjs

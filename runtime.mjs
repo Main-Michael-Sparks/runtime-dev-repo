@@ -64,12 +64,24 @@ import {
 import {
     subscribeActionEventReplay
 } from "./runtime/bus/actionEventReplay.mjs";
+import {
+    createActionStreamDeltaObserver
+} from "./runtime/bus/actionStreamDeltaEvents.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
 const actionRequests = createActionRequestRegistry();
 const actionEvents = createActionEventSubscriptionRegistry();
 const actionEventHistory = createActionEventHistory();
+
+function publishRuntimeLiveActionEvent(event) {
+    return publishActionEvent(actionEvents, event);
+}
+
+const observeStreamDelta = createActionStreamDeltaObserver({
+    actionRequests,
+    publishActionEvent: publishRuntimeLiveActionEvent
+});
 
 const scheduler = createScheduler({
     maxInFlight: config.runtime.maxInFlight,
@@ -115,7 +127,8 @@ onWorkerMessage(createWorkerProtocolRouter({
     traceError,
     traceDelete,
     settleCompletedRequest,
-    settleFailedRequest
+    settleFailedRequest,
+    observeStreamDelta
 }));
 
 export async function initModel(options = {}) {
@@ -182,10 +195,11 @@ export async function executeAction(actionInput, options = {}) {
 
 export function subscribeActionEvents(filterOrListener, listener, options = {}) {
     return subscribeActionEventReplay({
-        subscribe: (filter, normalizedListener) => subscribeActionEventRegistry(
+        subscribe: (filter, normalizedListener, subscribeOptions) => subscribeActionEventRegistry(
             actionEvents,
             filter,
-            normalizedListener
+            normalizedListener,
+            subscribeOptions
         ),
         readEvents: (filter, readOptions) => readActionEventHistory(
             actionEventHistory,
