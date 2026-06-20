@@ -20,6 +20,7 @@ cancelPrompt
 executeAction
 initModel
 prompt
+readActionEvents
 subscribeActionEvents
 resetModel
 resetSession
@@ -43,6 +44,7 @@ runtime/bus/
   capabilityBusContract.mjs
   capabilityBusResult.mjs
   capabilityBusEvents.mjs
+  actionEventHistory.mjs
   actionEventSubscriptionRegistry.mjs
   executeAction/
     actionRequestRegistry.mjs
@@ -162,7 +164,7 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
-live action-event subscription and started/terminal event publication for executeAction
+live action-event subscription, bounded in-memory action-event readback, and started/terminal event publication for executeAction
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
@@ -170,6 +172,7 @@ worker message routing
 executeAction dependency injection through the public raw-envelope dispatch seam into the first nativeWorkerBackend seam
 cancelAction mapping through the execute-action registry into the existing cancelPrompt path
 subscribeActionEvents mapping through the bus-level live action-event subscription registry
+readActionEvents mapping through the bus-level bounded in-memory action-event history helper
 ```
 
 ## Worker layout

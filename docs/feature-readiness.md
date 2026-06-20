@@ -22,7 +22,7 @@ explicit non-goals
 
 ## Execute-action / backend execution readiness
 
-`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. `runtime-cancel-action-v1` adds public `cancelAction(actionId)` by mapping active action IDs to existing request IDs and then delegating to `cancelPrompt(requestId)`, without adding a second worker cancellation path. `runtime-action-event-subscription-v1` adds public `subscribeActionEvents(...)` as a live in-process observation surface for execute-action started and terminal outcome events, without storage, replay, stream-delta materialization, or worker protocol changes. Future capability execution branches should preserve this shape:
+`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. `runtime-cancel-action-v1` adds public `cancelAction(actionId)` by mapping active action IDs to existing request IDs and then delegating to `cancelPrompt(requestId)`, without adding a second worker cancellation path. `runtime-action-event-subscription-v1` adds public `subscribeActionEvents(...)` as a live in-process observation surface for execute-action started and terminal outcome events. `runtime-action-event-history-contract-v1` adds public `readActionEvents(...)` as bounded in-memory history/readback for those same started and terminal events, without durable persistence, callback replay, cross-process pub/sub, stream-delta materialization, or worker protocol changes. Future capability execution branches should preserve this shape:
 
 ```text
 raw action envelope where supported
@@ -36,6 +36,9 @@ cancelAction(actionId)
 subscribeActionEvents(filter, listener)
   -> bus-level live action-event subscription registry
   -> started/terminal execute-action outcome events only in v1
+readActionEvents(filter, options)
+  -> bus-level bounded in-memory action-event history/readback
+  -> no durability, callback replay, cross-process pub/sub, or stream-delta materialization
 ```
 
 Do not bypass the Capability Bus / Router / Service / backend invocation chain by calling `workerBridge` or `llama_worker` directly from backend adapters. New backends should define explicit adapter execution modules and should receive required runtime substrate functions through dependency injection rather than importing `runtime.mjs`.
@@ -43,14 +46,16 @@ Do not bypass the Capability Bus / Router / Service / backend invocation chain b
 Likely future branches:
 
 ```text
-runtime-action-event-storage-v1-plan-spec
+runtime-action-event-replay-contract-v1
+runtime-event-log-store-contract-v1
+runtime-action-stream-delta-events-v1-plan-spec
 ```
 
 Questions to resolve before broader execute-action work:
 
 ```text
 additional capability registry defaults beyond text.generate/nativeWorkerBackend
-action event storage/replay surface
+durable action event storage/replay surface
 per-action timeout scheduling
 stream delta materialization policy
 backend lane scheduling for non-text capabilities
