@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-20  
 **Branch:** `runtime-cancel-action-v1`  
-**Status:** Assistant-staged candidate from the preflighted downloaded `main` repo ZIP. Sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-cancellation smoke, execute-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, docs propagation review, package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime checks passed. GitHub branch verification remains the only incomplete gate before merge readiness.
+**Status:** Repo-verified on `runtime-cancel-action-v1` for the declared public action-level cancellation scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action-cancellation smoke, execute-action/public-dispatch/nativeWorkerBackend regression smokes, current contract-chain smokes, broader worker/cancellation/lifecycle mock-static smokes, docs propagation review, package extraction/recheck, artifact guard, Michael local Windows/MINGW64 real-runtime checks, and direct GitHub branch inspection passed. Merge-ready for the declared scope.
 
 ---
 
@@ -402,49 +402,62 @@ The docs were refreshed after Michael's real-runtime results so `docs/dev-notes.
 
 ## 13. GitHub verification status
 
-GitHub branch verification has not been performed yet for `runtime-cancel-action-v1`.
-
-Required post-upload checks:
+Direct GitHub branch inspection was performed after upload for:
 
 ```text
-confirm branch exists at runtime-cancel-action-v1
-inspect runtime.mjs
-inspect runtime/bus/executeAction/actionRequestRegistry.mjs
-inspect runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
-inspect tests/smokeTestExecuteActionCancellation.mjs
-inspect docs/dev-notes.54
-check latest commit message(s)
-confirm no unexpected worker/lifecycle/scheduler/config files changed
+runtime-cancel-action-v1
 ```
+
+Checked paths:
+
+```text
+README.md
+runtime.mjs
+runtime/bus/executeAction/actionRequestRegistry.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionExecution.mjs
+runtime/bus/executeAction/capabilityBusExecuteActionContract.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestExecuteActionCancellation.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+docs/current-architecture.md
+docs/feature-readiness.md
+docs/dev-notes.54
+```
+
+GitHub compare reported:
+
+```text
+4 commits
+16 files changed
+```
+
+Latest branch upload commits observed on 2026-06-20:
+
+```text
+7a91686 — Add files via upload
+a4e102f — Add files via upload
+822f71a — Add files via upload
+102bb90 — Add files via upload
+```
+
+Direct file inspection confirmed the expected public export, execute-action registry, action/request binding and release behavior, targeted cancellation smoke, fixture propagation, and docs propagation. The GitHub compare diff showed the declared branch scope: new action-request registry and cancellation smoke, public `cancelAction(...)` wrapper, execute-action execution registry integration, contract/test/doc propagation, and no worker/lifecycle/scheduler/config/nativeWorkerBackend implementation edits.
+
+Result: repo-verified for the declared public action-level cancellation scope.
 
 ---
 
 ## 14. Caveats and risks
 
-### Finding
+No merge-blocking caveats found for the declared branch scope after direct GitHub branch inspection.
 
-GitHub branch verification has not been performed yet for `runtime-cancel-action-v1`.
-
-### Affected surface
+Known non-blocking caveat:
 
 ```text
-source truth / upload verification / merge readiness
+GitHub raw retrieval may display source as line-collapsed in some assistant retrieval paths. GitHub file pages and compare diff still show normal file metadata / structured diff, and local package checks passed. Treat raw line collapse as retrieval/display artifact unless a local clone confirms formatting damage.
 ```
 
-### Why it matters
-
-The assistant sandbox candidate and Michael's local extracted candidate passed the required checks, but merge readiness still requires confirming the uploaded GitHub branch contains the same reviewed source and docs.
-
-### Smallest safe correction
-
-After upload, inspect the branch directly at the expected paths listed in section 13 and confirm the latest commit message(s).
-
-### What still needs verification
-
-```text
-GitHub branch content after upload
-no unexpected worker/lifecycle/scheduler/config file changes on the branch
-```
+No code changes are recommended from this review.
 
 ---
 
