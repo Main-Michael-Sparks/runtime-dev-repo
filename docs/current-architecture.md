@@ -46,6 +46,7 @@ runtime/bus/
   capabilityBusEvents.mjs
   actionEventHistory.mjs
   actionEventSubscriptionRegistry.mjs
+  actionEventReplay.mjs
   executeAction/
     actionRequestRegistry.mjs
     capabilityBusExecuteActionCommon.mjs
@@ -164,16 +165,37 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
-live action-event subscription, bounded in-memory action-event readback, and started/terminal event publication for executeAction
+live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, and started/terminal event publication for executeAction
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
 worker message routing
 executeAction dependency injection through the public raw-envelope dispatch seam into the first nativeWorkerBackend seam
 cancelAction mapping through the execute-action registry into the existing cancelPrompt path
-subscribeActionEvents mapping through the bus-level live action-event subscription registry
+subscribeActionEvents mapping through the bus-level replay helper, live action-event subscription registry, and bounded in-memory history helper when replay is enabled
 readActionEvents mapping through the bus-level bounded in-memory action-event history helper
 ```
+
+
+## Action event surface
+
+The action-event surface is intentionally split across small bus modules:
+
+```text
+actionEvent.mjs
+  validation and normalization of action-event envelopes
+
+actionEventSubscriptionRegistry.mjs
+  live same-process listener registration, actionId/runId/type filtering, publication, and unsubscribe behavior
+
+actionEventHistory.mjs
+  bounded in-memory retention, sequence assignment, duplicate retained eventId rejection, and read/query behavior
+
+actionEventReplay.mjs
+  optional retained in-memory replay plus live-join buffering/dedupe for subscribeActionEvents(..., { replay: true })
+```
+
+Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. Replay uses retained in-memory history only and does not add durable event storage, process-restart recovery, cross-process pub/sub, stream-delta materialization, or `eventLogStoreBackend`.
 
 ## Worker layout
 

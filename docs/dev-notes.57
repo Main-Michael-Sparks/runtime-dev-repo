@@ -1,0 +1,309 @@
+# Dev Notes 57 — Runtime Action Event Replay Contract v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-action-event-replay-contract-v1`  
+**Status:** Candidate staged in assistant sandbox from GitHub `main` mirror for the declared retained in-memory action-event replay/live-join scope. Assistant syntax checks, fixture coverage, worker import hygiene, targeted action-event replay smoke, action-event history regression smoke, action-event subscription regression smoke, runtime public-entrypoint guard, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regression smokes, broader current contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, and artifact guard passed. Direct GitHub branch inspection remains required after upload. Real-runtime testing was not run in this session and is not required for the declared parent-side/bus-only replay scope unless Michael wants a spot regression check.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow, parent-side, in-process replay contract for already-retained action events.
+
+The public surface remains:
+
+```js
+subscribeActionEvents(filterOrListener, listener, options = {})
+```
+
+Default behavior remains live-only. Replay is opt-in:
+
+```js
+const unsubscribe = subscribeActionEvents({ actionId: "act_123" }, listener, {
+    replay: true,
+    afterSequence: 12,
+    limit: 25
+});
+```
+
+Listener-first replay shorthand is also supported:
+
+```js
+const unsubscribe = subscribeActionEvents(listener, {
+    replay: true
+});
+```
+
+The branch does not add durable event storage, process-restart recovery, cross-process pub/sub, stream-delta materialization, `eventLogStoreBackend`, graph runtime, worker/lifecycle/request/stream/backend changes, or prompt/output semantic changes.
+
+---
+
+## 2. Implementation summary
+
+Added:
+
+```text
+runtime/bus/actionEventReplay.mjs
+tests/smokeTestActionEventReplay.mjs
+docs/dev-notes.57
+```
+
+Modified:
+
+```text
+runtime.mjs
+runtime/bus/actionEventSubscriptionRegistry.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+---
+
+## 3. Modular ownership boundaries
+
+The branch preserves the event-surface split:
+
+```text
+runtime/bus/actionEvent.mjs
+  validation and normalization of action-event envelopes only
+
+runtime/bus/actionEventHistory.mjs
+  bounded in-memory retention, sequence assignment, duplicate retained eventId rejection, and read/query only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registration, actionId/runId/type filtering, publication, and unsubscribe behavior only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained in-memory replay plus live-join buffering/dedupe only
+
+runtime.mjs
+  composition root / dependency injection / public API export only
+```
+
+No broad event manager was introduced.
+
+`actionEventReplay.mjs` does not import or own:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime/request/**
+runtime/stream/**
+runtime/lifecycle/**
+runtime/backends/**
+runtime/router/**
+runtime/services/**
+executeAction internals
+```
+
+---
+
+## 4. Replay behavior
+
+When `options.replay !== true`, `subscribeActionEvents(...)` delegates to the existing live subscription registry and remains backward compatible.
+
+When replay is enabled:
+
+```text
+1. subscription arguments and replay options are normalized/validated first;
+2. a live subscription wrapper is registered before reading retained history;
+3. matching live events are buffered until replay completes;
+4. retained history is read with the normalized live filter plus replay cursor options;
+5. retained events are delivered in existing history order;
+6. buffered live events whose sequence is greater than the retained replay boundary are flushed;
+7. future live events are delivered directly.
+```
+
+Boundary rule:
+
+```text
+No event should be missed between retained-history read and live registration.
+An event already delivered by retained replay should not be delivered again from the join buffer.
+```
+
+Dedupe uses monotonic `sequence`, not eventId string comparison.
+
+Listener errors during replay are isolated and do not abort the subscription surface, matching the live publication policy that listener failures must not affect other runtime behavior.
+
+---
+
+## 5. Public options
+
+Replay options:
+
+```js
+{
+    replay: true,
+    afterSequence: 123,
+    limit: 50
+}
+```
+
+Validation:
+
+```text
+replay must be boolean when provided
+afterSequence must be finite non-negative number when provided
+limit must be positive integer when provided
+unknown replay option keys reject before live registration
+unknown live filter keys still reject through the subscription registry normalizer
+```
+
+Supported live filter keys remain:
+
+```text
+actionId
+runId
+type
+```
+
+This branch does not expand live subscriptions to support `capability`, timestamp range, or other history-only filters.
+
+---
+
+## 6. Verification in assistant sandbox
+
+Targeted checks run:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+
+Execute-action regression checks run:
+
+```bash
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Broader static/mock contract checks run:
+
+```bash
+node ./tests/smokeTestActionEnvelopeContract.mjs
+node ./tests/smokeTestCapabilityRegistryContract.mjs
+node ./tests/smokeTestCapabilityBusContract.mjs
+node ./tests/smokeTestCapabilityRouterContract.mjs
+node ./tests/smokeTestModelBundleRouteValidation.mjs
+node ./tests/smokeTestCapabilityServiceContract.mjs
+node ./tests/smokeTestBackendAdapterContract.mjs
+node ./tests/smokeTestBackendAdapterExecutionInterface.mjs
+node ./tests/smokeTestNativeWorkerBackendContract.mjs
+node ./tests/smokeTestCapabilityExecutorContract.mjs
+node ./tests/smokeTestCapabilityBusExecutorSkeleton.mjs
+node ./tests/smokeTestModelBundleRegistryContract.mjs
+node ./tests/smokeTestHardwareProfileRegistryContract.mjs
+node ./tests/smokeTestWorkerProtocolContract.mjs
+node ./tests/smokeTestWorkerStreamOrdering.mjs
+node ./tests/smokeTestWorkerModelPathImmutability.mjs
+node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
+```
+
+Candidate package guard after extraction:
+
+```text
+source_file_count: 211
+candidate_file_count: 211
+required_file_count: 11
+syntax_check_count: 6
+failing_finding_count: 0
+```
+
+Observed targeted replay smoke coverage:
+
+```text
+legacy live-only subscription behavior remains unchanged
+listener-first replay shorthand works
+filter + listener replay works
+replay afterSequence skips already-seen retained events
+replay limit caps retained replay delivery
+future live event after replay is delivered once
+live join buffer does not duplicate retained replay events
+live event published during replay delivery flushes after retained replay
+unsubscribe remains idempotent
+unsubscribe prevents future live delivery after replay
+listener error during replay does not abort subscription
+invalid replay options reject before subscription registration
+unknown live filter keys still reject
+source-boundary guards passed
+```
+
+Broader execute-action and contract-chain regression checks also passed in the assistant sandbox.
+
+---
+
+## 7. Explicit non-goals
+
+Not included:
+
+```text
+durable event storage
+eventLogStoreBackend
+process-restart recovery
+cross-process pub/sub
+stream-delta materialization
+action.stream.delta payloads
+graph runtime
+memory/storage backend implementation
+vision/multimodal execution
+embedding/rerank/retrieval execution
+tool execution
+worker/native backend redesign
+scheduler lane redesign
+request settlement changes
+prompt/output semantic changes
+cleanup/optimization unrelated to replay
+```
+
+---
+
+## 8. Real-runtime note
+
+This branch is parent-side/bus-only. It does not touch worker, lifecycle, scheduler, request settlement, stream shaping, native backend execution, prompt semantics, or cancellation behavior.
+
+Real-runtime testing is therefore not required for the direct replay contract if the branch remains within this scope. Michael may still run spot execute-action real-runtime regression checks after upload if desired.
+
+---
+
+## 9. Required post-upload verification
+
+After uploading the branch to GitHub, inspect direct branch source for:
+
+```text
+runtime/bus/actionEventReplay.mjs
+runtime/bus/actionEventSubscriptionRegistry.mjs
+runtime.mjs
+tests/smokeTestActionEventReplay.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestRuntimePublicEntrypointContract.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+docs/dev-notes.57
+```
+
+Then run or review:
+
+```bash
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Broader regression checks should also be run before merge consideration.
