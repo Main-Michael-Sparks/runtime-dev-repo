@@ -3,8 +3,8 @@
 **Date:** 2026-06-20  
 **Branch:** `runtime-action-stream-delta-events-v1`  
 **Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
-**Source truth:** GitHub `main` was the declared source truth at branch start. This assistant implementation was staged from the local `runtime-dev-repo-main.zip` mirror after the Replay v1 handoff/preflight. GitHub branch verification is still required after upload.  
-**Status:** Candidate staged in sandbox for the declared opt-in live-only `action.stream.delta` scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action stream-delta smoke, replay/history/subscription/public-entrypoint smokes, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regressions, broader contract-chain smokes, and worker static/mock smokes passed. Real-runtime testing and direct GitHub branch/main verification are still required before merge readiness.
+**Source truth at branch start:** GitHub `main` after Runtime Action Event Replay Contract v1. The implementation candidate was staged from the local `runtime-dev-repo-main.zip` mirror after the Replay v1 handoff/preflight, then uploaded to the feature branch and cache-busted/source-inspected.  
+**Status:** Feature branch candidate uploaded to `runtime-action-stream-delta-events-v1` and repo-inspected for the declared opt-in live-only `action.stream.delta` scope; assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action stream-delta smoke, replay/history/subscription/public-entrypoint smokes, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regressions, broader contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, candidate package guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend spot checks, and cache-busted GitHub feature-branch source inspection passed. Not yet merged to `main`; final `main` inspection remains a post-merge gate.
 
 ---
 
@@ -76,7 +76,7 @@ tests/smokeTestRuntimePublicEntrypointContract.mjs
 tests/smokeTestActionEventReplay.mjs
 ```
 
-No source edits were made to:
+Explicitly not modified:
 
 ```text
 workerBridge.mjs
@@ -87,6 +87,7 @@ runtime/config/**
 runtime/backends/**
 runtime/router/**
 runtime/services/**
+runtime/lifecycle/* except the narrow workerProtocolRouter stream-observer injection
 ```
 
 `runtime/lifecycle/workerProtocolRouter.mjs` was touched only to call an injected observer after token normalization/finalText accumulation and before parent-side stream shaping.
@@ -238,13 +239,19 @@ type
 capability
 ```
 
-`readActionEvents(filter = {}, options = {})` remains bounded retained-history readback. It does not return live-only stream deltas unless a future retained stream-delta policy branch changes that explicitly.
+Important default:
+
+```text
+includeStreamDeltas defaults to false
+```
+
+This keeps existing action-event subscribers from receiving high-volume stream chunks unless explicitly opted in.
 
 ---
 
-## 6. Verification carried forward
+## 6. Tests and verification
 
-Assistant syntax/helper checks passed:
+Assistant sandbox syntax/helper checks passed:
 
 ```bash
 find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
@@ -252,7 +259,7 @@ node ./tests/tools/checkRuntimeFixtureCoverage.mjs
 node ./tests/tools/checkWorkerImportCycles.mjs
 ```
 
-Targeted action-event checks passed:
+Targeted action-event/public-entrypoint checks passed:
 
 ```bash
 node ./tests/smokeTestActionStreamDeltaEvents.mjs
@@ -294,9 +301,7 @@ node ./tests/smokeTestWorkerModelPathImmutability.mjs
 node ./tests/smokeTestWorkerModelDisposalPolicy.mjs
 ```
 
-Real-runtime testing still needed before merge readiness because this branch touches `workerProtocolRouter` stream handling, even though the change is parent-side and no worker/backend code was changed.
-
-Suggested Michael local Windows/MINGW64 real-runtime checks:
+Michael local Windows/MINGW64 real-runtime checks passed:
 
 ```bash
 REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
@@ -304,101 +309,213 @@ REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
 REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
 ```
 
-A future real-runtime stream-delta smoke may be added after the mock behavior is accepted.
+Observed successful real-runtime outcomes included:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME executeAction text.generate completed
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+```
+
+Known non-blocking warnings appeared:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+Because this branch observes the parent stream path through `workerProtocolRouter`, Michael’s real-runtime checks provide additional confidence that existing native text.generate and cancel paths still work with the observer injection present.
 
 ---
 
-## 7. Caveats / known risks
+## 7. Artifact/package verification
 
-### Finding: Stream deltas are live-only
-
-Affected surface:
+Final assistant candidate package:
 
 ```text
-future graph progress observation, replay/restart behavior, durable audit timelines
+runtime-action-stream-delta-events-v1-candidate.zip
 ```
 
-Why it matters:
+Candidate SHA-256:
 
 ```text
-A subscriber can observe deltas only while attached in the same process. Deltas disappear after process exit and are not returned by retained replay/readback.
+60952cf3f86444227aab90a44e02efc56beb6687fa4a971e90fd9d7a7a3554e8
 ```
 
-Smallest safe correction:
+Candidate package extraction/recheck and package guard passed:
 
 ```text
-Keep v1 docs/API language as opt-in live-only stream deltas. Define retained/durable stream-delta policy separately.
+source_file_count: 211
+candidate_file_count: 214
+required_file_count: 15
+new_file_count: 3
+changed_file_count: 12
+syntax_check_count: 9
+failing_finding_count: 0
 ```
 
-What still needs verification:
+Package extraction recheck passed for:
 
-```text
-Future eventLogStoreBackend or retained-delta branch must define volume limits, backpressure, cursor semantics, retention, and storage failure policy.
-```
-
-### Finding: workerProtocolRouter stream path is touched
-
-Affected surface:
-
-```text
-parent-side stream handling, finalText accumulation, pushStream ordering
-```
-
-Why it matters:
-
-```text
-Mock tests show observer errors are isolated, but real-runtime stream behavior should still be checked before merge readiness.
-```
-
-Smallest safe correction:
-
-```text
-Run Michael local real-runtime execute-action/nativeWorkerBackend/cancel spot checks before final status.
-```
-
-What still needs verification:
-
-```text
-Real-runtime streaming behavior with actual node-llama-cpp output.
-```
-
-### Finding: Synchronous live subscribers can still consume time
-
-Affected surface:
-
-```text
-high-volume stream-delta listeners
-```
-
-Why it matters:
-
-```text
-The existing live event publication model is synchronous. Stream deltas are opt-in to avoid surprising default listeners, but a slow opted-in listener can still add synchronous work.
-```
-
-Smallest safe correction:
-
-```text
-Keep v1 opt-in and do not add hidden coalescing/drop policy. Add coalescing/sampling/drop diagnostics only in a separate explicit branch.
-```
-
-What still needs verification:
-
-```text
-Whether future graph/control consumers need sampled/coalesced stream observations instead of every normalized chunk.
+```bash
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
 ```
 
 ---
 
-## 8. Future work not included
+## 8. GitHub verification notes
+
+Feature branch inspected:
+
+```text
+runtime-action-stream-delta-events-v1
+```
+
+Cache-busted feature-branch source inspection confirmed:
+
+```text
+runtime/bus/actionStreamDeltaEvents.mjs exists and exports createActionStreamDeltaObserver(...)
+runtime/lifecycle/workerProtocolRouter.mjs contains the injected observeStreamDelta(...) call after normalization/finalText accumulation and before pushStream(...)
+runtime.mjs imports and injects createActionStreamDeltaObserver(...)
+runtime/bus/actionEventSubscriptionRegistry.mjs gates stream deltas behind includeStreamDeltas
+runtime/bus/actionEventReplay.mjs passes includeStreamDeltas to the live subscription layer without making deltas retained/replayed
+runtime/bus/executeAction/actionRequestRegistry.mjs includes getActionRequestByRequestId(...)
+tests/smokeTestActionStreamDeltaEvents.mjs exists with opt-in/no-retention/replay-pass-through/source-boundary coverage
+README/docs propagation describes live-only opt-in stream deltas
+```
+
+A first branch inspection found an incomplete upload, with `runtime.mjs` referring to `actionStreamDeltaEvents.mjs` while that helper file was missing and `workerProtocolRouter.mjs` still lacked the observer injection. Michael reuploaded the branch contents, and the corrected branch was then source-inspected successfully.
+
+Recent branch commit observations included fresh upload commits on 2026-06-21 such as:
+
+```text
+77cc8ef — Add files via upload
+0cfa505 — Add files via upload
+```
+
+This is feature-branch repo verification only. After merge, `main` still needs cache-busted final inspection before marking the branch main-inspected.
+
+---
+
+## 9. Caveats / known risks
+
+### Finding: Stream deltas are live-only in v1
+
+Affected surface:
+
+```text
+readActionEvents(...), replay:true, future graph replay/recovery, durable audit timelines
+```
+
+Why it matters:
+
+```text
+action.stream.delta events do not enter bounded retained history and disappear after live publication.
+```
+
+Smallest safe correction:
+
+```text
+Keep docs/API language as live-only opt-in stream deltas. Design retained/durable stream-delta policy separately if needed.
+```
+
+What still needs verification:
+
+```text
+Future retained/durable stream-delta branch must define storage volume, cursor semantics, retention, sampling/coalescing, and replay policy.
+```
+
+### Finding: Stream-delta publication is best-effort/no-throw
+
+Affected surface:
+
+```text
+workerProtocolRouter stream path, prompt/output semantics, subscription listeners
+```
+
+Why it matters:
+
+```text
+A bad subscriber or mapping failure must not break prompt output, stream shaping, or final result settlement.
+```
+
+Smallest safe correction:
+
+```text
+Keep observer errors isolated and return null for unmapped/non-action request IDs.
+```
+
+What still needs verification:
+
+```text
+Future branches that move or expand stream events must preserve no-throw observer behavior unless a separate error-policy branch is approved.
+```
+
+### Finding: Default subscribers exclude stream deltas
+
+Affected surface:
+
+```text
+existing subscribeActionEvents(...) consumers
+```
+
+Why it matters:
+
+```text
+Stream chunks may be high-volume. Delivering them by default would be a public behavior and performance surprise.
+```
+
+Smallest safe correction:
+
+```text
+Keep includeStreamDeltas defaulting false.
+```
+
+What still needs verification:
+
+```text
+Any future public API expansion should preserve backward-compatible defaults.
+```
+
+### Finding: Durable event storage and cross-process pub/sub remain excluded
+
+Affected surface:
+
+```text
+future graph hosting, restart recovery, eventLogStoreBackend, service/process boundaries
+```
+
+Why it matters:
+
+```text
+Current events remain same-process observation. External graph/control deployment still needs a separate bridge or durable event log design.
+```
+
+Smallest safe correction:
+
+```text
+Keep eventLogStoreBackend and cross-process pub/sub in separate plan/spec branches.
+```
+
+What still needs verification:
+
+```text
+Future graph/control deployment shape and event durability requirements.
+```
+
+---
+
+## 10. Future work not included
 
 Possible future branches:
 
 ```text
 runtime-event-log-store-contract-v1
 runtime-action-event-cross-process-bridge-plan-spec
-runtime-action-stream-delta-retention-policy-v1
-runtime-action-stream-delta-coalescing-policy-v1
+runtime-memory-action-event-log-backend-plan-spec
+runtime-action-stream-delta-retention-policy-plan-spec
 ```
 
 Still excluded unless Michael explicitly redirects:
@@ -412,12 +529,13 @@ tool execution
 cleanup/optimization
 worker/native backend redesign
 scheduler lane redesign
+streamController redesign
 ```
 
 ---
 
-## 9. Recommended next step
+## 11. Recommended next step
 
-Upload the candidate branch and run Michael local real-runtime checks.
+Upload this corrected `docs/dev-notes.58` to the feature branch, then merge when Michael is satisfied with the branch candidate.
 
-After successful real-runtime checks and direct GitHub branch inspection, update final status from candidate staged/sandbox-tested to repo-verified and real-runtime-tested by Michael.
+After merge, perform cache-busted `main` inspection and generate/finalize the checkout documents with `main` status if needed.
