@@ -67,12 +67,17 @@ import {
 import {
     createActionStreamDeltaObserver
 } from "./runtime/bus/actionStreamDeltaEvents.mjs";
+import {
+    appendRuntimeActionEventLog,
+    createActionEventLogIntegration
+} from "./runtime/bus/actionEventLog/actionEventLogIntegration.mjs";
 
 
 const lifecycle = createRuntimeLifecycleState();
 const actionRequests = createActionRequestRegistry();
 const actionEvents = createActionEventSubscriptionRegistry();
 const actionEventHistory = createActionEventHistory();
+const actionEventLog = createActionEventLogIntegration();
 
 function publishRuntimeLiveActionEvent(event) {
     return publishActionEvent(actionEvents, event);
@@ -182,6 +187,7 @@ export async function prompt(text, options = {}) {
 
 function publishRuntimeActionEvent(event) {
     const recordedEvent = recordActionEvent(actionEventHistory, event);
+    appendRuntimeActionEventLog(actionEventLog, recordedEvent);
     return publishActionEvent(actionEvents, recordedEvent);
 }
 

@@ -1,6 +1,6 @@
 # Current Runtime Architecture
 
-Date: 2026-06-20
+Date: 2026-06-21
 
 This document summarizes the current repo shape after the parent-runtime and Worker Layout Option C modularization arcs.
 
@@ -52,6 +52,7 @@ runtime/bus/
     actionEventLogCommon.mjs
     actionEventLogEntry.mjs
     actionEventLogStoreContract.mjs
+    actionEventLogIntegration.mjs
   executeAction/
     actionRequestRegistry.mjs
     capabilityBusExecuteActionCommon.mjs
@@ -203,10 +204,10 @@ actionStreamDeltaEvents.mjs
   live-only action.stream.delta mapping from injected parent-side request stream observations
 
 actionEventLog/
-  contract-only future event-log store constants, append/read entry validation, adapter validation, cursor/read-result shape validation, and high-volume event policy
+  future event-log store constants, append/read entry validation, adapter validation, cursor/read-result shape validation, high-volume event policy, and a no-adapter runtime integration helper for optional append handoff
 ```
 
-Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only. `runtime/bus/actionEventLog/` defines the v1 contract for future durable event-log adapters, but does not add runtime persistence wiring, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or a real `eventLogStoreBackend`.
+Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only. `runtime/bus/actionEventLog/` defines the v1 contract for future durable event-log adapters and now provides a no-adapter runtime integration seam. It does not add concrete durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, durable read APIs, or a real `eventLogStoreBackend`.
 
 ## Worker layout
 

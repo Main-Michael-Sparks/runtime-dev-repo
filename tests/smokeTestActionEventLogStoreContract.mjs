@@ -413,7 +413,9 @@ async function assertSourceBoundaryGuards() {
     const entrySource = await readSource("runtime/bus/actionEventLog/actionEventLogEntry.mjs");
     const contractSource = await readSource("runtime/bus/actionEventLog/actionEventLogStoreContract.mjs");
 
-    assert(!runtimeSource.includes("actionEventLog"), "runtime.mjs should not import or wire action event log contract in v1");
+    assert(runtimeSource.includes("actionEventLogIntegration.mjs"), "runtime.mjs should use only the modular event-log integration seam");
+    assert(!runtimeSource.includes("assertActionEventLogStoreAdapter"), "runtime.mjs should not validate or own event-log adapters directly");
+    assert(!runtimeSource.includes("eventLogStoreBackend"), "runtime.mjs should not name or own a concrete event-log backend");
     assert(!bridgeSource.includes("actionEventLog"), "workerBridge should not know about action event log contract");
     assert(!workerSource.includes("actionEventLog"), "llama_worker should not know about action event log contract");
 
