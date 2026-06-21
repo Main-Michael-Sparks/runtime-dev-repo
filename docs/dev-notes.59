@@ -1,0 +1,455 @@
+# Dev Notes 59 — Runtime Event Log Store Contract v1
+
+**Date:** 2026-06-20  
+**Branch:** `runtime-event-log-store-contract-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Candidate staged for the declared contract-only event-log store seam. Assistant syntax checks, fixture coverage, worker import hygiene, targeted event-log contract smoke, related action-event/execute-action mock regression smokes, package extraction/recheck, artifact guard, and Michael local Windows/MINGW64 real-runtime execute-action/nativeWorkerBackend/cancelAction spot checks passed. No real-runtime test was required for this candidate while it remains contract-only, but Michael completed the extra real-runtime confidence pass.
+
+---
+
+## 1. Purpose
+
+This branch adds a narrow, modular contract seam for future durable action-event/audit storage.
+
+The branch answers:
+
+```text
+what an event-log store adapter must expose
+what append/read entry shapes are legal
+what cursor fields are legal
+what event types are default durable-log candidates
+how high-volume action.stream.delta is excluded by default
+```
+
+This branch intentionally does **not** implement runtime persistence, a durable database/file backend, process-restart recovery, cross-process pub/sub, stream-delta retention, stream-delta replay, graph runtime behavior, or Runtime Memory Module storage.
+
+---
+
+## 2. Modular ownership boundaries
+
+The event surface remains split across focused modules:
+
+```text
+runtime/bus/actionEvent.mjs
+  validation and normalization of action-event envelopes only
+
+runtime/bus/actionEventHistory.mjs
+  bounded retained in-memory history/readback only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registry/filtering/publication only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained in-memory replay/live-join orchestration only
+
+runtime/bus/actionStreamDeltaEvents.mjs
+  live-only action.stream.delta mapping from injected parent-side stream observations only
+
+runtime/bus/actionEventLog/*
+  contract-only future durable event-log adapter shape, append/read validation, cursor/result shape validation, and high-volume event policy
+```
+
+No broad event manager was introduced.
+
+The new event-log contract modules do not import:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime/request/**
+runtime/stream/**
+runtime/lifecycle/**
+runtime/backends/**
+actionEventHistory.mjs
+actionEventReplay.mjs
+actionEventSubscriptionRegistry.mjs
+actionStreamDeltaEvents.mjs
+```
+
+---
+
+## 3. Added files
+
+```text
+runtime/bus/actionEventLog/actionEventLogCommon.mjs
+runtime/bus/actionEventLog/actionEventLogEntry.mjs
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+tests/smokeTestActionEventLogStoreContract.mjs
+docs/dev-notes.59
+```
+
+## 4. Modified files
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+tests/helpers/runtimeFixtureFiles.mjs
+```
+
+Explicitly not modified:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime/lifecycle/**
+runtime/request/**
+runtime/stream/**
+runtime/config/**
+runtime/backends/**
+runtime/router/**
+runtime/services/**
+runtime/bus/actionEventHistory.mjs
+runtime/bus/actionEventReplay.mjs
+runtime/bus/actionEventSubscriptionRegistry.mjs
+runtime/bus/actionStreamDeltaEvents.mjs
+```
+
+---
+
+## 5. Contract surface
+
+Primary barrel:
+
+```text
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+```
+
+Exports include:
+
+```text
+ACTION_EVENT_LOG_STORE_CONTRACT_VERSION
+ACTION_EVENT_LOG_DEFAULT_DURABLE_EVENT_TYPES
+ACTION_EVENT_LOG_HIGH_VOLUME_EVENT_TYPES
+isDefaultDurableActionEventLogType(...)
+isHighVolumeActionEventLogType(...)
+normalizeActionEventLogAppendEntry(...)
+validateActionEventLogAppendEntry(...)
+assertActionEventLogAppendEntry(...)
+copyActionEventLogEntry(...)
+normalizeActionEventLogReadFilter(...)
+validateActionEventLogReadFilter(...)
+normalizeActionEventLogReadOptions(...)
+validateActionEventLogReadOptions(...)
+validateActionEventLogStoreAdapter(...)
+assertActionEventLogStoreAdapter(...)
+validateActionEventLogAppendResult(...)
+assertActionEventLogAppendResult(...)
+validateActionEventLogReadResult(...)
+assertActionEventLogReadResult(...)
+```
+
+Contract version:
+
+```text
+runtime.actionEventLogStore.v1
+```
+
+Default durable-log eligible event types:
+
+```text
+action.accepted
+action.started
+action.completed
+action.failed
+action.cancelled
+action.timeout
+action.policyDenied
+```
+
+High-volume event types excluded by default:
+
+```text
+action.stream.delta
+```
+
+`action.stream.delta` is recognized by the contract but accepted only when the caller explicitly passes:
+
+```js
+{ includeHighVolumeEvents: true }
+```
+
+This is a contract policy only. The runtime still does not retain, replay, or persist stream deltas.
+
+---
+
+## 6. Adapter contract shape
+
+A future event-log adapter must satisfy this shape:
+
+```js
+{
+    contractVersion: "runtime.actionEventLogStore.v1",
+    adapterId: "event-log.some-adapter",
+    capabilities: {
+        append: true,
+        read: true,
+        cursorRead: true,
+        highVolumeEvents: false
+    },
+    appendEvent(entry) {},
+    readEvents(filter, options) {}
+}
+```
+
+Append result shape:
+
+```js
+{
+    accepted: true,
+    eventId,
+    sequence,
+    logOffset,
+    storedAt
+}
+```
+
+Read result shape:
+
+```js
+{
+    events: [],
+    cursor: {
+        lastSequence,
+        lastLogOffset
+    },
+    truncated: false
+}
+```
+
+Cursor policy:
+
+```text
+sequence      numeric cursor compatible with the existing event-history sequence style
+logOffset     opaque durable-backend cursor token, when a future backend supports it
+```
+
+The contract does not require every future backend to support both cursor styles.
+
+---
+
+## 7. Propagation review
+
+Propagation completed:
+
+```text
+new modules added to tests/helpers/runtimeFixtureFiles.mjs
+new targeted smoke test added
+README.md documents contract-only event-log seam without claiming persistence
+docs/current-architecture.md lists actionEventLog/ as a separate contract-only module family
+docs/feature-readiness.md updates next-branch guidance from contract creation to integration planning
+docs/README.md indexes dev-notes.59
+```
+
+No public runtime export was added. No `runtime.mjs` wrapper was added.
+
+---
+
+## 8. Tests run
+
+Assistant sandbox syntax/helper checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Targeted contract smoke:
+
+```bash
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+```
+
+Related action-event/public-entrypoint regression smokes:
+
+```bash
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+Execute-action/backend mock regression smokes:
+
+```bash
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestCapabilityBusExecuteActionContract.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Assistant sandbox note:
+
+```text
+REAL_RUNTIME=1 was not set in the assistant sandbox; real-runtime portions were skipped during assistant-run execute-action/backend smokes.
+```
+
+Michael local Windows/MINGW64 real-runtime confidence checks passed:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+```
+
+Observed successful real-runtime outcomes:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME executeAction text.generate completed
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+```
+
+Known non-blocking warnings appeared during real-runtime checks:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+Real-runtime note:
+
+```text
+Real-runtime testing was not required for this candidate while the branch remains contract-only and does not touch runtime publication, worker/lifecycle/request/stream/backend/native behavior, or prompt/output settlement. Michael completed the optional real-runtime confidence pass anyway, and it passed.
+```
+
+---
+
+## 9. Caveats / known risks
+
+### Finding: Contract exists but runtime persistence is not wired
+
+Affected surface:
+
+```text
+future eventLogStoreBackend, durable audit trail, restart recovery
+```
+
+Why it matters:
+
+```text
+This branch validates future adapter shape only. It does not make action events durable.
+```
+
+Smallest safe correction:
+
+```text
+Use a separate runtime-event-log-store-integration plan/spec before wiring runtime publication into a store.
+```
+
+What still needs verification:
+
+```text
+future append failure policy, retry/buffer behavior, and whether action execution should ever fail because durable append fails
+```
+
+### Finding: Stream deltas remain high-volume / excluded by default
+
+Affected surface:
+
+```text
+action.stream.delta retention, replay, durable storage volume, future graph observation
+```
+
+Why it matters:
+
+```text
+Durable stream-delta storage can create high write volume and ambiguous replay semantics.
+```
+
+Smallest safe correction:
+
+```text
+Keep includeHighVolumeEvents false by default and require an explicit future retention/replay policy branch.
+```
+
+What still needs verification:
+
+```text
+future stream-delta sampling, coalescing, retention, cursor, and replay policy
+```
+
+### Finding: Cross-process pub/sub is still separate
+
+Affected surface:
+
+```text
+future graph/control service hosting and external event listeners
+```
+
+Why it matters:
+
+```text
+Durable event logging and cross-process live fanout are different responsibilities.
+```
+
+Smallest safe correction:
+
+```text
+Keep cross-process bridge/pub-sub as a separate plan/spec branch.
+```
+
+---
+
+## 10. Future work not included
+
+Possible future branches:
+
+```text
+runtime-event-log-store-integration-plan-spec
+runtime-event-log-store-backend-contract-v1
+runtime-action-stream-delta-retention-policy-plan-spec
+runtime-action-event-cross-process-bridge-plan-spec
+```
+
+Still excluded unless explicitly approved:
+
+```text
+Cognitive Graph Runtime implementation
+Runtime Memory Module implementation
+SQLite/PostgreSQL/file-backed event store implementation
+runtime publication wiring into durable storage
+process-restart recovery
+cross-process pub/sub
+retained/replayed stream deltas
+worker/native backend redesign
+scheduler lane redesign
+streamController redesign
+cleanup/optimization
+```
+
+---
+
+## 11. Recommended next step
+
+If the candidate is uploaded to GitHub, run cache-busted direct branch source inspection for:
+
+```text
+runtime/bus/actionEventLog/actionEventLogCommon.mjs
+runtime/bus/actionEventLog/actionEventLogEntry.mjs
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+tests/smokeTestActionEventLogStoreContract.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+docs/README.md
+docs/dev-notes.59
+```
+
+Then run Michael local Windows/MINGW64 mock checks at minimum:
+
+```bash
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
