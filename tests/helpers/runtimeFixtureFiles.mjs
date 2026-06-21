@@ -57,6 +57,7 @@ export const RUNTIME_FIXTURE_FILES = [
     "runtime/bus/actionEventLog/actionEventLogCommon.mjs",
     "runtime/bus/actionEventLog/actionEventLogEntry.mjs",
     "runtime/bus/actionEventLog/actionEventLogStoreContract.mjs",
+    "runtime/bus/actionEventLog/actionEventLogIntegration.mjs",
     "runtime/bus/capabilityBusContract.mjs",
     "runtime/bus/capabilityDefinition.mjs",
     "runtime/bus/capabilityRegistryContract.mjs",
