@@ -9,7 +9,8 @@ import {
 const REPLAY_OPTION_KEYS = new Set([
     "replay",
     "afterSequence",
-    "limit"
+    "limit",
+    "includeStreamDeltas"
 ]);
 
 function createReplayInputError(message, details = {}) {
@@ -85,7 +86,11 @@ function normalizeReplayOptions(options = {}) {
     return {
         replay: normalizeReplayBoolean(options.replay, "options.replay"),
         afterSequence: normalizeNonNegativeNumber(options.afterSequence, "options.afterSequence"),
-        limit: normalizePositiveInteger(options.limit, "options.limit")
+        limit: normalizePositiveInteger(options.limit, "options.limit"),
+        includeStreamDeltas: normalizeReplayBoolean(
+            options.includeStreamDeltas,
+            "options.includeStreamDeltas"
+        )
     };
 }
 
@@ -178,7 +183,9 @@ export function subscribeActionEventReplay(deps, filterOrListener, listenerOrOpt
     );
 
     if (normalized.options.replay !== true) {
-        return deps.subscribe(normalized.filter, normalized.listener);
+        return deps.subscribe(normalized.filter, normalized.listener, {
+            includeStreamDeltas: normalized.options.includeStreamDeltas
+        });
     }
 
     const liveBuffer = [];
@@ -194,6 +201,8 @@ export function subscribeActionEventReplay(deps, filterOrListener, listenerOrOpt
         }
 
         deliverActionEvent(normalized.listener, event);
+    }, {
+        includeStreamDeltas: normalized.options.includeStreamDeltas
     });
 
     function unsubscribeActionEventReplay() {

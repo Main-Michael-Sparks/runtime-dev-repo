@@ -165,7 +165,7 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
-live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, and started/terminal event publication for executeAction
+live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, started/terminal event publication, and opt-in live-only stream-delta publication for executeAction
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
@@ -186,16 +186,19 @@ actionEvent.mjs
   validation and normalization of action-event envelopes
 
 actionEventSubscriptionRegistry.mjs
-  live same-process listener registration, actionId/runId/type filtering, publication, and unsubscribe behavior
+  live same-process listener registration, actionId/runId/type/capability filtering, stream-delta opt-in gating, publication, and unsubscribe behavior
 
 actionEventHistory.mjs
   bounded in-memory retention, sequence assignment, duplicate retained eventId rejection, and read/query behavior
 
 actionEventReplay.mjs
   optional retained in-memory replay plus live-join buffering/dedupe for subscribeActionEvents(..., { replay: true })
+
+actionStreamDeltaEvents.mjs
+  live-only action.stream.delta mapping from injected parent-side request stream observations
 ```
 
-Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. Replay uses retained in-memory history only and does not add durable event storage, process-restart recovery, cross-process pub/sub, stream-delta materialization, or `eventLogStoreBackend`.
+Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only and does not add durable event storage, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or `eventLogStoreBackend`.
 
 ## Worker layout
 

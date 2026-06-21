@@ -2,17 +2,23 @@ import {
     assertActionEvent
 } from "./actionEvent.mjs";
 import {
-    isKnownActionEventType
+    isKnownActionEventType,
+    isKnownCapability
 } from "./capabilityTaxonomy.mjs";
 import {
     isNonEmptyString,
     isPlainObject
 } from "./contractValidation.mjs";
 
+const STREAM_DELTA_EVENT_TYPE = "action.stream.delta";
 const SUBSCRIPTION_FILTER_KEYS = new Set([
     "actionId",
     "runId",
-    "type"
+    "type",
+    "capability"
+]);
+const SUBSCRIPTION_OPTION_KEYS = new Set([
+    "includeStreamDeltas"
 ]);
 
 function createSubscriptionInputError(message, details = {}) {
@@ -35,12 +41,36 @@ function normalizeStringField(value, field) {
     return value.trim();
 }
 
+function normalizeBooleanField(value, field) {
+    if (value === undefined) return false;
+
+    if (typeof value !== "boolean") {
+        throw createSubscriptionInputError(
+            `Action event subscription ${field} must be a boolean when provided`,
+            { field }
+        );
+    }
+
+    return value;
+}
+
 function assertKnownFilterKeys(filter) {
     for (const key of Object.keys(filter)) {
         if (SUBSCRIPTION_FILTER_KEYS.has(key)) continue;
 
         throw createSubscriptionInputError(
             `Unknown action event subscription filter field: ${key}`,
+            { field: key }
+        );
+    }
+}
+
+function assertKnownOptionKeys(options) {
+    for (const key of Object.keys(options)) {
+        if (SUBSCRIPTION_OPTION_KEYS.has(key)) continue;
+
+        throw createSubscriptionInputError(
+            `Unknown action event subscription option field: ${key}`,
             { field: key }
         );
     }
@@ -60,7 +90,8 @@ function normalizeFilter(filter) {
     const normalized = {
         actionId: normalizeStringField(filter.actionId, "actionId"),
         runId: normalizeStringField(filter.runId, "runId"),
-        type: normalizeStringField(filter.type, "type")
+        type: normalizeStringField(filter.type, "type"),
+        capability: normalizeStringField(filter.capability, "capability")
     };
 
     if (normalized.type !== undefined && !isKnownActionEventType(normalized.type)) {
@@ -70,9 +101,37 @@ function normalizeFilter(filter) {
         );
     }
 
+    if (normalized.capability !== undefined && !isKnownCapability(normalized.capability)) {
+        throw createSubscriptionInputError(
+            `Unknown action event subscription capability: ${normalized.capability}`,
+            { capability: normalized.capability }
+        );
+    }
+
     return Object.fromEntries(
         Object.entries(normalized).filter(([, value]) => value !== undefined)
     );
+}
+
+function normalizeSubscriptionOptions(options = {}) {
+    if (options === undefined || options === null) return {
+        includeStreamDeltas: false
+    };
+
+    if (!isPlainObject(options)) {
+        throw createSubscriptionInputError(
+            "Action event subscription options must be a plain object when provided"
+        );
+    }
+
+    assertKnownOptionKeys(options);
+
+    return {
+        includeStreamDeltas: normalizeBooleanField(
+            options.includeStreamDeltas,
+            "options.includeStreamDeltas"
+        )
+    };
 }
 
 export function normalizeActionEventSubscribeArgs(filterOrListener, listener) {
@@ -95,10 +154,16 @@ export function normalizeActionEventSubscribeArgs(filterOrListener, listener) {
     };
 }
 
-function eventMatchesFilter(event, filter) {
+function isStreamDeltaEvent(event) {
+    return event.type === STREAM_DELTA_EVENT_TYPE;
+}
+
+function eventMatchesFilter(event, filter, options) {
+    if (isStreamDeltaEvent(event) && options.includeStreamDeltas !== true) return false;
     if (filter.actionId !== undefined && event.actionId !== filter.actionId) return false;
     if (filter.runId !== undefined && event.runId !== filter.runId) return false;
     if (filter.type !== undefined && event.type !== filter.type) return false;
+    if (filter.capability !== undefined && event.capability !== filter.capability) return false;
 
     return true;
 }
@@ -118,16 +183,18 @@ export function createActionEventSubscriptionRegistry() {
     };
 }
 
-export function subscribeActionEvents(registry, filterOrListener, listener) {
+export function subscribeActionEvents(registry, filterOrListener, listener, options = {}) {
     assertSubscriptionRegistry(registry);
 
     const normalized = normalizeActionEventSubscribeArgs(filterOrListener, listener);
+    const normalizedOptions = normalizeSubscriptionOptions(options);
     const subscriptionId = registry.nextSubscriptionId++;
     let active = true;
 
     registry.subscriptions.set(subscriptionId, {
         id: subscriptionId,
         filter: normalized.filter,
+        options: normalizedOptions,
         listener: normalized.listener
     });
 
@@ -147,7 +214,7 @@ export function publishActionEvent(registry, event, options = {}) {
 
     for (const subscriber of subscribers) {
         if (!registry.subscriptions.has(subscriber.id)) continue;
-        if (!eventMatchesFilter(normalizedEvent, subscriber.filter)) continue;
+        if (!eventMatchesFilter(normalizedEvent, subscriber.filter, subscriber.options)) continue;
 
         try {
             subscriber.listener(normalizedEvent);

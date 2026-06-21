@@ -25,7 +25,8 @@ export function createWorkerProtocolRouter(ctx) {
         traceError,
         traceDelete,
         settleCompletedRequest,
-        settleFailedRequest
+        settleFailedRequest,
+        observeStreamDelta
     } = ctx;
 
     return function handleWorkerMessage(msg) {
@@ -80,6 +81,15 @@ export function createWorkerProtocolRouter(ctx) {
 
             const token = normalizeToken(msg.token, config);
             req.finalText += token;
+
+            if (typeof observeStreamDelta === "function") {
+                try {
+                    observeStreamDelta(req.id, token, req);
+                } catch {
+                    // Stream observers must not affect prompt streaming behavior.
+                }
+            }
+
             pushStream(req, token, config);
             return;
         }

@@ -73,6 +73,7 @@ The `dev-notes.*` files are preserved as branch-history checkpoints. They are in
 | `dev-notes.55` | runtime action event subscription v1 | current public event-observation checkpoint |
 | `dev-notes.56` | runtime action event history contract v1 | current bounded in-memory event-readback checkpoint |
 | `dev-notes.57` | runtime action event replay contract v1 | current retained in-memory event-replay checkpoint |
+| `dev-notes.58` | runtime action stream delta events v1 | current opt-in live-only stream-delta checkpoint |
 
 ## Reading order for new feature work
 

@@ -368,7 +368,7 @@ async function assertReplayValidation() {
     );
     await assertRejects(
         "unknown live filter key",
-        () => Promise.resolve(subscribeReplay({ capability: "text.generate" }, () => {}, { replay: true })),
+        () => Promise.resolve(subscribeReplay({ backendKind: "nativeWorkerBackend" }, () => {}, { replay: true })),
         "Unknown action event subscription filter field"
     );
     await assertRejects(
@@ -390,7 +390,7 @@ async function assertSourceBoundaries() {
     const runtimeMarkers = [
         "./runtime/bus/actionEventReplay.mjs",
         "subscribeActionEventReplay({",
-        "subscribe: (filter, normalizedListener) => subscribeActionEventRegistry(",
+        "subscribe: (filter, normalizedListener, subscribeOptions) => subscribeActionEventRegistry(",
         "readEvents: (filter, readOptions) => readActionEventHistory(",
         "export function subscribeActionEvents(filterOrListener, listener, options = {})"
     ];

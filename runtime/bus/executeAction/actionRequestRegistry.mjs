@@ -34,6 +34,10 @@ function createActiveActionError(actionId) {
     });
 }
 
+function copyRecord(record) {
+    return record ? { ...record } : null;
+}
+
 export function createActionRequestRegistry() {
     return {
         active: new Map()
@@ -64,7 +68,7 @@ export function reserveActionRequest(registry, action) {
     copyOptionalMetadata(record, action);
     registry.active.set(actionId, record);
 
-    return { ...record };
+    return copyRecord(record);
 }
 
 export function bindActionRequest(registry, actionId, requestId, handle = {}) {
@@ -103,7 +107,7 @@ export function bindActionRequest(registry, actionId, requestId, handle = {}) {
     record.boundAt = Date.now();
     copyOptionalMetadata(record, handle);
 
-    return { ...record };
+    return copyRecord(record);
 }
 
 export function releaseActionRequest(registry, actionId) {
@@ -123,8 +127,20 @@ export function getActionRequest(registry, actionId) {
 
     if (!normalizedActionId) return null;
 
-    const record = registry.active.get(normalizedActionId);
-    return record ? { ...record } : null;
+    return copyRecord(registry.active.get(normalizedActionId));
+}
+
+export function getActionRequestByRequestId(registry, requestId) {
+    assertRegistry(registry);
+
+    if (requestId === undefined || requestId === null) return null;
+
+    for (const record of registry.active.values()) {
+        if (record.requestId !== requestId) continue;
+        return copyRecord(record);
+    }
+
+    return null;
 }
 
 export function cancelActionRequest(registry, actionId, cancelRequest, options = {}) {
