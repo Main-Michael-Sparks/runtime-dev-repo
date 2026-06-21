@@ -3,8 +3,10 @@
 **Date:** 2026-06-20  
 **Branch:** `runtime-action-stream-delta-events-v1`  
 **Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
-**Source truth at branch start:** GitHub `main` after Runtime Action Event Replay Contract v1. The implementation candidate was staged from the local `runtime-dev-repo-main.zip` mirror after the Replay v1 handoff/preflight, then uploaded to the feature branch and cache-busted/source-inspected.  
-**Status:** Feature branch candidate uploaded to `runtime-action-stream-delta-events-v1` and repo-inspected for the declared opt-in live-only `action.stream.delta` scope; assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action stream-delta smoke, replay/history/subscription/public-entrypoint smokes, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regressions, broader contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, candidate package guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend spot checks, and cache-busted GitHub feature-branch source inspection passed. Not yet merged to `main`; final `main` inspection remains a post-merge gate.
+**Source truth at completion:** GitHub `main` after feature-branch upload, Michael local Windows/MINGW64 real-runtime checks, corrected branch inspection, post-upload `main` cache-busted source inspection, and final checkout review. Uploaded ZIPs, sandbox plan/specs, generated markdown, and candidate packages remain reference/freeze artifacts unless Michael explicitly promotes one.  
+**Status:** Merged/uploaded to `main` and main-inspected for the declared opt-in live-only `action.stream.delta` scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted action stream-delta smoke, replay/history/subscription/public-entrypoint smokes, execute-action/cancel-action/public-dispatch/nativeWorkerBackend mock regressions, broader contract-chain smokes, worker static/mock smokes, candidate package extraction/recheck, candidate package guard, Michael local Windows/MINGW64 real-runtime execute-action/cancel-action/nativeWorkerBackend spot checks, cache-busted GitHub feature-branch source inspection, cache-busted GitHub `main` source inspection, and final checkout document generation passed.
+
+> Note: an earlier `main` inspection found a partial/inconsistent upload. Michael reuploaded the missing propagation set. A subsequent cache-busted `main` inspection confirmed the scoped source/docs/test propagation. The in-repo `docs/dev-notes.58` text observed during final checkout still contained feature-branch wording that said the branch was not yet merged to `main`; this document is the corrected final wording intended for the final docs/status refresh.
 
 ---
 
@@ -26,9 +28,7 @@ Stream deltas are opt-in:
 const unsubscribe = subscribeActionEvents(
     { actionId: "act_123" },
     listener,
-    {
-        includeStreamDeltas: true
-    }
+    { includeStreamDeltas: true }
 );
 ```
 
@@ -38,10 +38,7 @@ A replay listener may also opt into future live deltas:
 const unsubscribe = subscribeActionEvents(
     { actionId: "act_123" },
     listener,
-    {
-        replay: true,
-        includeStreamDeltas: true
-    }
+    { replay: true, includeStreamDeltas: true }
 );
 ```
 
@@ -109,7 +106,7 @@ runtime/bus/actionEventSubscriptionRegistry.mjs
   live same-process listener registration, filtering, stream-delta opt-in gating, publication, and unsubscribe behavior only
 
 runtime/bus/actionEventReplay.mjs
-  optional retained replay/live-join orchestration only; it passes includeStreamDeltas to the live subscription layer but does not retain or replay deltas from history
+  optional retained replay/live-join orchestration only; passes includeStreamDeltas to the live subscription layer but does not retain or replay deltas from history
 
 runtime/bus/actionStreamDeltaEvents.mjs
   maps injected parent-side request stream observations to live-only action.stream.delta events using actionRequests requestId lookup and injected event publication
@@ -388,14 +385,24 @@ README/docs propagation describes live-only opt-in stream deltas
 
 A first branch inspection found an incomplete upload, with `runtime.mjs` referring to `actionStreamDeltaEvents.mjs` while that helper file was missing and `workerProtocolRouter.mjs` still lacked the observer injection. Michael reuploaded the branch contents, and the corrected branch was then source-inspected successfully.
 
-Recent branch commit observations included fresh upload commits on 2026-06-21 such as:
+Post-upload `main` inspection initially found another partial/inconsistent upload. Michael then reuploaded the missing propagation set. The final cache-busted `main` inspection confirmed:
 
 ```text
-77cc8ef — Add files via upload
-0cfa505 — Add files via upload
+main commit page showed latest observed commit 50b9080 — Add files via upload
+runtime.mjs imports createActionStreamDeltaObserver(...), creates observeStreamDelta, and injects it into workerProtocolRouter
+runtime/bus/actionStreamDeltaEvents.mjs exists and publishes live-only action.stream.delta events through injected publishActionEvent(...)
+runtime/lifecycle/workerProtocolRouter.mjs calls observeStreamDelta(req.id, token, req) after token normalization/finalText accumulation and before pushStream(...)
+runtime/bus/actionEventSubscriptionRegistry.mjs supports includeStreamDeltas and gates stream-delta delivery behind explicit opt-in
+runtime/bus/actionEventReplay.mjs passes includeStreamDeltas through to the live subscription layer without retaining/replaying stream deltas
+runtime/bus/executeAction/actionRequestRegistry.mjs includes getActionRequestByRequestId(...)
+README.md, docs/current-architecture.md, and docs/feature-readiness.md describe live-only opt-in stream deltas and future retained/durable policy as excluded
 ```
 
-This is feature-branch repo verification only. After merge, `main` still needs cache-busted final inspection before marking the branch main-inspected.
+Final caveat:
+
+```text
+docs/dev-notes.58 observed on main still contained stale feature-branch wording saying the branch was not yet merged to main. This corrected final dev note should replace/refresh that text if Michael wants docs/dev-notes.58 itself to be post-merge accurate on GitHub main.
+```
 
 ---
 
@@ -505,6 +512,32 @@ What still needs verification:
 Future graph/control deployment shape and event durability requirements.
 ```
 
+### Finding: `docs/dev-notes.58` on `main` may need a status-only refresh
+
+Affected surface:
+
+```text
+branch audit trail, checkout status wording, future-session source-truth interpretation
+```
+
+Why it matters:
+
+```text
+Main source/docs/test propagation is present, but the observed in-repo dev note still said the branch was not yet merged to main.
+```
+
+Smallest safe correction:
+
+```text
+Upload this corrected final dev note text to docs/dev-notes.58 if Michael wants GitHub main docs to match checkout status exactly.
+```
+
+What still needs verification:
+
+```text
+After uploading the corrected dev note, perform a small cache-busted docs/dev-notes.58 inspection only.
+```
+
 ---
 
 ## 10. Future work not included
@@ -536,6 +569,16 @@ streamController redesign
 
 ## 11. Recommended next step
 
-Upload this corrected `docs/dev-notes.58` to the feature branch, then merge when Michael is satisfied with the branch candidate.
+If Michael wants repo docs to be perfectly aligned, upload the corrected `docs/dev-notes.58` wording from this document to `main`, then run one final cache-busted check of that file.
 
-After merge, perform cache-busted `main` inspection and generate/finalize the checkout documents with `main` status if needed.
+Default next branch recommendation after checkout:
+
+```text
+runtime-event-log-store-contract-v1
+```
+
+Why:
+
+```text
+The action-event surface now has live subscriptions, bounded retained started/terminal history, retained replay/live join, action cancellation mapping, and live-only stream deltas. The next structural gap is durable event/audit storage and restart/cross-process replay policy.
+```
