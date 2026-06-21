@@ -47,6 +47,11 @@ runtime/bus/
   actionEventHistory.mjs
   actionEventSubscriptionRegistry.mjs
   actionEventReplay.mjs
+  actionStreamDeltaEvents.mjs
+  actionEventLog/
+    actionEventLogCommon.mjs
+    actionEventLogEntry.mjs
+    actionEventLogStoreContract.mjs
   executeAction/
     actionRequestRegistry.mjs
     capabilityBusExecuteActionCommon.mjs
@@ -165,7 +170,7 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
-live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, started/terminal event publication, and opt-in live-only stream-delta publication for executeAction
+live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, started/terminal event publication, opt-in live-only stream-delta publication for executeAction, and contract-only future event-log store adapter validation
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
@@ -196,9 +201,12 @@ actionEventReplay.mjs
 
 actionStreamDeltaEvents.mjs
   live-only action.stream.delta mapping from injected parent-side request stream observations
+
+actionEventLog/
+  contract-only future event-log store constants, append/read entry validation, adapter validation, cursor/read-result shape validation, and high-volume event policy
 ```
 
-Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only and does not add durable event storage, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or `eventLogStoreBackend`.
+Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only. `runtime/bus/actionEventLog/` defines the v1 contract for future durable event-log adapters, but does not add runtime persistence wiring, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or a real `eventLogStoreBackend`.
 
 ## Worker layout
 
