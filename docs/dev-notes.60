@@ -1,0 +1,334 @@
+# Dev Notes 60 — Runtime Event Log Store Runtime Wiring v1
+
+**Date:** 2026-06-21  
+**Branch:** `runtime-event-log-store-runtime-wiring-v1`  
+**Status:** Candidate staged in assistant sandbox. Syntax checks, fixture coverage, worker import hygiene, targeted event-log integration smoke, existing event-log contract smoke, related action-event regression smokes, execute-action public dispatch smoke, nativeWorkerBackend execution mock smoke, action cancellation mock smoke, capability execute-action outcome smoke, and runtime public-entrypoint guard passed. Real-runtime testing has not been run in this assistant sandbox.
+
+---
+
+## 1. Purpose
+
+This branch adds the smallest runtime-side integration seam between retained action-event publication and the existing event-log store contract.
+
+The branch keeps the event-log store modular and non-durable by default:
+
+```text
+record action event into bounded in-memory history
+  -> optional no-adapter event-log append handoff
+  -> publish normalized event to live subscribers
+```
+
+The default runtime composition creates the event-log integration with no adapter, so current runtime behavior remains non-durable and no-op for event-log storage.
+
+---
+
+## 2. Scope
+
+Implemented:
+
+```text
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+  createActionEventLogIntegration(...)
+  appendRuntimeActionEventLog(...)
+
+runtime.mjs
+  creates a no-adapter event-log integration
+  calls appendRuntimeActionEventLog(...) after in-memory history records the event
+
+tests/smokeTestActionEventLogIntegration.mjs
+  verifies no-adapter no-op behavior
+  verifies sync and async adapter append observation
+  verifies append failures are non-fatal
+  verifies stream deltas remain high-volume excluded by default
+  verifies source-boundary guards
+```
+
+Updated existing contract smoke source guard to allow the new modular integration seam while still forbidding runtime-owned adapter validation, concrete event-log backend naming, workerBridge coupling, and llama_worker coupling.
+
+---
+
+## 3. Explicit non-goals
+
+Not implemented:
+
+```text
+no database adapter
+no file adapter
+no PostgreSQL/SQLite target
+no eventLogStoreBackend implementation
+no public runtime setter or config surface for adapters
+no durable read API
+no process-restart recovery
+no cross-process pub/sub
+no stream-delta retention or replay
+no replacement of bounded in-memory history
+no broad event manager
+no workerBridge or llama_worker changes
+```
+
+The new integration helper is an optional append handoff only. It is not a storage backend and not a memory module.
+
+---
+
+## 4. Files added
+
+```text
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+tests/smokeTestActionEventLogIntegration.mjs
+docs/dev-notes.60
+```
+
+---
+
+## 5. Files modified
+
+```text
+runtime.mjs
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestActionEventLogStoreContract.mjs
+```
+
+---
+
+## 6. Modular ownership boundaries
+
+Preserve this split:
+
+```text
+runtime/bus/actionEvent.mjs
+  validates and normalizes action-event envelopes only
+
+runtime/bus/actionEventHistory.mjs
+  bounded retained in-memory history/readback only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registry/filtering/publication only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained replay/live-join orchestration only
+
+runtime/bus/actionStreamDeltaEvents.mjs
+  live-only action.stream.delta mapping from injected parent-side stream observations only
+
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+  durable event-log adapter contract, append/read validation, cursor/result shape validation, and high-volume event policy only
+
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+  optional runtime append handoff to an injected event-log adapter, no-op by default, non-fatal append failure observation only
+```
+
+No broad event manager was introduced.
+
+---
+
+## 7. Behavior details
+
+### 7.1 Default runtime behavior
+
+`runtime.mjs` now creates:
+
+```js
+const actionEventLog = createActionEventLogIntegration();
+```
+
+Because no adapter is provided, `appendRuntimeActionEventLog(...)` skips with reason:
+
+```text
+no_adapter
+```
+
+This means the branch does not make events durable.
+
+### 7.2 Publication order
+
+`publishRuntimeActionEvent(event)` now preserves the existing record-before-live-publish order:
+
+```text
+recordActionEvent(actionEventHistory, event)
+appendRuntimeActionEventLog(actionEventLog, recordedEvent)
+publishActionEvent(actionEvents, recordedEvent)
+```
+
+The durable append handoff receives the recorded/normalized event, including any in-memory sequence assigned by `actionEventHistory`.
+
+### 7.3 Append failure policy
+
+Append errors are non-fatal by default.
+
+The helper can call an optional `onAppendError(err, context)` observer, but observer failures are swallowed so event-log append problems cannot change execute-action behavior.
+
+### 7.4 Async adapter posture
+
+The helper accepts sync or promise-like adapter `appendEvent(entry)` results.
+
+Promise-like results are observed through a returned settlement promise in the helper result, but runtime publication does not await that promise in the default no-adapter composition.
+
+### 7.5 High-volume event posture
+
+`action.stream.delta` remains high-volume excluded by default.
+
+The integration helper skips high-volume events unless explicitly configured with `includeHighVolumeEvents: true`, and that requires an adapter advertising `capabilities.highVolumeEvents: true`.
+
+Runtime stream deltas still use the existing live-only publication path and do not call the event-log integration seam.
+
+---
+
+## 8. Verification run in assistant sandbox
+
+Syntax/helper checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Targeted and related mock/sandbox smokes:
+
+```bash
+node ./tests/smokeTestActionEventLogIntegration.mjs
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+```
+
+All listed checks passed in the assistant sandbox. Real-runtime checks were not run here.
+
+---
+
+## 9. Artifact/package verification
+
+Candidate package:
+
+```text
+runtime-event-log-store-runtime-wiring-v1-candidate.zip
+```
+
+Candidate SHA-256:
+
+```text
+Recorded in external checkout/final notes after packaging to avoid self-referential ZIP hash drift.
+```
+
+Artifact guard status:
+
+```text
+Passed.
+source_file_count: 220
+candidate_file_count: 223
+required_file_count: 13
+new_file_count: 3
+changed_file_count: 7
+source_only_file_count: 0
+candidate_only_file_count: 3
+failing_finding_count: 0
+```
+
+---
+
+## 10. GitHub verification notes
+
+Pre-implementation source-truth refresh opened GitHub `main` directly. The local implementation was staged against the uploaded `runtime-dev-repo-main.zip` mirror, which was consistent with the current branch family context for this sandbox work.
+
+Direct post-upload branch verification has not been run because this candidate has not been uploaded to GitHub yet.
+
+Known existing docs aside not fixed by this branch:
+
+```text
+GitHub main previously showed docs/dev-notes.59 with stale candidate-stage wording while docs/dev-note.59 had corrected final wording.
+This branch does not intentionally clean that historical docs drift.
+```
+
+---
+
+## 11. Caveats / known risks
+
+### Finding: No concrete durable adapter is configured
+
+Affected surface:
+
+```text
+eventLogStoreBackend, database/file persistence, restart recovery
+```
+
+Why it matters:
+
+```text
+The runtime now has an optional append handoff seam, but the default runtime composition still uses no adapter and therefore does not persist events.
+```
+
+Smallest safe correction:
+
+```text
+Use a separate backend contract/adapter branch to add a real eventLogStoreBackend target after adapter lifecycle, failure policy, and DB target are approved.
+```
+
+What still needs verification:
+
+```text
+Future backend behavior with a real async storage adapter and real-runtime execution.
+```
+
+### Finding: Append is non-blocking / non-fatal by design
+
+Affected surface:
+
+```text
+audit strictness, guaranteed durability, adapter failure reporting
+```
+
+Why it matters:
+
+```text
+The current helper intentionally protects execute-action behavior from durable append failures. This is correct for this branch but not sufficient for strict audit requirements.
+```
+
+Smallest safe correction:
+
+```text
+If strict durability is required later, define an explicit policy branch with blocking/fail-closed semantics rather than changing this no-op/default seam by accident.
+```
+
+What still needs verification:
+
+```text
+Whether future use cases need best-effort, buffered, retrying, degraded, or fail-closed append policy.
+```
+
+---
+
+## 12. Future work not included
+
+Recommended next branch options:
+
+```text
+runtime-event-log-store-backend-contract-v1
+runtime-event-log-store-sqlite-adapter-v1
+runtime-event-log-store-postgres-adapter-v1
+runtime-event-log-store-config-injection-v1
+```
+
+Do not combine these without explicit approval.
+
+---
+
+## 13. Recommended next step
+
+Review the candidate package and run Michael local checks. If accepted, upload to GitHub branch:
+
+```text
+runtime-event-log-store-runtime-wiring-v1
+```
+
+After upload, run direct branch inspection and update this document from candidate-staged to repo-verified status.
