@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-21  
 **Branch:** `runtime-event-log-store-runtime-wiring-v1`  
-**Status:** Candidate staged in assistant sandbox. Syntax checks, fixture coverage, worker import hygiene, targeted event-log integration smoke, existing event-log contract smoke, related action-event regression smokes, execute-action public dispatch smoke, nativeWorkerBackend execution mock smoke, action cancellation mock smoke, capability execute-action outcome smoke, and runtime public-entrypoint guard passed. Real-runtime testing has not been run in this assistant sandbox.
+**Status:** Candidate staged, syntax-checked, helper-checked, mock-smoke-tested, package-extracted/rechecked, artifact-guarded, uploaded to GitHub branch, branch spot-verified, and real-runtime-tested by Michael on Windows/MINGW64. Not yet main-inspected or final-checkpointed.
 
 ---
 
@@ -125,9 +125,32 @@ No broad event manager was introduced.
 
 ---
 
-## 7. Behavior details
+## 7. Integration helper implementation details
 
-### 7.1 Default runtime behavior
+The integration helper stays modular and owns only the optional append handoff from runtime publication to an injected event-log adapter.
+
+The helper behavior is intentionally narrow:
+
+```text
+validates adapter shape through the existing event-log store contract
+defaults to no adapter / no-op behavior
+skips high-volume events unless explicitly enabled
+observes append errors non-fatally
+supports synchronous append result observation
+supports asynchronous append result observation
+does not select a database backend
+does not select a file backend
+does not implement eventLogStoreBackend
+does not own runtime event history, live subscriptions, replay, stream-delta observation, worker lifecycle, or public APIs
+```
+
+This branch therefore creates a modular runtime handoff seam, not a storage implementation.
+
+---
+
+## 8. Behavior details
+
+### 8.1 Default runtime behavior
 
 `runtime.mjs` now creates:
 
@@ -143,7 +166,7 @@ no_adapter
 
 This means the branch does not make events durable.
 
-### 7.2 Publication order
+### 8.2 Publication order
 
 `publishRuntimeActionEvent(event)` now preserves the existing record-before-live-publish order:
 
@@ -155,19 +178,19 @@ publishActionEvent(actionEvents, recordedEvent)
 
 The durable append handoff receives the recorded/normalized event, including any in-memory sequence assigned by `actionEventHistory`.
 
-### 7.3 Append failure policy
+### 8.3 Append failure policy
 
 Append errors are non-fatal by default.
 
 The helper can call an optional `onAppendError(err, context)` observer, but observer failures are swallowed so event-log append problems cannot change execute-action behavior.
 
-### 7.4 Async adapter posture
+### 8.4 Async adapter posture
 
 The helper accepts sync or promise-like adapter `appendEvent(entry)` results.
 
 Promise-like results are observed through a returned settlement promise in the helper result, but runtime publication does not await that promise in the default no-adapter composition.
 
-### 7.5 High-volume event posture
+### 8.5 High-volume event posture
 
 `action.stream.delta` remains high-volume excluded by default.
 
@@ -177,7 +200,7 @@ Runtime stream deltas still use the existing live-only publication path and do n
 
 ---
 
-## 8. Verification run in assistant sandbox
+## 9. Verification run in assistant sandbox
 
 Syntax/helper checks:
 
@@ -203,11 +226,73 @@ node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
 node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 ```
 
-All listed checks passed in the assistant sandbox. Real-runtime checks were not run here.
+All listed assistant sandbox checks passed.
 
 ---
 
-## 9. Artifact/package verification
+## 10. Michael local Windows/MINGW64 deterministic checks
+
+Michael ran the recommended deterministic/local candidate test set from:
+
+```text
+~/Desktop/618AI/node/runtime-event-log-store-runtime-wiring-v1-candidate
+```
+
+The following passed:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestActionEventLogIntegration.mjs
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Observed final result:
+
+```text
+All targeted fixture-helper regression tests passed.
+```
+
+---
+
+## 11. Michael local Windows/MINGW64 real-runtime checks
+
+Michael ran:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+```
+
+Observed real-runtime results:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME executeAction text.generate completed
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+```
+
+Known non-blocking warnings appeared:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+---
+
+## 12. Artifact/package verification
 
 Candidate package:
 
@@ -218,13 +303,13 @@ runtime-event-log-store-runtime-wiring-v1-candidate.zip
 Candidate SHA-256:
 
 ```text
-Recorded in external checkout/final notes after packaging to avoid self-referential ZIP hash drift.
+71a9e04e2998a27647b689309e32d00b9cc42557b0938d9c4f5e154313884aa1
 ```
 
-Artifact guard status:
+Artifact guard summary:
 
 ```text
-Passed.
+passed: true
 source_file_count: 220
 candidate_file_count: 223
 required_file_count: 13
@@ -235,24 +320,64 @@ candidate_only_file_count: 3
 failing_finding_count: 0
 ```
 
----
-
-## 10. GitHub verification notes
-
-Pre-implementation source-truth refresh opened GitHub `main` directly. The local implementation was staged against the uploaded `runtime-dev-repo-main.zip` mirror, which was consistent with the current branch family context for this sandbox work.
-
-Direct post-upload branch verification has not been run because this candidate has not been uploaded to GitHub yet.
-
-Known existing docs aside not fixed by this branch:
+Candidate-only files:
 
 ```text
-GitHub main previously showed docs/dev-notes.59 with stale candidate-stage wording while docs/dev-note.59 had corrected final wording.
-This branch does not intentionally clean that historical docs drift.
+docs/dev-notes.60
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+tests/smokeTestActionEventLogIntegration.mjs
+```
+
+Changed files:
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+runtime.mjs
+tests/helpers/runtimeFixtureFiles.mjs
+tests/smokeTestActionEventLogStoreContract.mjs
 ```
 
 ---
 
-## 11. Caveats / known risks
+## 13. GitHub branch verification notes
+
+Uploaded branch:
+
+```text
+runtime-event-log-store-runtime-wiring-v1
+```
+
+Assistant branch spot inspection after upload confirmed the expected branch shape and core files:
+
+```text
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+runtime.mjs
+tests/smokeTestActionEventLogIntegration.mjs
+docs/dev-notes.60
+```
+
+Spot inspection confirmed the intended runtime publication order:
+
+```text
+record in bounded in-memory history
+-> optional event-log append handoff
+-> publish live event
+```
+
+Spot inspection also confirmed the integration helper stayed modular and did not select a DB/backend.
+
+Docs caveat:
+
+```text
+The branch copy of docs/dev-notes.60 may still contain candidate-stage wording unless this refreshed version is uploaded.
+```
+
+---
+
+## 14. Caveats / known risks
 
 ### Finding: No concrete durable adapter is configured
 
@@ -306,11 +431,37 @@ What still needs verification:
 Whether future use cases need best-effort, buffered, retrying, degraded, or fail-closed append policy.
 ```
 
+### Finding: docs/dev-notes.60 status needs refresh on branch
+
+Affected surface:
+
+```text
+branch documentation only
+```
+
+Why it matters:
+
+```text
+The original branch doc was written before GitHub upload and before Michael's deterministic/real-runtime checks. It can understate completed gates.
+```
+
+Smallest safe correction:
+
+```text
+Upload this refreshed dev-notes.60 content or equivalent status refresh to docs/dev-notes.60.
+```
+
+What still needs verification:
+
+```text
+After upload, inspect docs/dev-notes.60 directly on GitHub to confirm the branch status is current.
+```
+
 ---
 
-## 12. Future work not included
+## 15. Future work not included
 
-Recommended next branch options:
+Recommended future branch options remain separate:
 
 ```text
 runtime-event-log-store-backend-contract-v1
@@ -323,12 +474,27 @@ Do not combine these without explicit approval.
 
 ---
 
-## 13. Recommended next step
+## 16. Current recommendation
 
-Review the candidate package and run Michael local checks. If accepted, upload to GitHub branch:
+Code-wise, the branch is clear for merge after the dev notes are refreshed on the branch.
+
+Current status after the tests and branch spot check:
 
 ```text
-runtime-event-log-store-runtime-wiring-v1
+candidate staged
+syntax-checked
+helper-checked
+mock-smoke-tested
+real-runtime-tested by Michael
+artifact-guarded
+GitHub branch spot-verified
 ```
 
-After upload, run direct branch inspection and update this document from candidate-staged to repo-verified status.
+Still not complete until:
+
+```text
+docs/dev-notes.60 refreshed on branch
+final direct branch inspection after docs refresh
+main-inspected after merge
+checkpointed final
+```
