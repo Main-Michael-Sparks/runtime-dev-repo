@@ -171,7 +171,7 @@ queue-based concurrency
 prompt admission
 request cancellation/settlement
 actionId-to-requestId cancellation mapping
-live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, started/terminal event publication, opt-in live-only stream-delta publication for executeAction, and contract-only future event-log store adapter validation
+live action-event subscription, bounded in-memory action-event readback, optional retained in-memory replay/live join, started/terminal event publication, opt-in live-only stream-delta publication for executeAction, contract-only future event-log store adapter validation, and metadata-only future event-log backend definition/policy descriptors
 init/reset/shutdown coordination
 native timeout/unhealthy-state handling
 parent-side stream shaping
@@ -205,9 +205,12 @@ actionStreamDeltaEvents.mjs
 
 actionEventLog/
   future event-log store constants, append/read entry validation, adapter validation, cursor/read-result shape validation, high-volume event policy, and a no-adapter runtime integration helper for optional append handoff
+
+runtime/backends/eventLogStore/
+  metadata-only event-log backend definition and append/read policy descriptors for future eventLogStoreBackend implementations
 ```
 
-Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only. `runtime/bus/actionEventLog/` defines the v1 contract for future durable event-log adapters and now provides a no-adapter runtime integration seam. It does not add concrete durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, durable read APIs, or a real `eventLogStoreBackend`.
+Replay is opt-in. Default `subscribeActionEvents(...)` behavior remains live-only. High-volume `action.stream.delta` events are also opt-in through `{ includeStreamDeltas: true }`, are published live-only, and are not retained in `actionEventHistory` or replayed from history. Replay uses retained in-memory history only. `runtime/bus/actionEventLog/` defines the v1 append/read adapter contract for future durable event-log adapters and provides a no-adapter runtime integration seam. `runtime/backends/eventLogStore/` defines metadata-only backend definition and policy descriptors for future `eventLogStoreBackend` implementations. It names best-effort, buffered, and fail-closed policy vocabulary, but it does not add concrete durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, durable read APIs, runtime backend selection, or active fail-closed behavior.
 
 ## Worker layout
 

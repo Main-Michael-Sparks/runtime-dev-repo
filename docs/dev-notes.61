@@ -1,0 +1,472 @@
+# Dev Notes 61 — Runtime Event Log Store Backend Contract v1
+
+**Date:** 2026-06-21  
+**Branch:** `runtime-event-log-store-backend-contract-v1`  
+**Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
+**Status:** Candidate staged for the declared metadata-only event-log backend contract scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted event-log backend contract smoke, and related action-event / execute-action mock regression smokes passed. No real-runtime test is required for this candidate while it remains contract-only and does not touch runtime wiring, worker/native, lifecycle, request settlement, or stream behavior.
+
+---
+
+## 1. Purpose
+
+This branch defines the next narrow event-log backend contract surface for future durable action-event/audit storage backends.
+
+The branch answers metadata/contract questions left open by `runtime-event-log-store-runtime-wiring-v1`:
+
+```text
+backend definition metadata shape
+best-effort / buffered / fail-closed append policy vocabulary
+runtime wait-mode vocabulary as metadata only
+append error-surface vocabulary as metadata only
+read capability metadata for durable/cursor/bounded-history fallback distinction
+future eventLogStoreBackend identity without selecting a concrete DB/file backend
+```
+
+This branch intentionally does **not** make events durable.
+
+---
+
+## 2. Modular ownership boundaries
+
+Preserve this split:
+
+```text
+runtime/bus/actionEvent.mjs
+  action-event envelope validation/normalization only
+
+runtime/bus/actionEventHistory.mjs
+  bounded retained in-memory history/readback only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registry/filtering/publication only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained replay/live-join orchestration only
+
+runtime/bus/actionStreamDeltaEvents.mjs
+  live-only action.stream.delta mapping from injected parent-side stream observations only
+
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+  append/read entry and result validation, adapter validation, cursor/read-result shape validation, high-volume event policy only
+
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+  optional runtime append handoff to an injected event-log adapter, no-op by default, non-fatal append failure observation only
+
+runtime/backends/eventLogStore/*
+  metadata-only backend definition and policy descriptors for future eventLogStoreBackend implementations
+```
+
+No broad event manager, storage manager, DB selector, or runtime backend selector was introduced.
+
+---
+
+## 3. Files added
+
+```text
+runtime/backends/eventLogStore/eventLogBackendCommon.mjs
+runtime/backends/eventLogStore/eventLogBackendPolicy.mjs
+runtime/backends/eventLogStore/eventLogBackendDefinition.mjs
+runtime/backends/eventLogStore/eventLogBackendContract.mjs
+tests/smokeTestEventLogBackendContract.mjs
+docs/dev-notes.61
+```
+
+---
+
+## 4. Files modified
+
+```text
+README.md
+docs/README.md
+docs/current-architecture.md
+docs/feature-readiness.md
+tests/helpers/runtimeFixtureFiles.mjs
+```
+
+Explicitly not modified:
+
+```text
+runtime.mjs
+workerBridge.mjs
+llama_worker/**
+runtime/lifecycle/**
+runtime/request/**
+runtime/stream/**
+runtime/config/**
+runtime/bus/actionEventHistory.mjs
+runtime/bus/actionEventReplay.mjs
+runtime/bus/actionEventSubscriptionRegistry.mjs
+runtime/bus/actionStreamDeltaEvents.mjs
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+runtime/backends/backendAdapterRegistry.mjs
+runtime/backends/nativeWorker/**
+runtime/router/**
+runtime/execution/**
+runtime/models/**
+runtime/profiles/**
+```
+
+---
+
+## 5. Contract surface
+
+Primary barrel:
+
+```text
+runtime/backends/eventLogStore/eventLogBackendContract.mjs
+```
+
+Exports include:
+
+```text
+EVENT_LOG_BACKEND_CONTRACT_VERSION
+EVENT_LOG_BACKEND_KIND
+EVENT_LOG_BACKEND_STATUSES
+EVENT_LOG_APPEND_POLICIES
+EVENT_LOG_RUNTIME_WAIT_MODES
+EVENT_LOG_APPEND_ERROR_SURFACES
+DEFAULT_EVENT_LOG_BACKEND_POLICY
+CONTRACT_ONLY_EVENT_LOG_BACKEND_DEFINITION
+isKnownEventLogAppendPolicy(...)
+isKnownEventLogRuntimeWaitMode(...)
+isKnownEventLogAppendErrorSurface(...)
+isKnownEventLogBackendStatus(...)
+normalizeEventLogBackendPolicy(...)
+validateEventLogBackendPolicy(...)
+assertEventLogBackendPolicy(...)
+copyEventLogBackendPolicy(...)
+normalizeEventLogBackendDefinition(...)
+validateEventLogBackendDefinition(...)
+assertEventLogBackendDefinition(...)
+copyEventLogBackendDefinition(...)
+createEventLogBackendDefinition(...)
+```
+
+Contract version:
+
+```text
+runtime.eventLogBackend.v1
+```
+
+Backend kind:
+
+```text
+eventLogStoreBackend
+```
+
+Store contract linkage:
+
+```text
+runtime.actionEventLogStore.v1
+```
+
+---
+
+## 6. Policy descriptor details
+
+`runtime/backends/eventLogStore/eventLogBackendPolicy.mjs` validates and defensively copies/freezes metadata-only policy descriptors.
+
+Default policy preserves current runtime posture:
+
+```js
+{
+    policyId: "event-log.best-effort.default",
+    appendPolicy: "best-effort",
+    runtimeWaitMode: "never",
+    appendErrorSurface: "observe-only",
+    includeHighVolumeEvents: false,
+    read: {
+        durable: true,
+        cursor: true,
+        boundedHistoryFallback: false
+    }
+}
+```
+
+Known append policies:
+
+```text
+best-effort
+buffered
+fail-closed
+```
+
+Known runtime wait modes:
+
+```text
+never
+until-accepted
+until-settled
+```
+
+Known append error surfaces:
+
+```text
+observe-only
+operation-result
+throw
+```
+
+Important scope note:
+
+```text
+buffered and fail-closed are vocabulary only in this branch.
+No buffer queue exists yet.
+No runtime wait behavior was wired.
+No append error is made fatal by this branch.
+```
+
+---
+
+## 7. Backend definition details
+
+`runtime/backends/eventLogStore/eventLogBackendDefinition.mjs` validates and defensively copies/freezes metadata-only backend descriptors.
+
+Default contract-only descriptor:
+
+```js
+{
+    contractVersion: "runtime.eventLogBackend.v1",
+    backendKind: "eventLogStoreBackend",
+    backendId: "event-log.contract-only",
+    status: "contract-only",
+    storeContractVersion: "runtime.actionEventLogStore.v1",
+    summary: "Contract-only event-log store backend placeholder.",
+    capabilities: {
+        append: true,
+        read: true,
+        cursorRead: true,
+        highVolumeEvents: false,
+        durable: true
+    },
+    defaultPolicy: DEFAULT_EVENT_LOG_BACKEND_POLICY
+}
+```
+
+The definition validator rejects:
+
+```text
+wrong contractVersion
+wrong backendKind
+wrong storeContractVersion
+unknown status
+unknown fields
+path-like metadata IDs
+adapter factory fields
+appendEvent/readEvents implementation fields
+DB/file path fields
+worker/tool/process execution fields
+non-boolean capability metadata
+invalid nested defaultPolicy descriptors
+```
+
+---
+
+## 8. Explicit non-goals
+
+Not implemented:
+
+```text
+no SQLite adapter
+no PostgreSQL adapter
+no file adapter
+no DB connection string or path contract
+no adapter factory
+no appendEvent/readEvents implementation
+no public runtime setter/config surface
+no runtime.mjs backend selection
+no runtime wait/fail-closed behavior
+no buffer queue
+no durable read public API
+no process-restart recovery
+no cross-process pub/sub
+no retained/replayed action.stream.delta
+no Runtime Memory Module implementation
+no Cognitive Graph Runtime implementation
+no worker/native changes
+no scheduler lane changes
+no streamController changes
+no cleanup/optimization pass
+```
+
+---
+
+## 9. Verification run in assistant sandbox
+
+Syntax/helper checks:
+
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+```
+
+Observed helper results:
+
+```text
+[OK] runtime fixture coverage passed for 104 file(s); local arrays: 0.
+[OK] worker import hygiene passed for 18 worker file(s).
+```
+
+Targeted smoke:
+
+```bash
+node ./tests/smokeTestEventLogBackendContract.mjs
+```
+
+Observed result:
+
+```text
+[OK] event-log backend contract smoke passed
+```
+
+Related mock/sandbox regression smokes:
+
+```bash
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+node ./tests/smokeTestActionEventLogIntegration.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Observed results:
+
+```text
+All listed mock/sandbox smokes passed.
+REAL_RUNTIME-only sections were skipped because REAL_RUNTIME=1 was not set.
+```
+
+---
+
+## 10. Real-runtime posture
+
+No real-runtime test is required for this candidate while it remains within the declared metadata-only scope.
+
+Reason:
+
+```text
+runtime.mjs was not modified
+workerBridge.mjs was not modified
+llama_worker/** was not modified
+runtime/lifecycle/** was not modified
+runtime/request/** was not modified
+runtime/stream/** was not modified
+no executable backend behavior was modified
+```
+
+Optional Michael local confidence checks remain useful after upload:
+
+```bash
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
+```
+
+---
+
+## 11. Known caveats / risks
+
+### Finding: Backend contract is metadata-only
+
+Affected surface:
+
+```text
+eventLogStoreBackend, database/file persistence, restart recovery
+```
+
+Why it matters:
+
+```text
+This branch names the backend kind and policy vocabulary but does not make action events durable.
+```
+
+Smallest safe correction:
+
+```text
+Use a later integration/adapter branch to define backend selection and concrete storage behavior.
+```
+
+### Finding: fail-closed is vocabulary only
+
+Affected surface:
+
+```text
+audit strictness, append failure behavior, execute-action settlement
+```
+
+Why it matters:
+
+```text
+The current runtime remains no-adapter/best-effort/non-durable. This branch does not make append failures fatal.
+```
+
+Smallest safe correction:
+
+```text
+A later runtime integration branch must explicitly wire fail-closed semantics and tests before claiming strict audit behavior.
+```
+
+### Finding: buffered is vocabulary only
+
+Affected surface:
+
+```text
+append queueing, backpressure, retry/drain behavior
+```
+
+Why it matters:
+
+```text
+No buffer queue, drain behavior, retry policy, or shutdown interaction was implemented.
+```
+
+Smallest safe correction:
+
+```text
+Keep buffered policy as metadata until a separate buffer design branch exists.
+```
+
+### Finding: docs/dev-notes.60 stale duplicate was not repaired
+
+Affected surface:
+
+```text
+docs/source-truth hygiene
+```
+
+Why it matters:
+
+```text
+Preflight found docs/dev-notes.60 and docs/dev-note.60 had different final-status wording in the uploaded mirror / GitHub context. This branch intentionally did not mix that status cleanup into the contract branch.
+```
+
+Smallest safe correction:
+
+```text
+Handle dev-notes.60 cleanup as a separate docs-aside if Michael approves.
+```
+
+---
+
+## 12. Future work not included
+
+Recommended future branches:
+
+```text
+runtime-event-log-store-backend-integration-plan-spec
+runtime-event-log-store-sqlite-adapter-v1      [only after backend integration policy is approved]
+runtime-event-log-store-postgres-adapter-v1    [only after backend integration policy is approved]
+runtime-action-event-cross-process-bridge-plan-spec
+runtime-stream-delta-retention-policy-v1
+Runtime Memory Module storage plan/spec branch
+```
+
+Do not start DB/file implementation directly from this branch without first defining runtime backend injection/selection behavior, append wait/failure semantics, and durable read boundaries.
