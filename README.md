@@ -12,7 +12,7 @@ workerBridge.mjs            stable worker bridge to ./llama_worker/llama.mjs
 runtime/                    parent runtime modules
   bus/                      action/result/event/context contracts plus first execute-action behavior seam
   router/                   contract-only capability router metadata, registry, and route-plan helpers
-  backends/                 backend adapter contracts plus executable nativeWorker adapter seam
+  backends/                 backend adapter contracts, event-log backend metadata contracts, plus executable nativeWorker adapter seam
   execution/                contract-only capability execution descriptor and executor skeleton handoff helpers
   models/                   contract-only model bundle metadata and registry helpers
   profiles/                 contract-only hardware profile metadata and registry helpers
@@ -40,7 +40,7 @@ Public consumers should import from `runtime.mjs`. Internal modules should prese
 
 `runtime/router/` is currently a contract-only namespace. It owns capability router metadata, registry, route-plan validation, and route/model-bundle/hardware-profile compatibility helpers for future Capability Router work; it does not execute actions, call services, call backends, change public runtime APIs, or touch worker behavior.
 
-`runtime/backends/` still owns generic backend adapter metadata, registries, plans, and backend invocation descriptors. `runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs` now adds the first executable adapter seam for the canonical `native-worker.default` text-generation route. The adapter validates the accepted upstream nativeWorkerBackend/text.generate selection and calls an injected parent-owned `runNativeTextRequest()` helper; it does not own queueing, stream shaping, lifecycle, worker messaging, model loading, or direct `workerBridge`/`llama_worker` access.
+`runtime/backends/` still owns generic backend adapter metadata, registries, plans, and backend invocation descriptors. `runtime/backends/eventLogStore/` now defines metadata-only event-log backend definition and append/read policy descriptors for future `eventLogStoreBackend` implementations. Those descriptors name best-effort, buffered, and fail-closed policy vocabulary, but they do not select SQLite/PostgreSQL/file storage, create an adapter, wire `runtime.mjs`, make runtime append fail-closed, add durable reads, or retain stream deltas. `runtime/backends/nativeWorker/nativeWorkerBackendExecution.mjs` now adds the first executable adapter seam for the canonical `native-worker.default` text-generation route. The adapter validates the accepted upstream nativeWorkerBackend/text.generate selection and calls an injected parent-owned `runNativeTextRequest()` helper; it does not own queueing, stream shaping, lifecycle, worker messaging, model loading, or direct `workerBridge`/`llama_worker` access.
 
 `runtime/execution/` is currently a contract-only namespace. It defines metadata-only capability execution plan descriptors from approved backend adapter plans and executor skeleton handoff descriptors for future execution wiring; it does not implement `executeAction()`, call services, call backend adapters, enqueue requests, stream tokens, or touch worker behavior.
 
@@ -121,7 +121,7 @@ console.log(history.events);
 console.log(history.cursor.lastSequence);
 ```
 
-This event surface does not add durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or a real `eventLogStoreBackend`. `runtime/bus/actionEventLog/` now defines the contract shape a future event-log store adapter must satisfy and includes a no-adapter runtime integration helper that can observe append failures without changing execute-action behavior. Runtime publication still has no concrete durable adapter, no database/file backend, and no durable read API. Retained/replayable stream-delta policy remains future work.
+This event surface does not add durable persistence, process-restart recovery, cross-process pub/sub, retained/durable stream-delta storage, or a concrete event-log backend implementation. `runtime/bus/actionEventLog/` defines the append/read adapter entry/result contract and includes a no-adapter runtime integration helper that can observe append failures without changing execute-action behavior. `runtime/backends/eventLogStore/` defines metadata-only backend definition and policy vocabulary for future `eventLogStoreBackend` implementations. Runtime publication still has no concrete durable adapter, no database/file backend, no runtime backend selector, no fail-closed behavior, and no durable read API. Retained/replayable stream-delta policy remains future work.
 
 The static public-entrypoint guard is:
 

@@ -22,7 +22,7 @@ explicit non-goals
 
 ## Execute-action / backend execution readiness
 
-`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. `runtime-cancel-action-v1` adds public `cancelAction(actionId)` by mapping active action IDs to existing request IDs and then delegating to `cancelPrompt(requestId)`, without adding a second worker cancellation path. `runtime-action-event-subscription-v1` adds public `subscribeActionEvents(...)` as a live in-process observation surface for execute-action started and terminal outcome events. `runtime-action-event-history-contract-v1` adds public `readActionEvents(...)` as bounded in-memory history/readback for those same started and terminal events. `runtime-action-event-replay-contract-v1` extends `subscribeActionEvents(...)` with opt-in retained in-memory replay from the existing history helper, using sequence-based live-join dedupe without durable persistence, process-restart recovery, cross-process pub/sub, retained stream deltas, or worker protocol changes. `runtime-action-stream-delta-events-v1` adds opt-in live-only `action.stream.delta` publication from a parent-side stream observer without retaining/replaying deltas or changing worker/backend ownership. `runtime-event-log-store-contract-v1` defines the future event-log store adapter contract under `runtime/bus/actionEventLog/`. `runtime-event-log-store-runtime-wiring-v1` adds a no-adapter runtime integration seam that observes the retained in-memory action event and can hand it to an injected adapter later without adding a concrete durable backend. Future capability execution branches should preserve this shape:
+`runtime-native-worker-backend-execution-integration-v1` added the first narrow real execution seam for accepted execute-action orchestration descriptors. `runtime-execute-action-public-envelope-dispatch-v1` extends the public `executeAction(...)` input surface upward so raw action envelopes for the built-in `text.generate -> nativeWorkerBackend` route compose through the existing descriptor chain before reaching that seam. `runtime-cancel-action-v1` adds public `cancelAction(actionId)` by mapping active action IDs to existing request IDs and then delegating to `cancelPrompt(requestId)`, without adding a second worker cancellation path. `runtime-action-event-subscription-v1` adds public `subscribeActionEvents(...)` as a live in-process observation surface for execute-action started and terminal outcome events. `runtime-action-event-history-contract-v1` adds public `readActionEvents(...)` as bounded in-memory history/readback for those same started and terminal events. `runtime-action-event-replay-contract-v1` extends `subscribeActionEvents(...)` with opt-in retained in-memory replay from the existing history helper, using sequence-based live-join dedupe without durable persistence, process-restart recovery, cross-process pub/sub, retained stream deltas, or worker protocol changes. `runtime-action-stream-delta-events-v1` adds opt-in live-only `action.stream.delta` publication from a parent-side stream observer without retaining/replaying deltas or changing worker/backend ownership. `runtime-event-log-store-contract-v1` defines the future event-log store adapter contract under `runtime/bus/actionEventLog/`. `runtime-event-log-store-runtime-wiring-v1` adds a no-adapter runtime integration seam that observes the retained in-memory action event and can hand it to an injected adapter later without adding a concrete durable backend. `runtime-event-log-store-backend-contract-v1` defines metadata-only `eventLogStoreBackend` definition and append/read policy descriptors under `runtime/backends/eventLogStore/`; best-effort, buffered, and fail-closed are policy vocabulary only until a later runtime integration branch wires behavior. Future capability execution branches should preserve this shape:
 
 ```text
 raw action envelope where supported
@@ -43,8 +43,11 @@ readActionEvents(filter, options)
   -> bus-level bounded in-memory action-event history/readback
   -> no durability, process-restart recovery, cross-process pub/sub, or retained stream-delta materialization
 actionEventLog contract and integration helpers
-  -> future durable-log adapter shape validation plus no-adapter append handoff seam
+  -> future durable-log adapter entry/result validation plus no-adapter append handoff seam
   -> no database/file backend, no durable read API, and no stream-delta durability by default
+eventLogStoreBackend metadata contract
+  -> future backend definition and append/read policy descriptors
+  -> best-effort, buffered, and fail-closed are vocabulary only; no runtime backend selection or fail-closed behavior exists yet
 ```
 
 Do not bypass the Capability Bus / Router / Service / backend invocation chain by calling `workerBridge` or `llama_worker` directly from backend adapters. New backends should define explicit adapter execution modules and should receive required runtime substrate functions through dependency injection rather than importing `runtime.mjs`.
@@ -52,7 +55,7 @@ Do not bypass the Capability Bus / Router / Service / backend invocation chain b
 Likely future branches:
 
 ```text
-runtime-event-log-store-integration-plan-spec
+runtime-event-log-store-backend-integration-plan-spec
 runtime-action-event-cross-process-bridge-plan-spec
 ```
 
@@ -60,7 +63,7 @@ Questions to resolve before broader execute-action work:
 
 ```text
 additional capability registry defaults beyond text.generate/nativeWorkerBackend
-durable action event storage/replay integration beyond the contract-only event-log adapter seam
+durable action event storage/replay integration beyond the contract-only event-log adapter seam and metadata-only eventLogStoreBackend descriptor
 per-action timeout scheduling
 retained/durable stream-delta policy
 backend lane scheduling for non-text capabilities
