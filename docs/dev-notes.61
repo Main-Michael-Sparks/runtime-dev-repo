@@ -3,64 +3,101 @@
 **Date:** 2026-06-21  
 **Branch:** `runtime-event-log-store-backend-contract-v1`  
 **Repo:** `Main-Michael-Sparks/runtime-dev-repo`  
-**Status:** Candidate staged for the declared metadata-only event-log backend contract scope. Assistant sandbox syntax checks, fixture coverage, worker import hygiene, targeted event-log backend contract smoke, and related action-event / execute-action mock regression smokes passed. No real-runtime test is required for this candidate while it remains contract-only and does not touch runtime wiring, worker/native, lifecycle, request settlement, or stream behavior.
+**Source truth at final checkout:** GitHub `main` after PR #38 merge commit `e0bf52e` and cache-busted direct source inspection. Uploaded ZIPs, sandbox files, generated markdown, candidate packages, and checkout documents are reference/freeze artifacts unless Michael explicitly promotes one.  
+**Status:** Merged to `main` and main-inspected for the declared metadata-only event-log backend contract scope; assistant sandbox syntax/helper/mock-smoke checks, package extraction/recheck, artifact guard, Michael local Windows/MINGW64 deterministic checks, Michael local Windows/MINGW64 real-runtime confidence checks, direct GitHub branch inspection, and direct GitHub `main` inspection passed.
 
 ---
 
 ## 1. Purpose
 
-This branch defines the next narrow event-log backend contract surface for future durable action-event/audit storage backends.
+This branch defines a narrow, modular, metadata-only backend contract surface for future durable action-event / audit storage backends.
 
-The branch answers metadata/contract questions left open by `runtime-event-log-store-runtime-wiring-v1`:
+It answers the contract questions left open by `runtime-event-log-store-runtime-wiring-v1` without implementing storage:
 
 ```text
+future eventLogStoreBackend identity
 backend definition metadata shape
+backend status vocabulary
 best-effort / buffered / fail-closed append policy vocabulary
 runtime wait-mode vocabulary as metadata only
 append error-surface vocabulary as metadata only
-read capability metadata for durable/cursor/bounded-history fallback distinction
-future eventLogStoreBackend identity without selecting a concrete DB/file backend
+read capability metadata for durable / cursor / bounded-history fallback distinction
+linkage to the existing action-event log store contract
 ```
 
-This branch intentionally does **not** make events durable.
+This branch intentionally does **not** make action events durable. It does not pick SQLite, PostgreSQL, file storage, a DB connection shape, adapter factory behavior, runtime backend injection, or public durable read APIs.
 
 ---
 
-## 2. Modular ownership boundaries
+## 2. Current source truth
 
-Preserve this split:
+Current source truth is GitHub `main`.
+
+Main merge context:
 
 ```text
-runtime/bus/actionEvent.mjs
-  action-event envelope validation/normalization only
-
-runtime/bus/actionEventHistory.mjs
-  bounded retained in-memory history/readback only
-
-runtime/bus/actionEventSubscriptionRegistry.mjs
-  live same-process listener registry/filtering/publication only
-
-runtime/bus/actionEventReplay.mjs
-  optional retained replay/live-join orchestration only
-
-runtime/bus/actionStreamDeltaEvents.mjs
-  live-only action.stream.delta mapping from injected parent-side stream observations only
-
-runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
-  append/read entry and result validation, adapter validation, cursor/read-result shape validation, high-volume event policy only
-
-runtime/bus/actionEventLog/actionEventLogIntegration.mjs
-  optional runtime append handoff to an injected event-log adapter, no-op by default, non-fatal append failure observation only
-
-runtime/backends/eventLogStore/*
-  metadata-only backend definition and policy descriptors for future eventLogStoreBackend implementations
+PR #38
+Merge commit: e0bf52e
+Branch merged: runtime-event-log-store-backend-contract-v1
+Branch upload commits visible under the merge: b8ece25, 0b94e0a, ec439b5
+Prior main context: 8039c50 above PR #37 merge ef1e955
 ```
 
-No broad event manager, storage manager, DB selector, or runtime backend selector was introduced.
+Candidate/freeze artifact:
+
+```text
+runtime-event-log-store-backend-contract-v1-candidate.zip
+SHA-256: 510c51245a11ce3f794c6fe000e32959a9c7479825ec3b58a3e3200ef9f75684
+```
+
+Candidate diff:
+
+```text
+runtime-event-log-store-backend-contract-v1.diff
+SHA-256: e51c53f54a11fe2b331bee20e3fbba4c70240d6fa1fcb065ecbed8cd0f2157dc
+```
+
+Sandbox plan/spec artifact:
+
+```text
+RuntimeDev-PlanSpec-EventLogStoreBackendContract-v1.md
+SHA-256: 0534781cd54cfd85f1bbd5c6b57cd4eff3b89066bd58f27f643b0dfa4afa4b0e
+```
+
+Artifact guard summary:
+
+```text
+passed: true
+source_file_count: 224
+candidate_file_count: 230
+required_file_count: 11
+new_file_count: 6
+changed_file_count: 5
+source_only_file_count: 0
+candidate_only_file_count: 6
+failing_finding_count: 0
+```
+
+Known GitHub retrieval caveat remains:
+
+```text
+Some GitHub raw/file retrieval paths may display line-collapsed source or stale snippets.
+Use cache-busted direct source/file inspection and candidate/freeze artifacts when a retrieval path appears inconsistent with recently merged source.
+Treat retrieval/display artifacts as suspect before declaring a source-truth conflict.
+```
+
+Final-doc refresh note:
+
+```text
+At final checkout time, the repo copy of docs/dev-notes.61 still displayed candidate-staged wording.
+This document is the corrected final status record and is suitable to replace/refresh docs/dev-notes.61.
+```
 
 ---
 
-## 3. Files added
+## 3. Added / modified files
+
+Added:
 
 ```text
 runtime/backends/eventLogStore/eventLogBackendCommon.mjs
@@ -71,9 +108,7 @@ tests/smokeTestEventLogBackendContract.mjs
 docs/dev-notes.61
 ```
 
----
-
-## 4. Files modified
+Modified:
 
 ```text
 README.md
@@ -106,6 +141,40 @@ runtime/execution/**
 runtime/models/**
 runtime/profiles/**
 ```
+
+---
+
+## 4. Modular ownership boundaries
+
+Preserve this split:
+
+```text
+runtime/bus/actionEvent.mjs
+  action-event envelope validation/normalization only
+
+runtime/bus/actionEventHistory.mjs
+  bounded retained in-memory history/readback only
+
+runtime/bus/actionEventSubscriptionRegistry.mjs
+  live same-process listener registry/filtering/publication only
+
+runtime/bus/actionEventReplay.mjs
+  optional retained replay/live-join orchestration only
+
+runtime/bus/actionStreamDeltaEvents.mjs
+  live-only action.stream.delta mapping from injected parent-side stream observations only
+
+runtime/bus/actionEventLog/actionEventLogStoreContract.mjs
+  append/read entry and result validation, adapter validation, cursor/read-result shape validation, and high-volume event policy only
+
+runtime/bus/actionEventLog/actionEventLogIntegration.mjs
+  optional runtime append handoff to an injected event-log adapter, no-op by default, non-fatal append failure observation only
+
+runtime/backends/eventLogStore/*
+  metadata-only backend definition and policy descriptors for future eventLogStoreBackend implementations
+```
+
+No broad event manager, storage manager, DB selector, adapter factory, runtime backend selector, or hidden durable storage layer was introduced.
 
 ---
 
@@ -292,9 +361,9 @@ no cleanup/optimization pass
 
 ---
 
-## 9. Verification run in assistant sandbox
+## 9. Verification carried forward
 
-Syntax/helper checks:
+Assistant sandbox syntax/helper checks passed:
 
 ```bash
 find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
@@ -309,21 +378,10 @@ Observed helper results:
 [OK] worker import hygiene passed for 18 worker file(s).
 ```
 
-Targeted smoke:
+Assistant targeted and related mock/sandbox smokes passed:
 
 ```bash
 node ./tests/smokeTestEventLogBackendContract.mjs
-```
-
-Observed result:
-
-```text
-[OK] event-log backend contract smoke passed
-```
-
-Related mock/sandbox regression smokes:
-
-```bash
 node ./tests/smokeTestActionEventLogStoreContract.mjs
 node ./tests/smokeTestActionEventLogIntegration.mjs
 node ./tests/smokeTestActionEventHistory.mjs
@@ -337,32 +395,48 @@ node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
 ```
 
-Observed results:
+Observed result:
 
 ```text
 All listed mock/sandbox smokes passed.
-REAL_RUNTIME-only sections were skipped because REAL_RUNTIME=1 was not set.
+REAL_RUNTIME-only sections were skipped in assistant sandbox because REAL_RUNTIME=1 was not set.
 ```
 
----
+Package extraction/recheck passed:
 
-## 10. Real-runtime posture
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/smokeTestEventLogBackendContract.mjs
+```
 
-No real-runtime test is required for this candidate while it remains within the declared metadata-only scope.
+Michael local Windows/MINGW64 deterministic checks passed:
 
-Reason:
+```bash
+find . -name '*.mjs' -print0 | sort -z | xargs -0 -n1 node --check
+node ./tests/tools/checkRuntimeFixtureCoverage.mjs
+node ./tests/tools/checkWorkerImportCycles.mjs
+node ./tests/smokeTestEventLogBackendContract.mjs
+node ./tests/smokeTestActionEventLogStoreContract.mjs
+node ./tests/smokeTestActionEventLogIntegration.mjs
+node ./tests/smokeTestActionEventHistory.mjs
+node ./tests/smokeTestActionEventReplay.mjs
+node ./tests/smokeTestActionEventSubscription.mjs
+node ./tests/smokeTestActionStreamDeltaEvents.mjs
+node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
+node ./tests/smokeTestExecuteActionCancellation.mjs
+node ./tests/smokeTestCapabilityExecuteActionOutcome.mjs
+node ./tests/smokeTestRuntimePublicEntrypointContract.mjs
+node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
+```
+
+Observed final deterministic result:
 
 ```text
-runtime.mjs was not modified
-workerBridge.mjs was not modified
-llama_worker/** was not modified
-runtime/lifecycle/** was not modified
-runtime/request/** was not modified
-runtime/stream/** was not modified
-no executable backend behavior was modified
+All targeted fixture-helper regression tests passed.
 ```
 
-Optional Michael local confidence checks remain useful after upload:
+Michael local Windows/MINGW64 real-runtime confidence checks passed:
 
 ```bash
 REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionPublicEnvelopeDispatch.mjs
@@ -370,9 +444,71 @@ REAL_RUNTIME=1 node ./tests/smokeTestNativeWorkerBackendExecutionIntegration.mjs
 REAL_RUNTIME=1 node ./tests/smokeTestExecuteActionCancellation.mjs
 ```
 
+Observed successful real-runtime outcomes:
+
+```text
+[OK] REAL_RUNTIME executeAction raw action envelope text.generate completed
+[OK] REAL_RUNTIME executeAction text.generate completed
+[OK] REAL_RUNTIME cancelAction text.generate completed with cancelled outcome
+```
+
+Known non-blocking warnings appeared:
+
+```text
+ExperimentalWarning: Importing JSON modules is an experimental feature and might change at any time
+[node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+```
+
+These warnings matched prior known warnings and did not fail the smoke tests.
+
 ---
 
-## 11. Known caveats / risks
+## 10. GitHub verification notes
+
+Direct GitHub branch inspection passed before merge for:
+
+```text
+runtime-event-log-store-backend-contract-v1
+```
+
+Branch upload commit split observed:
+
+```text
+b8ece25
+  README.md
+  tests/helpers/runtimeFixtureFiles.mjs
+  tests/smokeTestEventLogBackendContract.mjs
+
+0b94e0a
+  docs/README.md
+  docs/current-architecture.md
+  docs/dev-notes.61
+  docs/feature-readiness.md
+
+ec439b5
+  runtime/backends/eventLogStore/eventLogBackendCommon.mjs
+  runtime/backends/eventLogStore/eventLogBackendContract.mjs
+  runtime/backends/eventLogStore/eventLogBackendDefinition.mjs
+  runtime/backends/eventLogStore/eventLogBackendPolicy.mjs
+```
+
+Post-merge `main` inspection confirmed expected source propagation:
+
+```text
+PR #38 merged to main with merge commit e0bf52e
+runtime/backends/eventLogStore/ exists on main
+runtime/backends/eventLogStore/eventLogBackendCommon.mjs exists on main
+runtime/backends/eventLogStore/eventLogBackendPolicy.mjs exists on main
+runtime/backends/eventLogStore/eventLogBackendDefinition.mjs exists on main
+runtime/backends/eventLogStore/eventLogBackendContract.mjs exists on main
+tests/smokeTestEventLogBackendContract.mjs exists on main
+docs/dev-notes.61 exists on main
+README/docs/current-architecture/docs README/feature-readiness propagated on main
+```
+
+---
+
+## 11. Caveats / known risks
 
 ### Finding: Backend contract is metadata-only
 
@@ -405,7 +541,8 @@ audit strictness, append failure behavior, execute-action settlement
 Why it matters:
 
 ```text
-The current runtime remains no-adapter/best-effort/non-durable. This branch does not make append failures fatal.
+The current runtime remains no-adapter/best-effort/non-durable.
+This branch does not make append failures fatal.
 ```
 
 Smallest safe correction:
@@ -434,6 +571,47 @@ Smallest safe correction:
 Keep buffered policy as metadata until a separate buffer design branch exists.
 ```
 
+### Finding: real-runtime tests were confidence checks, not required by declared scope
+
+Affected surface:
+
+```text
+verification language / merge-readiness notes
+```
+
+Why it matters:
+
+```text
+This branch did not touch runtime wiring, worker/native execution, lifecycle, request settlement, or stream behavior.
+The real-runtime checks are useful confidence but should not imply the branch changed native/model behavior.
+```
+
+Smallest safe correction:
+
+```text
+Record real-runtime checks as Michael-run confidence checks, not as evidence of new runtime backend behavior.
+```
+
+### Finding: final dev-notes.61 status needed refresh after merge
+
+Affected surface:
+
+```text
+docs/source-truth hygiene
+```
+
+Why it matters:
+
+```text
+At final checkout time, GitHub main docs/dev-notes.61 still showed candidate-staged wording and did not record merge/main-inspection or Michael's real-runtime confidence checks.
+```
+
+Smallest safe correction:
+
+```text
+Replace or refresh docs/dev-notes.61 with this final document.
+```
+
 ### Finding: docs/dev-notes.60 stale duplicate was not repaired
 
 Affected surface:
@@ -445,7 +623,8 @@ docs/source-truth hygiene
 Why it matters:
 
 ```text
-Preflight found docs/dev-notes.60 and docs/dev-note.60 had different final-status wording in the uploaded mirror / GitHub context. This branch intentionally did not mix that status cleanup into the contract branch.
+Preflight found docs/dev-notes.60 and docs/dev-note.60 had different final-status wording in the uploaded mirror / GitHub context.
+This branch intentionally did not mix that status cleanup into the contract branch.
 ```
 
 Smallest safe correction:
@@ -462,11 +641,41 @@ Recommended future branches:
 
 ```text
 runtime-event-log-store-backend-integration-plan-spec
-runtime-event-log-store-sqlite-adapter-v1      [only after backend integration policy is approved]
-runtime-event-log-store-postgres-adapter-v1    [only after backend integration policy is approved]
+runtime-event-log-store-sqlite-adapter-v1 [only after backend integration policy is approved]
+runtime-event-log-store-postgres-adapter-v1 [only after backend integration policy is approved]
 runtime-action-event-cross-process-bridge-plan-spec
 runtime-stream-delta-retention-policy-v1
 Runtime Memory Module storage plan/spec branch
 ```
 
-Do not start DB/file implementation directly from this branch without first defining runtime backend injection/selection behavior, append wait/failure semantics, and durable read boundaries.
+Do not start DB/file implementation directly from this branch without first defining:
+
+```text
+runtime backend injection/selection behavior
+append wait/failure semantics
+buffering/drain/backpressure semantics
+append error observation and surfacing
+public durable read boundaries
+adapter lifecycle/config ownership
+interaction with future Runtime Memory Module storage family
+```
+
+---
+
+## 13. Recommended next step
+
+If continuing the event-log line, the next safe step is a separate plan/spec branch:
+
+```text
+runtime-event-log-store-backend-integration-plan-spec
+```
+
+That branch should decide how a future backend descriptor becomes an actual runtime adapter selection/injection surface without implementing SQLite/PostgreSQL/file storage yet.
+
+If doing repo hygiene first, refresh:
+
+```text
+docs/dev-notes.61
+```
+
+with this final document and consider a separate docs-aside for the stale `docs/dev-notes.60` / `docs/dev-note.60` mismatch.
